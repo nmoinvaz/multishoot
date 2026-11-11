@@ -55,6 +55,12 @@ pub trait Equations<const B: usize>: Sync {
     const NG: usize = 0;
     /// scratch series of the Taylor recursion (`Work::aux`)
     const NAUX: usize = 0;
+    /// Whether every method acts on each collocation point alone, with no d/dtheta or other product across points:
+    /// the M points (or lanes) are then independent problems side by side, a block's Jacobian is diagonal across
+    /// them, and one dual evaluation with a unit tangent on every point gives the Jacobian columns of all M points of
+    /// an input field at once. A problem without a periodic direction fills its lanes this way (8 parameter values,
+    /// 8 initial data) and sets it; a problem that couples the points must leave it false.
+    const POINTWISE: bool = false;
 
     /// Taylor coefficients 1..=w.kt of every field about x0, from order 0 in `w.c[f][0]`; g holds the globals.
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>);
