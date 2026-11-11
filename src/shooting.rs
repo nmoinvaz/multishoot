@@ -169,17 +169,18 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         }
     }
 
-    /// The state block b produces from its inputs (fields in the order of `block_inputs`) and the globals: the left
-    /// endpoint's state at node 0, segment b's Taylor path, or the right endpoint's state at node K-1.
-    pub fn block_state<T: Lane>(&self, b: usize, inp: &[Fl<T, B>], g: &[T]) -> State<T, B> {
+    /// The state block b produces from its inputs (fields in the order of `block_inputs`), the globals and the
+    /// evaluation's preparation (`Equations::prepare`): the left endpoint's state at node 0, segment b's Taylor path,
+    /// or the right endpoint's state at node K-1.
+    pub fn block_state<T: Lane>(&self, b: usize, inp: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
         let k = self.k();
         if b == 0 {
-            self.eq.left_state(self.nodes[0], inp, g)
+            self.eq.left_state(self.nodes[0], inp, g, prep)
         } else if b < k {
             let mut w = Work::<T, B>::new(E::NF, E::NAUX, self.kt);
             taylor_path(&self.eq, inp, &self.segs[b - 1], g, &mut w)
         } else {
-            self.eq.right_state(self.nodes[k - 1], inp, g)
+            self.eq.right_state(self.nodes[k - 1], inp, g, prep)
         }
     }
 

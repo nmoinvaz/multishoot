@@ -39,7 +39,7 @@ fn carry(sh: &Shooting<Rotor<B>, B>, tweak: impl Fn(&mut State<DV, B>)) -> Vec<(
     tweak(&mut s);
     let mut out = Vec::new();
     for &b in &order {
-        s = sh.block_state::<DV>(b, &s, &[]);
+        s = sh.block_state::<DV>(b, &s, &[], &());
         out.push((if sh.seg_inward(b) { b - 1 } else { b }, s.clone()));
     }
     out

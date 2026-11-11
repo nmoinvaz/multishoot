@@ -62,12 +62,25 @@ pub trait Equations<const B: usize>: Sync {
     /// 8 initial data) and sets it; a problem that couples the points must leave it false.
     const POINTWISE: bool = false;
 
+    /// What the endpoint maps need once per evaluation (of the residual, the Jacobian or the jet) rather than once
+    /// per block or column: a series' coefficient table, the factors of a periodic solve. `()` when nothing.
+    type Prep: Sync + Default;
+
+    /// The preparation for one evaluation at the state z, given by its double-double parts (the first two of any
+    /// precision). It holds values only: what the lanes' tangents and series need is formed in the lane type by the
+    /// endpoint maps, which may use the preparation as a preconditioner, as hp's periodic solves use their
+    /// double-double LUs.
+    fn prepare(&self, _zh: &[f64], _zl: &[f64]) -> Self::Prep {
+        Self::Prep::default()
+    }
+
     /// Taylor coefficients 1..=w.kt of every field about x0, from order 0 in `w.c[f][0]`; g holds the globals.
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>);
 
-    /// The state at the first node x from the left endpoint's data (`NL` fields).
-    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B>;
+    /// The state at the first node x from the left endpoint's data (`NL` fields): boundary conditions at a regular
+    /// end, or a series from a singular one (a Frobenius series at a regular singular point) summed to x.
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &Self::Prep) -> State<T, B>;
 
-    /// The state at the last node x from the right endpoint's data (`NR` fields).
-    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B>;
+    /// The state at the last node x from the right endpoint's data (`NR` fields), as `left_state`.
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &Self::Prep) -> State<T, B>;
 }

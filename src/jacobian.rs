@@ -59,11 +59,12 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// One column task: block b's state (NF M values) differentiated along the seed, with dual lanes, at the values
-    /// v of its inputs and the globals g.
+    /// of its inputs in z, the globals g and the evaluation's preparation.
     pub fn jac_column<P: Precision<Native>>(
         &self,
         z: &[&[f64]],
         g: &[P::Scalar],
+        prep: &E::Prep,
         (b, seed): (usize, Seed),
     ) -> Vec<P::Scalar> {
         let m = Self::M;
@@ -92,7 +93,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 P::dual(P::splat(gi), d)
             })
             .collect();
-        let s: State<P::U, B> = self.block_state::<P::U>(b, &inp, &gu);
+        let s: State<P::U, B> = self.block_state::<P::U>(b, &inp, &gu, prep);
         let mut out = Vec::with_capacity(E::NF * m);
         for sq in &s {
             let t = P::field_coef(sq, 1);
@@ -114,7 +115,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let ld = ld_for(l);
         let g = self.globals::<P>(z);
         let tasks = self.jac_tasks();
-        let column = |t: &(usize, Seed)| self.jac_column::<P>(z, &g, *t);
+        let prep = self.eq.prepare(z[0], z[1]);
+        let column = |t: &(usize, Seed)| self.jac_column::<P>(z, &g, &prep, *t);
         let cols: Vec<Vec<P::Scalar>> = if par {
             tasks.par_iter().map(column).collect()
         } else {

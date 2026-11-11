@@ -60,9 +60,10 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The states of every block at z, in value lanes
     pub fn block_states<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Vec<State<P::V, B>> {
         let g: Vec<P::V> = self.globals::<P>(z).into_iter().map(P::splat).collect();
+        let prep = self.eq.prepare(z[0], z[1]);
         let one = |b: usize| -> State<P::V, B> {
             let inp: Vec<Fl<P::V, B>> = self.block_inputs(b).iter().map(|&o| self.load::<P>(z, o)).collect();
-            self.block_state::<P::V>(b, &inp, &g)
+            self.block_state::<P::V>(b, &inp, &g, &prep)
         };
         let nb = self.k() + 1;
         if par {
