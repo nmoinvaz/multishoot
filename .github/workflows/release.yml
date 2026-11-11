@@ -8,12 +8,14 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   prepare:
     name: Bump version
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -108,6 +110,8 @@ jobs:
     name: Publish release
     needs: [prepare, test]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Create the release
         env:
