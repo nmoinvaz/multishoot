@@ -169,3 +169,169 @@ impl Default for Fnv {
         Self::new()
     }
 }
+
+/// The planted nonlinear problem: an odd field u and an even field v on the half grid, with the frequency omega a
+/// global unknown,
+///
+/// ```text
+/// u_x = -omega u_theta + u v + s_u(x)
+/// v_x = u^2 - v + s_v(x)
+/// ```
+///
+/// u given at the left end and v at the right, and an extra row omega = omega*. The sources are made from the
+/// manufactured solution `u* = g A + B`, `v* = g^2 C + E`, g = 1 / (1 + x), with the grid's own d/dtheta, so the
+/// samples of (u*, v*) solve the collocation system to rounding: `s = sum_n g^n S_n`, n = 0..3, whose Taylor
+/// coefficients about x0 are exact, `(g^n)_k = (-1)^k C(n + k - 1, k) (1 + x0)^-(n + k)`.
+pub struct Planted<const B: usize> {
+    pub d: DMat<B>,
+    pub omega: f64,
+    /// the manufactured solution's fields A, B (odd), C, E (even)
+    pub a: Fl<DV, B>,
+    pub b: Fl<DV, B>,
+    pub c: Fl<DV, B>,
+    pub e: Fl<DV, B>,
+    /// su[n], sv[n]: the sources' fields of g^n
+    pub su: Vec<Fl<DV, B>>,
+    pub sv: Vec<Fl<DV, B>>,
+}
+
+impl<const B: usize> Planted<B> {
+    pub fn new() -> Self {
+        let m = 8 * B;
+        let sc = |j: usize, k: i64| multishoot::periodic::sin_cos_grid(Parity::Odd, m, j, k);
+        let a = field::<B>(|j| sc(j, 1).0 + sc(j, 3).1.mul_f(0.3));
+        let b = field::<B>(|j| sc(j, 1).1.mul_f(0.2) - sc(j, 3).0.mul_f(0.1));
+        let c = field::<B>(|j| DD::from_f64(0.5) + sc(j, 2).1.mul_f(0.25));
+        let e = field::<B>(|j| DD::ONE + sc(j, 2).0.mul_f(0.1));
+        let d = dmat::<B>(Parity::Odd);
+        let omega = 1.3;
+        let om = DD::from_f64(omega);
+        let su = vec![
+            d.apply(&b).muls(om) - b * e,
+            d.apply(&a).muls(om) - a * e,
+            -a - b * c,
+            -(a * c),
+        ];
+        let sv = vec![e - b * b, -(a * b).mulf(2.0), c - a * a, -c.mulf(2.0)];
+        Planted {
+            d,
+            omega,
+            a,
+            b,
+            c,
+            e,
+            su,
+            sv,
+        }
+    }
+
+    /// the manufactured solution (u*, v*) at x
+    pub fn exact(&self, x: f64) -> State<DV, B> {
+        let g = DD::ONE / (DD::ONE + DD::from_f64(x));
+        vec![self.a.muls(g) + self.b, self.c.muls(g * g) + self.e]
+    }
+
+    /// The shooting problem on the nodes with its extra row omega = omega*, planned from the manufactured solution
+    /// (order kt, last terms below tol, steps at most 0.5), and that solution's z.
+    pub fn shooting(nodes: &[f64], kt: usize, tol: f64) -> (multishoot::Shooting<Planted<B>, B>, Vec<Vec<f64>>) {
+        let mut sh = multishoot::Shooting::new(Planted::<B>::new(), nodes.to_vec(), kt);
+        let og = sh.off_global();
+        sh.extra.push(multishoot::ExtraRow {
+            terms: vec![(og, DD::ONE)],
+            rhs: DD::from_f64(sh.eq.omega),
+        });
+        let z = planted_z(&sh);
+        sh.plan_segments(&z[0], &z[1], &multishoot::Plan { kt, tol, hmax: 0.5 });
+        (sh, z)
+    }
+}
+
+impl<const B: usize> Default for Planted<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// z of the manufactured solution (hi, lo): the left data v*(x_0), the node states, the right data u*(x_(K-1)) and
+/// omega*
+pub fn planted_z<const B: usize>(sh: &multishoot::Shooting<Planted<B>, B>) -> Vec<Vec<f64>> {
+    let m = 8 * B;
+    let l = sh.len();
+    let (mut zh, mut zl) = (vec![0.0; l], vec![0.0; l]);
+    let mut put = |o: usize, f: &Fl<DV, B>| f.store(&mut zh[o..o + m], &mut zl[o..o + m]);
+    let k = sh.k();
+    put(0, &sh.eq.exact(sh.nodes[0])[1]);
+    for i in 0..k {
+        let s = sh.eq.exact(sh.nodes[i]);
+        put(sh.off_node(i), &s[0]);
+        put(sh.off_node(i) + m, &s[1]);
+    }
+    put(sh.off_right(), &sh.eq.exact(sh.nodes[k - 1])[0]);
+    zh[sh.off_global()] = sh.eq.omega;
+    vec![zh, zl]
+}
+
+/// z plus a deterministic perturbation of relative size eps on every unknown
+pub fn perturbed(z: &[Vec<f64>], eps: f64) -> Vec<Vec<f64>> {
+    let mut out = z.to_vec();
+    for (i, v) in out[0].iter_mut().enumerate() {
+        *v += eps * (0.7 * i as f64 + 0.3).sin() * v.abs().max(0.1);
+    }
+    for p in out.iter_mut().skip(1) {
+        p.iter_mut().for_each(|v| *v = 0.0);
+    }
+    out
+}
+
+impl<const B: usize> Equations<B> for Planted<B> {
+    const NF: usize = 2;
+    const NL: usize = 1;
+    const NR: usize = 1;
+    const NG: usize = 1;
+    const NAUX: usize = 0;
+
+    fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
+        let kt = w.kt;
+        let sig = DD::ONE / (DD::ONE + DD::from_f64(x0));
+        // gn[n][k]: Taylor coefficient k of g^n about x0
+        let mut gn = vec![vec![DD::ZERO; kt + 1]; 4];
+        for (n, gk) in gn.iter_mut().enumerate() {
+            let mut c = DD::ONE;
+            for _ in 0..n {
+                c = c * sig;
+            }
+            gk[0] = c;
+            for (k, gkk) in gk.iter_mut().enumerate().skip(1) {
+                c = (c * sig).mul_f(-((n + k - 1) as f64)) / DD::from_f64(k as f64);
+                *gkk = c;
+            }
+        }
+        let om = -g[0];
+        for k in 0..kt {
+            let mut su = Fl::<T, B>::zero();
+            let mut sv = Fl::<T, B>::zero();
+            for (n, gk) in gn.iter().enumerate() {
+                if gk[k].hi != 0.0 {
+                    su = su + Fl::cst(&self.su[n].muls(gk[k]));
+                    sv = sv + Fl::cst(&self.sv[n].muls(gk[k]));
+                }
+            }
+            let (u, v) = (&w.c[0], &w.c[1]);
+            let du = self.d.apply(&u[k]).mul_t(om) + multishoot::cs(u, v, k) + su;
+            let dv = (multishoot::cs(u, u, k) - v[k]) + sv;
+            let ik = DD::ONE / DD::from_f64((k + 1) as f64);
+            w.c[0][k + 1] = du.muls(ik);
+            w.c[1][k + 1] = dv.muls(ik);
+        }
+    }
+
+    /// u at the left end is u*; the data is v
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+        vec![Fl::cst(&self.exact(x)[0]), data[0]]
+    }
+
+    /// v at the right end is v*; the data is u
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+        vec![data[0], Fl::cst(&self.exact(x)[1])]
+    }
+}

@@ -29,13 +29,22 @@
 //! * [`equations`]: the [`Equations`] trait, the state and the Taylor work arrays;
 //! * [`taylor`]: Taylor steps, paths and the step planner;
 //! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
+//! * [`residual`]: the residual F(z) in any precision;
+//! * [`jacobian`]: its exact Jacobian by forward-mode duals;
+//! * [`newton`]: the Newton step and the damped Newton loop;
 //! * [`prec`]: the precisions they run in ([`prec::Prec`], double-double [`prec::Double`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
-//! * [`lane`]: the lane types the engine is generic over.
+//! * [`lane`]: the lane types the engine is generic over;
+//! * `control` (feature `mutate`): deliberate errors, the controls of the accuracy checks.
+#[cfg(feature = "mutate")]
+pub mod control;
 pub mod equations;
+pub mod jacobian;
 pub mod lane;
+pub mod newton;
 pub mod periodic;
 pub mod prec;
+pub mod residual;
 pub mod shooting;
 pub mod taylor;
 
@@ -43,6 +52,7 @@ pub use equations::{Equations, State, Work};
 pub use multidouble;
 pub use multidouble::dd::DD;
 pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
+pub use newton::{NewtonOpts, NewtonReport};
 pub use prec::{Double, Prec};
 pub use shooting::{ExtraRow, Shooting};
 pub use taylor::Plan;
