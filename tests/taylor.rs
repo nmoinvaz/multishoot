@@ -343,3 +343,45 @@ fn planner_one_ulp_control_early_stop_fails() {
     );
     assert!(!is_one_step(&xs[..xs.len() - 1], xa, xb), "control did not fire");
 }
+
+/// The fingerprint of the planner alone: the step points of the rotor's segments, outward and inward, at orders 30
+/// and 20, with the tolerance scaled by `tol_scale`
+fn plan_hash(tol_scale: f64) -> u64 {
+    let mut h = Fnv::new();
+    for (kt, tol) in [(30, 1e-32), (20, 1e-20)] {
+        for match_node in [4, 0] {
+            let mut sh = Shooting::new(Rotor::<B>::new(), NODES.to_vec(), kt);
+            sh.match_node = match_node;
+            let (zh, zl) = exact_z(&sh);
+            sh.plan_segments(
+                &zh,
+                &zl,
+                &Plan {
+                    kt,
+                    tol: tol * tol_scale,
+                    hmax: 0.5,
+                },
+            );
+            sh.segs.iter().flatten().for_each(|&x| h.f64(x));
+        }
+    }
+    h.0
+}
+
+/// the reference fingerprint of the planned points, recorded on aarch64 (NEON) and on the portable backend
+const PLAN_REFERENCE: u64 = 0x59775fc9dcbb802a;
+
+/// The planner's step points are the same bits on every platform (its roots use no libm): pass, `plan_hash` equals
+/// the reference on Linux, macOS and Windows, every backend.
+#[test]
+fn plan_points_match_reference() {
+    let h = plan_hash(1.0);
+    println!("plan hash {h:#018x}");
+    assert_eq!(h, PLAN_REFERENCE, "the planned points differ from the reference");
+}
+
+/// The control of `plan_points_match_reference`: the tolerance scaled by 1 + 2^-30 must change the fingerprint.
+#[test]
+fn plan_points_control_tolerance_differs() {
+    assert_ne!(plan_hash(1.0 + 2f64.powi(-30)), plan_hash(1.0), "control did not fire");
+}
