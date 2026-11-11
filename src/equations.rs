@@ -68,8 +68,8 @@ pub trait Equations<const B: usize>: Sync {
 
     /// The preparation for one evaluation at the state z, given by its double-double parts (the first two of any
     /// precision). It holds values only: what the lanes' tangents and series need is formed in the lane type by the
-    /// endpoint maps, which may use the preparation as a preconditioner, as hp's periodic solves use their
-    /// double-double LUs.
+    /// endpoint maps, which may use the preparation as a preconditioner, such as a double-double LU refined to the
+    /// lane's precision by iterative refinement (Moler, J. ACM 14, 316 (1967)).
     fn prepare(&self, _zh: &[f64], _zl: &[f64]) -> Self::Prep {
         Self::Prep::default()
     }
