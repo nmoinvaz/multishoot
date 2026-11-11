@@ -43,7 +43,9 @@ pub struct Shooting<E: Equations<B>, const B: usize> {
     pub match_node: usize,
     pub extra: Vec<ExtraRow>,
     /// factors of the residual's rows, one per row (empty: none), applied to the residual, the Jacobian and the jet;
-    /// powers of two keep them exact. Newton's correction rule takes the same steps with or without them.
+    /// powers of two keep them exact. Newton's correction rule takes the same steps with or without them, but its
+    /// residual stop (max |F| at most `tol`) reads the scaled rows; with `tol` 0 and `tol_dz` the stop does not
+    /// depend on them either.
     pub row_scale: Vec<f64>,
     #[cfg(feature = "mutate")]
     pub(crate) control: crate::control::Control,
