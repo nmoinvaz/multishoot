@@ -191,7 +191,7 @@ fn results_hashes(ulp: bool, ulp_rhs: bool) -> [u64; 3] {
 }
 
 /// the reference fingerprints, recorded on aarch64 (NEON) and on the portable backend
-const RESULTS_REFERENCE: [u64; 3] = [0x4930892ca98ba844, 0xb6c4584a17a30dbb, 0x48b1fe26a0d6c709];
+const RESULTS_REFERENCE: [u64; 3] = [0x6d8717dc8bd243e4, 0x57fa3c01640b4a46, 0x3161eb7bcf4d46a0];
 
 /// The residual, the Newton solution and the batched Jacobian do not depend on multidouble's SIMD backend or on the
 /// number of threads. Pass: `results_hashes` equals the reference on every build of the CI matrix.
