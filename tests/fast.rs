@@ -2,7 +2,7 @@
 //! LU against the dense f64 LU, and the mixed-precision Newton against the planted solution.
 mod common;
 
-use common::{perturbed, Fnv, Planted};
+use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::lane::{Dtn, Fu, Fun, Lane};
 use multishoot::prec::{max_abs, nan_max, parts, widen};
 use multishoot::{Double, ExtraRow, MixedLu, NewtonOpts, Quad, Shooting, Storage, DD};
@@ -266,7 +266,9 @@ fn f64_projection_control_unprojected_fails() {
     }
 }
 
-/// The staircase storage's layout checks. Pass: errors for a second extra row and for an extra row on node 1.
+/// The layout checks of the fast path. Pass: the staircase storage refuses a second extra row, an extra row on node
+/// 1 and a row_scale of the wrong length, which the dense f64 Jacobian also refuses, as it does a system that is
+/// not square.
 #[test]
 fn staircase_refuses_other_layouts() {
     let (mut sh, zs) = planted();
@@ -280,6 +282,132 @@ fn staircase_refuses_other_layouts() {
     let i = sh.off_node(1);
     sh.extra[0].terms.push((i, DD::ONE));
     assert!(sh.jacobian_staircase::<Fu>(&parts(&zs), true).is_err());
+    // a row_scale of the wrong length, refused by both storages; the right length is accepted (the control)
+    let (mut sh, zs) = scaled();
+    sh.row_scale.pop();
+    assert!(sh.jacobian_staircase::<Fu>(&parts(&zs), true).is_err());
+    assert!(sh.jacobian_f64::<Fu>(&parts(&zs), true).is_err());
+    sh.row_scale.push(1.0);
+    assert!(sh.jacobian_staircase::<Fu>(&parts(&zs), true).is_ok());
+    // a system that is not square, refused by the dense storage
+    let (mut sh, zs) = planted();
+    sh.extra.clear();
+    assert!(sh.jacobian_f64::<Fu>(&parts(&zs), true).is_err());
+}
+
+/// the planted problem with block 3's rows scaled by 2^100 (`row_scale`)
+fn scaled() -> (Shooting<Planted<B>, B>, Vec<Vec<f64>>) {
+    let (mut sh, zs) = planted();
+    let (r0, r1) = (sh.row_block(3), sh.row_block(4));
+    sh.row_scale = (0..sh.rows())
+        .map(|r| if (r0..r1).contains(&r) { 2f64.powi(100) } else { 1.0 })
+        .collect();
+    (sh, zs)
+}
+
+/// (entries of the scaled problem's f64 Jacobian that differ from the unscaled one's times `t` on block 3's rows and
+/// times 1 elsewhere, the relative difference of the scaled and unscaled staircase solves of J x = F)
+fn scaling_errors(t: f64) -> (usize, f64) {
+    let (plain, zs) = planted();
+    let (sc, _) = scaled();
+    let z = perturbed(&zs, 1e-2);
+    let p = parts(&z);
+    let ((a, ld), (b, _)) = (
+        plain.jacobian_f64::<Fu>(&p, true).unwrap(),
+        sc.jacobian_f64::<Fu>(&p, true).unwrap(),
+    );
+    let (r0, r1) = (sc.row_block(3), sc.row_block(4));
+    let l = sc.len();
+    let differ = (0..l)
+        .flat_map(|j| (0..l).map(move |i| (i, j)))
+        .filter(|&(i, j)| a[j * ld + i] * if (r0..r1).contains(&i) { t } else { 1.0 } != b[j * ld + i])
+        .count();
+    let solve = |sh: &Shooting<Planted<B>, B>| {
+        let mut x = sh.residual::<Double>(&p, true).unwrap();
+        sh.mixed_lu::<Fu>(&p, Storage::Staircase, true).unwrap().solve(&mut x);
+        x
+    };
+    let (x0, x1) = (solve(&plain), solve(&sc));
+    let dx: Vec<DD> = x0.iter().zip(&x1).map(|(a, b)| *a - *b).collect();
+    (differ, max_abs::<Double>(&dx) / max_abs::<Double>(&x0))
+}
+
+/// Scaled rows in the f64 Jacobian and the staircase storage: pass, the f64 Jacobian with block 3 scaled by 2^100
+/// equal to the unscaled one times the factors in every entry (powers of two scale exactly), and the staircase solve
+/// of the scaled system within 1e-8 of the unscaled one (the scaling changes the rows, not the solution).
+#[test]
+fn f64_jacobian_and_staircase_scale_rows() {
+    let (differ, dx) = scaling_errors(2f64.powi(100));
+    println!("scaled rows: {differ} f64 entries differ, staircase solutions {dx:.3e} apart");
+    assert!(differ == 0 && dx < 1e-8, "{differ} {dx:e}");
+}
+
+/// The control of `f64_jacobian_and_staircase_scale_rows`: told the factor is 2^101, the entries must differ.
+#[test]
+fn f64_scaling_control_wrong_factor_differs() {
+    let (differ, _) = scaling_errors(2f64.powi(101));
+    println!("control, wrong factor: {differ} f64 entries differ");
+    assert!(differ > 0, "control did not fire");
+}
+
+/// (entries of the f64 Jacobian of the planted problem, `coupled` or pointwise, declared pointwise that differ from
+/// the pointwise problem's per-column one), lanes `Fun<4>`
+fn pointwise_f64_differs(coupled: bool) -> usize {
+    let (plain, zs) = Planted::<B>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
+    let (sh, _) = Planted::<B>::shooting_of(Planted::with_coupling(coupled), &NODES, 30, 1e-32);
+    let z = perturbed(&zs, 1e-2);
+    let (a, _) = plain.jacobian_f64::<Fun<4>>(&parts(&z), true).unwrap();
+    let (b, _) = as_pointwise(sh).jacobian_f64::<Fun<4>>(&parts(&z), true).unwrap();
+    a.iter().zip(&b).filter(|(x, y)| x != y).count()
+}
+
+/// The pointwise problem's f64 Jacobian, one tangent per input field (every point at once), against per column.
+/// Pass: every entry equal.
+#[test]
+fn pointwise_f64_jacobian_equals_per_column() {
+    let d = pointwise_f64_differs(false);
+    println!("pointwise f64 Jacobian against per column: {d} entries differ");
+    assert_eq!(d, 0);
+}
+
+/// The control of `pointwise_f64_jacobian_equals_per_column`: the coupled problem declared pointwise must differ.
+#[test]
+fn pointwise_f64_control_coupled_differs() {
+    let d = pointwise_f64_differs(true);
+    println!("control, coupled problem declared pointwise: {d} entries differ");
+    assert!(d > 0, "control did not fire");
+}
+
+/// (whether z + dz from `newton_step_mixed` in the storage equals, in every part, the state after one full step of
+/// `newton_mixed` with dense storage, whose first step the planted problem takes whole) at z* perturbed by 1e-3
+fn step_matches_loop(storage: Storage) -> bool {
+    let (sh, zs) = planted();
+    let z = perturbed(&zs, 1e-3);
+    let (dz, f, lu) = sh.newton_step_mixed::<Double, Fu>(&parts(&z), storage, true).unwrap();
+    assert!(lu.pivot_range().0 > 0.0 && max_abs::<Double>(&f) > 0.0);
+    let mut zl = z.clone();
+    let rep = sh
+        .newton_mixed::<Double, Fu>(&mut zl, &opts(1e-28, 1), Storage::Dense)
+        .unwrap();
+    assert_eq!(rep.scale, [1.0]);
+    (0..sh.len()).all(|i| {
+        let v = DD::new(z[0][i], z[1][i]) + DD::new(dz[0][i], dz[1][i]);
+        v.hi == zl[0][i] && v.lo == zl[1][i]
+    })
+}
+
+/// The mixed step is the loop's step: pass, z + dz of `newton_step_mixed` (dense) equal to the state after the loop's
+/// first, whole step, in both parts of every unknown.
+#[test]
+fn newton_step_mixed_is_the_loops_step() {
+    assert!(step_matches_loop(Storage::Dense));
+}
+
+/// The control of `newton_step_mixed_is_the_loops_step`: the step from staircase storage, which pivots in another
+/// order, must differ from the dense loop's in some bit.
+#[test]
+fn newton_step_mixed_control_other_storage_differs() {
+    assert!(!step_matches_loop(Storage::Staircase));
 }
 
 /// The hashes of the f64 Jacobians of `Fu` and `Dtn<4>` at z* perturbed by 1e-2, of the staircase solve there, and of
