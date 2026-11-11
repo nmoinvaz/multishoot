@@ -12,4 +12,7 @@ pub enum Control {
     DropColumn(usize),
     /// residual row r matched to the unknown after its target instead of its target
     ShiftRow(usize),
+    /// the state read in the first half of its parts only (a quad-double state in double-double, an octo-double one
+    /// in quad-double), by the residual and the Jacobian
+    HalfParts,
 }
