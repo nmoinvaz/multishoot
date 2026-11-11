@@ -132,7 +132,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// the block rows' derivatives along every unknown before the globals, each column one evaluation with complex
     /// tangents (`Dc`, a real unit tangent on the column's unknown; one per input field for a pointwise problem),
     /// the globals held at z, the Taylor steps given the rate (`Work::rate`) and the endpoint maps the preparation of
-    /// `Equations::prepare_rate`. It needs as many block rows as such unknowns (NL + NR = NF).
+    /// `Equations::prepare_rate`; with `row_scale` each row is scaled as the Jacobian's. It needs as many block rows as
+    /// such unknowns (NL + NR = NF).
     pub fn mode_matrix(&self, z: &[&[f64]], rate: Rate, par: bool) -> Result<ModeMatrix, String> {
         self.check_z::<Double>(z)?;
         let n = self.off_global();
@@ -230,6 +231,28 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     lo: re[1][k],
                 } - DD::ONE;
                 (re[0][k], re[1][k]) = (v.hi, v.lo);
+            }
+        }
+        if !self.row_scale.is_empty() {
+            if self.row_scale.len() != self.rows() {
+                return Err(format!(
+                    "row_scale has {} factors for {} rows",
+                    self.row_scale.len(),
+                    self.rows()
+                ));
+            }
+            for (i, &sr) in self.row_scale.iter().enumerate().take(n) {
+                let s = DD::from_f64(sr);
+                for j in 0..n {
+                    let k = j * ld + i;
+                    for part in [&mut re, &mut im] {
+                        let v = DD {
+                            hi: part[0][k],
+                            lo: part[1][k],
+                        } * s;
+                        (part[0][k], part[1][k]) = (v.hi, v.lo);
+                    }
+                }
             }
         }
         Ok(ModeMatrix { n, ld, re, im })

@@ -277,15 +277,54 @@ const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
 /// omega in both parts of every entry, and the imaginary part zero.
 #[test]
 fn rate_zero_is_the_jacobian_block() {
-    let (differ, nonzero) = planted_block_comparison(|_| {});
+    let (differ, nonzero) = planted_block_comparison(|_| {}, |_| {});
     println!("rate zero against the Jacobian: {differ} entries differ, {nonzero} imaginary parts nonzero");
     assert_eq!((differ, nonzero), (0, 0));
 }
 
-/// `block_comparison` for the planted problem at rate zero, its layout first changed by `set` (a control)
-fn planted_block_comparison(set: impl Fn(&mut Shooting<Planted<PB>, PB>)) -> (usize, usize) {
+/// The rate-zero comparison with block 2's rows scaled by 2^60 (`row_scale`, which the Jacobian and the mode matrix
+/// both carry). Pass: equal in both parts of every entry, imaginary parts zero.
+#[test]
+fn rate_zero_is_the_scaled_jacobian_block() {
+    let (differ, nonzero) = planted_block_comparison(
+        |sh| {
+            let (r0, r1) = (sh.row_block(2), sh.row_block(3));
+            sh.row_scale = (0..sh.rows())
+                .map(|r| if (r0..r1).contains(&r) { 2f64.powi(60) } else { 1.0 })
+                .collect();
+        },
+        |_| {},
+    );
+    println!("rate zero against the scaled Jacobian: {differ} entries differ, {nonzero} imaginary parts nonzero");
+    assert_eq!((differ, nonzero), (0, 0));
+}
+
+/// The control of `rate_zero_is_the_scaled_jacobian_block`: the mode matrix without the scaling (the Jacobian
+/// scaled) must differ on block 2's rows.
+#[test]
+fn rate_zero_control_unscaled_differs() {
+    let (differ, _) = planted_block_comparison(
+        |sh| {
+            let (r0, r1) = (sh.row_block(2), sh.row_block(3));
+            sh.row_scale = (0..sh.rows())
+                .map(|r| if (r0..r1).contains(&r) { 2f64.powi(60) } else { 1.0 })
+                .collect();
+        },
+        |sh| sh.row_scale.clear(),
+    );
+    println!("control, unscaled mode matrix: {differ} entries differ");
+    assert!(differ > 0, "control did not fire");
+}
+
+/// `block_comparison` for the planted problem at rate zero: the layout changed by `both` for the Jacobian and the
+/// mode matrix, then by `set` for the mode matrix alone (a control)
+fn planted_block_comparison(
+    both: impl Fn(&mut Shooting<Planted<PB>, PB>),
+    set: impl Fn(&mut Shooting<Planted<PB>, PB>),
+) -> (usize, usize) {
     let (mut sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
     let z = perturbed(&zs, 1e-2);
+    both(&mut sh);
     let (c, ld) = sh.jacobian::<multishoot::Double>(&parts(&z), true).unwrap();
     set(&mut sh);
     let mm = sh.mode_matrix(&parts(&z), Rate::ZERO, true).unwrap();
@@ -412,7 +451,8 @@ mod controls {
     /// a dropped column: the rate-zero matrix differs from the Jacobian's block
     #[test]
     fn dropped_column_fails_the_jacobian_block() {
-        let (differ, _) = planted_block_comparison(|sh| sh.set_control(Control::DropColumn(sh.off_node(2) + 5)));
+        let (differ, _) =
+            planted_block_comparison(|_| {}, |sh| sh.set_control(Control::DropColumn(sh.off_node(2) + 5)));
         println!("control, dropped column: {differ} entries differ");
         assert!(differ > 0, "control did not fire");
     }
