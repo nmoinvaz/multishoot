@@ -3,7 +3,7 @@ mod common;
 
 use common::{max_diff, Fnv, Rotor, Wrong};
 use multishoot::lane::DV;
-use multishoot::taylor::{taylor_step, Plan};
+use multishoot::taylor::{plan_path, taylor_step, Plan};
 use multishoot::{Equations, Shooting, State, Work};
 
 const B: usize = 2;
@@ -246,4 +246,98 @@ fn planner_rejects_zero_tolerance() {
             hmax: 1.0,
         },
     );
+}
+
+/// The rotor's plan from x = 0 to 0.5 with the recursion's `wrong`
+fn plan_rotor(wrong: Wrong) -> Vec<f64> {
+    let mut eq = Rotor::<B>::new();
+    eq.wrong = wrong;
+    let s0 = eq.exact(0.0);
+    plan_path(
+        &eq,
+        &s0,
+        0.0,
+        0.5,
+        &[],
+        &Plan {
+            kt: 20,
+            tol: 1e-20,
+            hmax: 1.0,
+        },
+    )
+}
+
+/// A recursion that yields a NaN at one collocation point must stop the planner (`Fl::amax` alone would skip it).
+#[test]
+#[should_panic(expected = "is not finite")]
+fn planner_rejects_nan_coefficient() {
+    plan_rotor(Wrong::Nan);
+}
+
+/// The control of `planner_rejects_nan_coefficient`: the same plan with finite coefficients must not panic and must
+/// reach its end.
+#[test]
+fn planner_nan_control_finite_plans() {
+    assert_eq!(plan_rotor(Wrong::None).last(), Some(&0.5));
+}
+
+/// An infinite end must stop the planner before it starts.
+#[test]
+#[should_panic(expected = "must be finite")]
+fn planner_rejects_infinite_end() {
+    let eq = Rotor::<B>::new();
+    plan_path(
+        &eq,
+        &eq.exact(0.0),
+        0.0,
+        f64::INFINITY,
+        &[],
+        &Plan {
+            kt: 20,
+            tol: 1e-20,
+            hmax: 1.0,
+        },
+    );
+}
+
+/// whether a plan is exactly the one step [xa, xb]
+fn is_one_step(xs: &[f64], xa: f64, xb: f64) -> bool {
+    xs == [xa, xb]
+}
+
+/// A path whose end is one representable f64 from its start, outward and inward, within the old exit threshold of
+/// 1e-15. Pass: the plan is exactly [xa, xb].
+#[test]
+fn planner_reaches_an_end_one_ulp_away() {
+    let eq = Rotor::<B>::new();
+    let plan = Plan {
+        kt: 20,
+        tol: 1e-20,
+        hmax: 1.0,
+    };
+    for (xa, xb) in [(0.5, 0.5f64.next_up()), (0.5, 0.5f64.next_down())] {
+        let xs = plan_path(&eq, &eq.exact(xa), xa, xb, &[], &plan);
+        assert!(is_one_step(&xs, xa, xb), "{xa} -> {xb}: {xs:?}");
+    }
+}
+
+/// The control of `planner_reaches_an_end_one_ulp_away`: the same check fed the plan stopped one step early, [xa], as
+/// the exit at 1e-15 left it, must fail.
+#[test]
+fn planner_one_ulp_control_early_stop_fails() {
+    let eq = Rotor::<B>::new();
+    let (xa, xb) = (0.5, 0.5f64.next_up());
+    let xs = plan_path(
+        &eq,
+        &eq.exact(xa),
+        xa,
+        xb,
+        &[],
+        &Plan {
+            kt: 20,
+            tol: 1e-20,
+            hmax: 1.0,
+        },
+    );
+    assert!(!is_one_step(&xs[..xs.len() - 1], xa, xb), "control did not fire");
 }

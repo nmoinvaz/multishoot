@@ -23,6 +23,8 @@ pub enum Wrong {
     None,
     /// the coefficient of order 10 (made at k = 9) scaled by 1 + 2^-60
     Order9,
+    /// the coefficient of order 10 of u made NaN at one collocation point (3), the others unchanged
+    Nan,
 }
 
 /// The linear model: two odd fields u, v on the half grid, carried in x by
@@ -119,6 +121,10 @@ impl<const B: usize> Equations<B> for Rotor<B> {
                 f = f + f.mul_f(2f64.powi(-60));
             }
             w.c[0][k + 1] = (ru.muls(s) + pu - u.muls(ka)).muls(f);
+            if self.wrong == Wrong::Nan && k == 9 {
+                let nan = field::<B>(|j| if j == 3 { DD::from_f64(f64::NAN) } else { DD::ONE });
+                w.c[0][k + 1] = w.c[0][k + 1] * Fl::cst(&nan);
+            }
             w.c[1][k + 1] = (rv.muls(s) + pv - v.muls(ka)).muls(f);
         }
     }
