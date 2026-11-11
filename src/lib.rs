@@ -32,7 +32,8 @@
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`newton`]: the Newton step and the damped Newton loop;
-//! * [`prec`]: the precisions they run in ([`prec::Prec`], double-double [`prec::Double`]);
+//! * [`prec`]: the precisions they run in ([`prec::Prec`]: double-double [`prec::Double`], quad-double [`Quad`],
+//!   octo-double [`Octo`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
 //! * [`lane`]: the lane types the engine is generic over;
 //! * `control` (feature `mutate`): deliberate errors, the controls of the accuracy checks.
@@ -52,6 +53,7 @@ pub use equations::{Equations, State, Work};
 pub use multidouble;
 pub use multidouble::dd::DD;
 pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
+pub use multidouble::precision::{Octo, Quad};
 pub use newton::{NewtonOpts, NewtonReport};
 pub use prec::{Double, Prec};
 pub use shooting::{ExtraRow, Shooting};

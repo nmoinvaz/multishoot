@@ -1,5 +1,6 @@
 //! The arithmetic the residual, the Jacobian and Newton's method run in, behind one trait: [`Prec`], with
-//! double-double ([`Double`]: `DD`, `DV`, `Du`, `Jet<N>`, `DDLu`).
+//! double-double ([`Double`]: `DD`, `DV`, `Du`, `Jet<N>`, `DDLu`), and quad-double and octo-double through
+//! multidouble's `precision::Precision` (`Quad`: `QD`, `QV`, `Qu`, `QJet<N>`, `QDLu`; `Octo`: the same with `OD`).
 //!
 //! It names the same kinds of types and operations as multidouble's `precision::Precision`: a scalar of PARTS f64
 //! parts, its 8-lane vector, forward-mode dual and power series, a dense LU, and the loads and reads between them. A
@@ -8,6 +9,8 @@ use crate::lane::{Du, Jet, Lane, DV};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::linalg::DDLu;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 use std::fmt::Debug;
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -176,4 +179,94 @@ pub fn parts(z: &[Vec<f64>]) -> Vec<&[f64]> {
 /// max |x| over the scalars (hi part of the double-double rounding)
 pub fn max_abs<P: Prec>(x: &[P::Scalar]) -> f64 {
     x.iter().map(|&v| P::to_dd(v).hi.abs()).fold(0.0, f64::max)
+}
+
+/// Quad-double and octo-double: every precision of multidouble's `Precision` trait on the compile-time backend, its
+/// methods delegated bit for bit
+impl<P: Precision<Native>> Prec for P {
+    const PARTS: usize = <P as Precision<Native>>::PARTS;
+    type Scalar = <P as Precision<Native>>::Scalar;
+    type V = <P as Precision<Native>>::V;
+    type U = <P as Precision<Native>>::U;
+    type J<const N: usize> = <P as Precision<Native>>::J<N>;
+    type Lu = <P as Precision<Native>>::Lu;
+    const ZERO: Self::Scalar = <P as Precision<Native>>::ZERO;
+    const ONE: Self::Scalar = <P as Precision<Native>>::ONE;
+
+    #[inline]
+    fn new(p: &[f64]) -> Self::Scalar {
+        <P as Precision<Native>>::new(p)
+    }
+    #[inline]
+    fn from_raw(p: &[f64]) -> Self::Scalar {
+        <P as Precision<Native>>::from_raw(p)
+    }
+    #[inline]
+    fn part(x: Self::Scalar, q: usize) -> f64 {
+        <P as Precision<Native>>::part(x, q)
+    }
+    #[inline]
+    fn from_dd(d: DD) -> Self::Scalar {
+        <P as Precision<Native>>::from_dd(d)
+    }
+    #[inline]
+    fn to_dd(x: Self::Scalar) -> DD {
+        <P as Precision<Native>>::to_dd(x)
+    }
+    fn dot(pairs: impl Iterator<Item = (Self::Scalar, Self::Scalar)>) -> Self::Scalar {
+        <P as Precision<Native>>::dot(pairs)
+    }
+    #[inline]
+    fn splat(x: Self::Scalar) -> Self::V {
+        <P as Precision<Native>>::splat(x)
+    }
+    #[inline]
+    fn dual(v: Self::V, d: Self::V) -> Self::U {
+        <P as Precision<Native>>::dual(v, d)
+    }
+    #[inline]
+    fn coef<L: Lane>(l: L, k: usize) -> Self::V {
+        <P as Precision<Native>>::coef(l, k)
+    }
+    #[inline]
+    fn set_coef<L: Lane>(l: &mut L, k: usize, c: Self::V) {
+        <P as Precision<Native>>::set_coef(l, k, c)
+    }
+    fn load_field<const B: usize>(parts: &[&[f64]]) -> Fl<Self::V, B> {
+        <P as Precision<Native>>::load_field(parts)
+    }
+    #[inline]
+    fn field_get<const B: usize>(f: &Fl<Self::V, B>, j: usize) -> Self::Scalar {
+        <P as Precision<Native>>::field_get(f, j)
+    }
+    #[inline]
+    fn field_coef<L: Lane, const B: usize>(f: &Fl<L, B>, k: usize) -> Fl<Self::V, B> {
+        <P as Precision<Native>>::field_coef(f, k)
+    }
+    #[inline]
+    fn field_set_coef<L: Lane, const B: usize>(f: &mut Fl<L, B>, k: usize, c: &Fl<Self::V, B>) {
+        <P as Precision<Native>>::field_set_coef(f, k, c)
+    }
+    #[inline]
+    fn field_dual<const B: usize>(v: &Fl<Self::V, B>, t: &Fl<Self::V, B>) -> Fl<Self::U, B> {
+        <P as Precision<Native>>::field_dual(v, t)
+    }
+    fn lu_factor(n: usize, ld: usize, c: Vec<Vec<f64>>, par: bool) -> Result<Self::Lu, String> {
+        <P as Precision<Native>>::lu_factor(n, ld, c, par)
+    }
+    #[inline]
+    fn lu_solve(lu: &Self::Lu, b: &mut [Self::Scalar]) {
+        <P as Precision<Native>>::lu_solve(lu, b)
+    }
+}
+
+/// A state in more parts: the given part arrays, then zero arrays up to `parts` (a double-double state as the start
+/// of a quad-double Newton, a quad-double one for octo-double)
+pub fn widen(z: &[Vec<f64>], parts: usize) -> Vec<Vec<f64>> {
+    assert!(parts >= z.len(), "widen: {} parts into {parts}", z.len());
+    let l = z.first().map_or(0, |p| p.len());
+    z.iter()
+        .cloned()
+        .chain((z.len()..parts).map(|_| vec![0.0; l]))
+        .collect()
 }

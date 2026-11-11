@@ -18,16 +18,36 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         Ok(())
     }
 
+    /// the number of parts of z that are read: all of them, or half under `Control::HalfParts`
+    fn kept(&self, parts: usize) -> usize {
+        #[cfg(feature = "mutate")]
+        if self.control == crate::control::Control::HalfParts {
+            return parts / 2;
+        }
+        parts
+    }
+
     /// The field of z at offset off, its parts as they are
     pub fn load<P: Prec>(&self, z: &[&[f64]], off: usize) -> Fl<P::V, B> {
         let m = Self::M;
-        let parts: Vec<&[f64]> = z.iter().map(|p| &p[off..off + m]).collect();
+        let keep = self.kept(z.len());
+        if keep == z.len() {
+            let parts: Vec<&[f64]> = z.iter().map(|p| &p[off..off + m]).collect();
+            return P::load_field(&parts);
+        }
+        let zero = vec![0.0; m];
+        let parts: Vec<&[f64]> = z
+            .iter()
+            .enumerate()
+            .map(|(q, p)| if q < keep { &p[off..off + m] } else { &zero[..] })
+            .collect();
         P::load_field(&parts)
     }
 
     /// Unknown i of z, renormalized from its parts
     pub fn scalar<P: Prec>(&self, z: &[&[f64]], i: usize) -> P::Scalar {
-        let parts: Vec<f64> = z.iter().map(|p| p[i]).collect();
+        let keep = self.kept(z.len());
+        let parts: Vec<f64> = z.iter().take(keep).map(|p| p[i]).collect();
         P::new(&parts)
     }
 
