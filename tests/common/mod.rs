@@ -293,22 +293,10 @@ pub fn wave(i: usize) -> f64 {
 }
 
 /// z plus a perturbation of relative size eps on every unknown from `wave`, the same on every platform
-pub fn perturbed_exact(z: &[Vec<f64>], eps: f64) -> Vec<Vec<f64>> {
-    let mut out = z.to_vec();
-    for (i, v) in out[0].iter_mut().enumerate() {
-        *v += eps * wave(i) * v.abs().max(0.1);
-    }
-    for p in out.iter_mut().skip(1) {
-        p.iter_mut().for_each(|v| *v = 0.0);
-    }
-    out
-}
-
-/// z plus a deterministic perturbation of relative size eps on every unknown
 pub fn perturbed(z: &[Vec<f64>], eps: f64) -> Vec<Vec<f64>> {
     let mut out = z.to_vec();
     for (i, v) in out[0].iter_mut().enumerate() {
-        *v += eps * (0.7 * i as f64 + 0.3).sin() * v.abs().max(0.1);
+        *v += eps * wave(i) * v.abs().max(0.1);
     }
     for p in out.iter_mut().skip(1) {
         p.iter_mut().for_each(|v| *v = 0.0);

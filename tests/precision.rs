@@ -149,10 +149,10 @@ fn hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>]) -> [u64; 4] {
 
 /// The reference hashes, recorded on aarch64 (NEON) and checked on every backend of the CI matrix
 const REFERENCE: [u64; 4] = [
-    0x644aab6b8168def1,
-    0xcc72caf157ee5c3a,
-    0x6eee158d2c9606a3,
-    0xc033077e35583804,
+    0x1e7d3d70ce7226d6,
+    0x9317a0b57e1e347e,
+    0x59d2f5e01dafa11a,
+    0xfc6f38d02f319471,
 ];
 
 /// The residual's bytes in every precision, and the quad-double Newton step's, at a fixed state with every part in
