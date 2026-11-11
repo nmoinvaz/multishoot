@@ -123,6 +123,21 @@ fn solve_neg<P: Precision<Native>>(lu: &P::Lu, r: &[P::Scalar]) -> Vec<P::Scalar
     b
 }
 
+/// A factored Newton matrix, exact or approximate: the loops' corrections -J^-1 r in P
+pub trait Factored<P: Precision<Native>> {
+    /// -J^-1 r
+    fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar>;
+}
+
+/// The exact Jacobian's LU in P
+struct Exact<P: Precision<Native>>(P::Lu);
+
+impl<P: Precision<Native>> Factored<P> for Exact<P> {
+    fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar> {
+        solve_neg::<P>(&self.0, r)
+    }
+}
+
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The Newton step at z.
     pub fn newton_step<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Step<P>, String> {
@@ -154,6 +169,21 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         z: &mut Vec<Vec<f64>>,
         opts: &NewtonOpts,
     ) -> Result<NewtonReport, String> {
+        let exact = |z: &[&[f64]]| -> Result<Exact<P>, String> {
+            let (c, ld) = self.jacobian::<P>(z, opts.par)?;
+            Ok(Exact(P::lu_factor(self.len(), ld, c, opts.par)?))
+        };
+        self.newton_with::<P, _>(z, opts, exact)
+    }
+
+    /// The damped loop of `newton` with the Newton matrix that `factor` forms and factors at each step's z: the exact
+    /// Jacobian for `newton`, an approximate one for a mixed-precision Newton (`Shooting::newton_mixed`).
+    pub(crate) fn newton_with<P: Precision<Native>, F: Factored<P>>(
+        &self,
+        z: &mut Vec<Vec<f64>>,
+        opts: &NewtonOpts,
+        factor: impl Fn(&[&[f64]]) -> Result<F, String>,
+    ) -> Result<NewtonReport, String> {
         if !(opts.lambda0 > 0.0 && opts.lambda0 <= 1.0) {
             return Err(format!("newton: lambda0 must lie in (0, 1], not {}", opts.lambda0));
         }
@@ -165,8 +195,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             ));
         }
         match opts.damping {
-            Damping::Correction => self.newton_correction::<P>(z, opts),
-            Damping::Residual => self.newton_residual::<P>(z, opts),
+            Damping::Correction => self.newton_correction::<P, F>(z, opts, factor),
+            Damping::Residual => self.newton_residual::<P, F>(z, opts, factor),
         }
     }
 
@@ -174,10 +204,11 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// |dz_prev| |dz_bar_prev| lambda_prev / (|dz_bar_prev - dz| |dz|))`, the trial's estimate `mu = lambda^2 |dz| / (2
     /// |dz_bar - (1 - lambda) dz|)`, a trial accepted when `theta < 1 - lambda / 4` and otherwise retried at
     /// `min(mu, lambda / 2)`, and one retry per step at `min(1, mu)` when that is 4 lambda or more.
-    fn newton_correction<P: Precision<Native>>(
+    fn newton_correction<P: Precision<Native>, F: Factored<P>>(
         &self,
         z: &mut Vec<Vec<f64>>,
         opts: &NewtonOpts,
+        factor: impl Fn(&[&[f64]]) -> Result<F, String>,
     ) -> Result<NewtonReport, String> {
         let mut rep = NewtonReport::new();
         let lam_min = 0.5f64.powi(opts.max_halvings as i32);
@@ -194,9 +225,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 rep.converged = true;
                 return Ok(rep);
             }
-            let (c, ld) = self.jacobian::<P>(&parts(z), opts.par)?;
-            let lu = P::lu_factor(self.len(), ld, c, opts.par)?;
-            let dz = solve_neg::<P>(&lu, &f);
+            let lu = factor(&parts(z))?;
+            let dz = lu.solve_neg(&f);
             let ndz = norm2::<P>(&dz);
             let mut lam = match &prev {
                 None => opts.lambda0,
@@ -218,7 +248,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 }
                 let zt = axpy::<P>(&parts(z), &dz, lam);
                 let ft = self.residual::<P>(&parts(&zt), opts.par)?;
-                let bar = solve_neg::<P>(&lu, &ft);
+                let bar = lu.solve_neg(&ft);
                 let nbar = norm2::<P>(&bar);
                 let theta = nbar / ndz;
                 let rest = P::from_dd(DD::from_f64(1.0 - lam));
@@ -254,10 +284,11 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The residual rule: steps halved while max |F| does not fall, at most `max_halvings` times, then taken.
-    fn newton_residual<P: Precision<Native>>(
+    fn newton_residual<P: Precision<Native>, F: Factored<P>>(
         &self,
         z: &mut Vec<Vec<f64>>,
         opts: &NewtonOpts,
+        factor: impl Fn(&[&[f64]]) -> Result<F, String>,
     ) -> Result<NewtonReport, String> {
         let mut rep = NewtonReport::new();
         let mut fn0 = max_abs::<P>(&self.residual::<P>(&parts(z), opts.par)?);
@@ -270,10 +301,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 rep.converged = true;
                 return Ok(rep);
             }
-            let step = self.newton_step::<P>(&parts(z), opts.par)?;
-            let dz: Vec<P::Scalar> = (0..self.len())
-                .map(|i| P::from_raw(&step.dz.iter().map(|q| q[i]).collect::<Vec<f64>>()))
-                .collect();
+            let f = self.residual::<P>(&parts(z), opts.par)?;
+            let dz = factor(&parts(z))?.solve_neg(&f);
             let mut s = 1.0;
             let (mut zn, mut fnn);
             let mut h = 0;
