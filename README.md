@@ -18,9 +18,6 @@ This crate is the engine of that method, generic over the equations, on the arit
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
 | Newton | in double-double, quad-double or octo-double (multidouble's `Precision` trait), with the residual's Taylor series in a parameter of the equations |
 
-It comes out of the solver in [choptuik-large-d](https://github.com/nmoinvaz/choptuik-large-d)'s `hp/` crate, which
-computes Choptuik's critical solution in D dimensions and keeps its equations there.
-
 **Status:** under construction. Not published; it depends on multidouble's `Precision` trait, which is not yet
 released.
 

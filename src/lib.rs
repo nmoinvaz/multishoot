@@ -19,9 +19,6 @@
 //! * Newton's method runs in double-double, quad-double or octo-double (multidouble's `Precision`), as the
 //!   conditioning requires, and the residual can be expanded as a Taylor series in a parameter of the equations.
 //!
-//! The engine comes out of the solver of [choptuik-large-d](https://github.com/nmoinvaz/choptuik-large-d)'s `hp/`
-//! crate, where it computes Choptuik's critical solution in D dimensions; that crate keeps the equations.
-//!
 //! Status: under construction (0.1.0, not published).
 //!
 //! Modules:
