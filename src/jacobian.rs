@@ -169,14 +169,25 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             if self.row_scale.len() != l {
                 return Err(format!("row_scale has {} factors for {l} rows", self.row_scale.len()));
             }
+            let s: Vec<P::Scalar> = self
+                .row_scale
+                .iter()
+                .map(|&sr| P::from_dd(multidouble::dd::DD::from_f64(sr)))
+                .collect();
+            // an entry of +0 parts scales to the same bits in every column, so its product is formed once per row
+            let zs: Vec<P::Scalar> = s.iter().map(|&sr| P::ZERO * sr).collect();
             let mut cur = vec![0.0; P::PARTS];
             for j in 0..l {
-                for (r, &sr) in self.row_scale.iter().enumerate() {
+                for r in 0..l {
                     let idx = j * ld + r;
                     for q in 0..P::PARTS {
                         cur[q] = c[q][idx];
                     }
-                    let v = P::from_raw(&cur) * P::from_dd(multidouble::dd::DD::from_f64(sr));
+                    let v = if cur.iter().all(|x| x.to_bits() == 0) {
+                        zs[r]
+                    } else {
+                        P::from_raw(&cur) * s[r]
+                    };
                     for (q, cq) in c.iter_mut().enumerate() {
                         cq[idx] = P::part(v, q);
                     }
