@@ -132,8 +132,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// the block rows' derivatives along every unknown before the globals, each column one evaluation with complex
     /// tangents (`Dc`, a real unit tangent on the column's unknown; one per input field for a pointwise problem),
     /// the globals held at z, the Taylor steps given the rate (`Work::rate`) and the endpoint maps the preparation of
-    /// `Equations::prepare_rate`; with `row_scale` each row is scaled as the Jacobian's. It needs as many block rows as
-    /// such unknowns (NL + NR = NF).
+    /// `Equations::prepare_rate`; projected rows (`Shooting::project_rows`) and `row_scale` act as on the Jacobian.
+    /// It needs as many block rows as such unknowns (NL + NR = NF).
     pub fn mode_matrix(&self, z: &[&[f64]], rate: Rate, par: bool) -> Result<ModeMatrix, String> {
         self.check_z::<Double>(z)?;
         let n = self.off_global();
@@ -233,6 +233,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 (re[0][k], re[1][k]) = (v.hi, v.lo);
             }
         }
+        // projected rows: Pi on both parts of the block's columns, -Pi on the target, Pi' (real) on the pinned unknowns
+        self.project_columns::<Double>(&mut re, ld, n, true);
+        self.project_columns::<Double>(&mut im, ld, n, false);
         if !self.row_scale.is_empty() {
             if self.row_scale.len() != self.rows() {
                 return Err(format!(
