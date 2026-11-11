@@ -3,7 +3,7 @@
 mod common;
 
 use common::{perturbed, wave, Cylinder, Fnv};
-use multishoot::prec::{max_abs, parts, widen};
+use multishoot::prec::{max_abs, nan_max, parts, widen};
 use multishoot::{Double, Native, NewtonOpts, Octo, Precision, Quad, Shooting, DD};
 
 const B: usize = 1;
@@ -35,7 +35,7 @@ fn solve(sh: &Sh, zs: &[Vec<f64>]) -> (bool, f64, f64, f64, f64) {
     let nu = q(og + 1).to_dd().hi.abs();
     let zerr = (0..sh.len())
         .map(|i| (q(i).to_dd() - DD::new(zs[0][i], zs[1][i])).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     let fq = *qd.fnorm.last().unwrap();
     println!(
         "dd max |F| {:?}, qd {:?}; |lambda - (pi^2 + 1)| {lam_err:.3e}, |nu| {nu:.3e}, max |z - z*| {zerr:.3e}",
@@ -120,23 +120,23 @@ fn jet_vs_differences(sh: &mut Sh, z: &[Vec<f64>], v: &[Vec<f64>]) -> (f64, f64,
         .iter()
         .zip(&f0)
         .map(|(a, b)| (*a - *b).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     let h1 = 2f64.powi(-30);
     let (p, m) = (resid_along(sh, z, v, h1), resid_along(sh, z, v, -h1));
-    let s1 = jet[1].iter().map(|x| x.hi.abs()).fold(1.0, f64::max);
+    let s1 = jet[1].iter().map(|x| x.hi.abs()).fold(1.0, nan_max);
     let d1 = (0..p.len())
         .map(|i| (jet[1][i] - (p[i] - m[i]) / DD::from_f64(2.0 * h1)).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     let h2 = 2f64.powi(-14);
     let (p, m) = (resid_along(sh, z, v, h2), resid_along(sh, z, v, -h2));
-    let s2 = jet[2].iter().map(|x| x.hi.abs()).fold(1.0, f64::max);
+    let s2 = jet[2].iter().map(|x| x.hi.abs()).fold(1.0, nan_max);
     let d2 = (0..p.len())
         .map(|i| {
             (jet[2][i] - (p[i] - f0[i].mul_f(2.0) + m[i]) / DD::from_f64(2.0 * h2 * h2))
                 .hi
                 .abs()
         })
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     println!(
         "jet against differences: order 0 {d0:.3e}, order 1 {:.3e}, order 2 {:.3e}",
         d1 / s1,
@@ -174,7 +174,7 @@ fn jet_control_frozen_parameter_fails() {
     let jet = sh.residual_jet::<Double, 2>(&[parts(&z), parts(&v)], true, 2).unwrap();
     let d1 = (0..jet[1].len())
         .map(|i| (jet[1][i] - (f_pm.0[i] - f_pm.1[i]) / DD::from_f64(2e-9)).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     println!("control, frozen mu: order 1 off by {d1:.3e}");
     assert!(d1 > 1e-13, "control did not fire: {d1:e}");
 }
