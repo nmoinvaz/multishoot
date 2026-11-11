@@ -1,13 +1,15 @@
 //! Newton's method on F(z) = 0 in any precision: the step dz = -J^-1 F with the exact Jacobian and a dense LU, and
 //! a loop that halves a step which does not lower max |F|.
 use crate::equations::Equations;
-use crate::prec::{max_abs, parts, Prec};
+use crate::prec::{max_abs, parts};
 use crate::shooting::Shooting;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 use std::time::Instant;
 
 /// A Newton step at z: dz = -J^-1 F (PARTS part arrays), the residual F, the LU of J, and the seconds of the
 /// residual, the Jacobian, the factorization and the solve.
-pub struct Step<P: Prec> {
+pub struct Step<P: Precision<Native>> {
     pub dz: Vec<Vec<f64>>,
     pub f: Vec<P::Scalar>,
     pub lu: P::Lu,
@@ -47,7 +49,7 @@ pub struct NewtonReport {
 }
 
 /// z + s dz in the precision, part by part (s a power of two)
-fn axpy<P: Prec>(z: &[&[f64]], dz: &[Vec<f64>], s: f64) -> Vec<Vec<f64>> {
+fn axpy<P: Precision<Native>>(z: &[&[f64]], dz: &[Vec<f64>], s: f64) -> Vec<Vec<f64>> {
     let l = z[0].len();
     let mut out: Vec<Vec<f64>> = (0..P::PARTS).map(|_| vec![0.0; l]).collect();
     let sc = P::from_dd(multidouble::dd::DD::from_f64(s));
@@ -68,7 +70,7 @@ fn axpy<P: Prec>(z: &[&[f64]], dz: &[Vec<f64>], s: f64) -> Vec<Vec<f64>> {
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The Newton step at z.
-    pub fn newton_step<P: Prec>(&self, z: &[&[f64]], par: bool) -> Result<Step<P>, String> {
+    pub fn newton_step<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Step<P>, String> {
         let l = self.len();
         let mut t = [0.0f64; 4];
         let t0 = Instant::now();
@@ -92,7 +94,11 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
 
     /// Newton's method from z (PARTS part arrays, updated in place): steps until max |F| <= tol, each halved while it
     /// does not lower max |F|, at most `max_halvings` times.
-    pub fn newton<P: Prec>(&self, z: &mut Vec<Vec<f64>>, opts: &NewtonOpts) -> Result<NewtonReport, String> {
+    pub fn newton<P: Precision<Native>>(
+        &self,
+        z: &mut Vec<Vec<f64>>,
+        opts: &NewtonOpts,
+    ) -> Result<NewtonReport, String> {
         let mut rep = NewtonReport {
             fnorm: Vec::new(),
             scale: Vec::new(),

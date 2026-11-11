@@ -1,16 +1,17 @@
-//! The residual F(z) in any precision ([`Prec`]): every block's state from its inputs, minus its target node, then the
+//! The residual F(z) in any of multidouble's precisions (`Precision`): every block's state from its inputs, minus its target node, then the
 //! extra rows. F is zero exactly when the pieces join into one solution that meets the extra conditions.
 //!
 //! The blocks are independent, so with `par` each runs on its own rayon task; the result does not depend on it.
 use crate::equations::{Equations, State};
-use crate::prec::Prec;
 use crate::shooting::Shooting;
 use multidouble::field::Fl;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 use rayon::prelude::*;
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// Checks that z has PARTS part arrays of the problem's length.
-    pub fn check_z<P: Prec>(&self, z: &[&[f64]]) -> Result<(), String> {
+    pub fn check_z<P: Precision<Native>>(&self, z: &[&[f64]]) -> Result<(), String> {
         let l = self.len();
         if z.len() != P::PARTS || z.iter().any(|p| p.len() != l) {
             return Err(format!("z must be {} part arrays of length {l}", P::PARTS));
@@ -28,7 +29,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The field of z at offset off, its parts as they are
-    pub fn load<P: Prec>(&self, z: &[&[f64]], off: usize) -> Fl<P::V, B> {
+    pub fn load<P: Precision<Native>>(&self, z: &[&[f64]], off: usize) -> Fl<P::V, B> {
         let m = Self::M;
         let keep = self.kept(z.len());
         if keep == z.len() {
@@ -45,19 +46,19 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// Unknown i of z, renormalized from its parts
-    pub fn scalar<P: Prec>(&self, z: &[&[f64]], i: usize) -> P::Scalar {
+    pub fn scalar<P: Precision<Native>>(&self, z: &[&[f64]], i: usize) -> P::Scalar {
         let keep = self.kept(z.len());
         let parts: Vec<f64> = z.iter().take(keep).map(|p| p[i]).collect();
         P::new(&parts)
     }
 
     /// The globals of z
-    pub fn globals<P: Prec>(&self, z: &[&[f64]]) -> Vec<P::Scalar> {
+    pub fn globals<P: Precision<Native>>(&self, z: &[&[f64]]) -> Vec<P::Scalar> {
         (0..E::NG).map(|i| self.scalar::<P>(z, self.off_global() + i)).collect()
     }
 
     /// The states of every block at z, in value lanes
-    pub fn block_states<P: Prec>(&self, z: &[&[f64]], par: bool) -> Vec<State<P::V, B>> {
+    pub fn block_states<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Vec<State<P::V, B>> {
         let g: Vec<P::V> = self.globals::<P>(z).into_iter().map(P::splat).collect();
         let one = |b: usize| -> State<P::V, B> {
             let inp: Vec<Fl<P::V, B>> = self.block_inputs(b).iter().map(|&o| self.load::<P>(z, o)).collect();
@@ -72,7 +73,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// Extra row r at z: `sum_i w_i z_(idx_i) - rhs`
-    pub fn extra_row<P: Prec>(&self, z: &[&[f64]], r: usize) -> P::Scalar {
+    pub fn extra_row<P: Precision<Native>>(&self, z: &[&[f64]], r: usize) -> P::Scalar {
         let row = &self.extra[r];
         let s = P::dot(row.terms.iter().map(|&(i, w)| (P::from_dd(w), self.scalar::<P>(z, i))));
         if row.rhs.hi == 0.0 && row.rhs.lo == 0.0 {
@@ -83,7 +84,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The residual at z (PARTS part arrays of length `len()`), one scalar per row.
-    pub fn residual<P: Prec>(&self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
+    pub fn residual<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
         self.check_z::<P>(z)?;
         let m = Self::M;
         let states = self.block_states::<P>(z, par);
