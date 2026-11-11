@@ -144,13 +144,14 @@ fn fnv<P: Precision<Native>>(f: &[P::Scalar]) -> u64 {
     h.0
 }
 
-/// The hashes of J v in double-, quad- and octo-double at the state and direction of `state_and_direction`
-fn hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>], v8: &[Vec<f64>]) -> [u64; 3] {
+/// The hashes of J v in double-, quad- and octo-double at the state and direction of `state_and_direction`, the
+/// blocks on rayon tasks with `par` or one after another without
+fn hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>], v8: &[Vec<f64>], par: bool) -> [u64; 3] {
     let (z, v) = (parts(z8), parts(v8));
     [
-        fnv::<Double>(&sh.jvp::<Double>(&z[..2], &v[..2], true).unwrap().0),
-        fnv::<Quad>(&sh.jvp::<Quad>(&z[..4], &v[..4], true).unwrap().0),
-        fnv::<Octo>(&sh.jvp::<Octo>(&z, &v, true).unwrap().0),
+        fnv::<Double>(&sh.jvp::<Double>(&z[..2], &v[..2], par).unwrap().0),
+        fnv::<Quad>(&sh.jvp::<Quad>(&z[..4], &v[..4], par).unwrap().0),
+        fnv::<Octo>(&sh.jvp::<Octo>(&z, &v, par).unwrap().0),
     ]
 }
 
@@ -158,17 +159,22 @@ fn hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>], v8: &[Vec<f64>]) -> [u6
 const REFERENCE: [u64; 3] = [0x228f16c859d1cca4, 0x93abd5378a01aca3, 0x09994890e025f5e3];
 
 /// The product's bytes in every precision. Pass: the FNV-1a hashes of their bits equal the reference, on every SIMD
-/// backend of the CI matrix and with any number of threads.
+/// backend of the CI matrix, with any number of threads, and with the blocks in parallel or in sequence.
 #[test]
 fn jvp_bytes_match_reference() {
     let (sh, zs) = planted();
     let (z, v) = state_and_direction(&sh, &zs);
-    let h = hashes(&sh, &z, &v);
+    let h = hashes(&sh, &z, &v, true);
     println!(
         "jvp hashes [{}]",
         h.iter().map(|x| format!("{x:#018x}")).collect::<Vec<_>>().join(", ")
     );
     assert_eq!(h, REFERENCE, "the product's bytes differ from the reference");
+    assert_eq!(
+        hashes(&sh, &z, &v, false),
+        REFERENCE,
+        "the sequential product's bytes differ"
+    );
 }
 
 /// The control of `jvp_bytes_match_reference`: one ulp of the direction's part 0 at one unknown must change every
@@ -177,11 +183,11 @@ fn jvp_bytes_match_reference() {
 fn jvp_bytes_control_one_ulp_differs() {
     let (sh, zs) = planted();
     let (z, v) = state_and_direction(&sh, &zs);
-    let base = hashes(&sh, &z, &v);
+    let base = hashes(&sh, &z, &v, true);
     let mut vu = v.clone();
     let i = sh.off_node(1) + 5;
     vu[0][i] = f64::from_bits(vu[0][i].to_bits() + 1);
-    let h = hashes(&sh, &z, &vu);
+    let h = hashes(&sh, &z, &vu, true);
     for k in 0..3 {
         assert_ne!(h[k], base[k], "hash {k} unchanged");
     }
