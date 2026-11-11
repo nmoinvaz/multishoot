@@ -76,3 +76,42 @@ jobs:
         if: ${{ !matrix.msrv }}
         timeout-minutes: 30
         run: cargo test --release ${{ matrix.cargo-args }}
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install llvm-tools
+        run: rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      # With the mutation controls, on the runner's SSE2 backend. Release mode, as the planted problems run Newton in
+      # quad- and octo-double, which takes too long unoptimized; inlined code loses some of its counts.
+      - name: Collect coverage
+        timeout-minutes: 30
+        run: |
+          cargo llvm-cov --release --features mutate --lcov --output-path lcov.info
+          cargo llvm-cov report --release --summary-only
+
+      - name: Upload report
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov
+          path: lcov.info
+
+      - name: Upload to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
