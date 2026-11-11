@@ -42,6 +42,8 @@ pub struct Shooting<E: Equations<B>, const B: usize> {
     /// the last segment that runs outward (default K - 1: all of them)
     pub match_node: usize,
     pub extra: Vec<ExtraRow>,
+    #[cfg(feature = "mutate")]
+    pub(crate) control: crate::control::Control,
 }
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
@@ -65,7 +67,15 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             kt,
             match_node,
             extra: Vec::new(),
+            #[cfg(feature = "mutate")]
+            control: crate::control::Control::None,
         }
+    }
+
+    /// Sets the deliberate error of the residual or the Jacobian, for a control (`Control::None` to clear it).
+    #[cfg(feature = "mutate")]
+    pub fn set_control(&mut self, c: crate::control::Control) {
+        self.control = c;
     }
 
     /// the number of nodes K
