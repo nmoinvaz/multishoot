@@ -217,3 +217,33 @@ fn stepping_bytes_control_one_ulp_differs() {
     assert_ne!(h, STEPPING_REFERENCE, "control did not fire");
     assert_ne!(h, stepping_hash(|_| {}), "control did not fire");
 }
+
+/// Every planned segment ends exactly at its target node. Pass: the last step point equals the node in f64.
+#[test]
+fn planned_segments_end_at_their_nodes() {
+    for match_node in [4, 0] {
+        let sh = rotor_shooting(Wrong::None, match_node);
+        for b in 1..sh.k() {
+            let dst = if sh.seg_inward(b) { b - 1 } else { b };
+            assert_eq!(sh.segs[b - 1].first(), Some(&sh.nodes[sh.seg_source(b)]));
+            assert_eq!(sh.segs[b - 1].last(), Some(&sh.nodes[dst]));
+        }
+    }
+}
+
+/// A plan with a zero tolerance would make no progress: the planner must refuse it rather than loop.
+#[test]
+#[should_panic(expected = "must be positive")]
+fn planner_rejects_zero_tolerance() {
+    let mut sh = Shooting::new(Rotor::<B>::new(), NODES.to_vec(), 20);
+    let (zh, zl) = exact_z(&sh);
+    sh.plan_segments(
+        &zh,
+        &zl,
+        &Plan {
+            kt: 20,
+            tol: 0.0,
+            hmax: 1.0,
+        },
+    );
+}

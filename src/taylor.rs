@@ -68,9 +68,10 @@ pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
     h1.min(h2).min(plan.hmax)
 }
 
-/// Step points from xa to xb (either direction) for the state s0, both ends included: each step from
-/// [`step_size`] at the state reached so far; a step that would leave less than 40% of the rest is halved, so the
-/// segment ends in two near-equal steps instead of a sliver.
+/// Step points from xa to xb (either direction) for the state s0, both ends included and the last exactly xb: each
+/// step from [`step_size`] at the state reached so far; a step that would leave less than 40% of the rest is halved,
+/// so the segment ends in two near-equal steps instead of a sliver. A plan with tol or hmax not positive, or a step
+/// that is not positive or does not move x (coefficients that are not finite, or a singularity at x), panics.
 pub fn plan_path<E: Equations<B>, const B: usize>(
     eq: &E,
     s0: &[Fl<DV, B>],
@@ -80,17 +81,24 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
     plan: &Plan,
 ) -> Vec<f64> {
     assert!(plan.kt >= 2, "plan_path: Taylor order {} < 2", plan.kt);
+    assert!(
+        plan.tol > 0.0 && plan.hmax > 0.0,
+        "plan_path: tol {:e} and hmax {:e} must be positive",
+        plan.tol,
+        plan.hmax
+    );
     let mut w = Work::<DV, B>::new(E::NF, E::NAUX, plan.kt);
     let mut xs = vec![xa];
     let mut x = xa;
     let mut s = s0.to_vec();
     let dir = if xb > xa { 1.0 } else { -1.0 };
-    while (xb - x) * dir > 1e-15 {
+    while (xb - x) * dir > 0.0 {
         for (f, sf) in s.iter().enumerate() {
             w.c[f][0] = *sf;
         }
         eq.taylor_coeffs(x, g, &mut w);
         let mut h = step_size(&w, plan);
+        assert!(h > 0.0, "plan_path: step {h:e} at x = {x}");
         let rest = (xb - x) * dir;
         if h >= rest {
             h = rest;
@@ -98,6 +106,7 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
             h = 0.5 * rest;
         }
         let xn = if h == rest { xb } else { x + dir * h };
+        assert!(xn != x, "plan_path: step {h:e} does not move x = {x}");
         let hd = DD::from_f64(xn) - DD::from_f64(x);
         s = w.c.iter().map(|cf| horner(&cf[..=plan.kt], hd)).collect();
         x = xn;
