@@ -164,6 +164,24 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 add(&mut c, i * ld + re + r, P::from_dd(w));
             }
         }
+        if !self.row_scale.is_empty() {
+            if self.row_scale.len() != l {
+                return Err(format!("row_scale has {} factors for {l} rows", self.row_scale.len()));
+            }
+            let mut cur = vec![0.0; P::PARTS];
+            for j in 0..l {
+                for (r, &sr) in self.row_scale.iter().enumerate() {
+                    let idx = j * ld + r;
+                    for q in 0..P::PARTS {
+                        cur[q] = c[q][idx];
+                    }
+                    let v = P::from_raw(&cur) * P::from_dd(multidouble::dd::DD::from_f64(sr));
+                    for (q, cq) in c.iter_mut().enumerate() {
+                        cq[idx] = P::part(v, q);
+                    }
+                }
+            }
+        }
         Ok((c, ld))
     }
 }
