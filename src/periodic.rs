@@ -73,23 +73,46 @@ pub fn sin_cos(x: DD) -> (DD, DD) {
 }
 
 /// The reduction of the angle (p / q) pi, q > 0, in integers without overflow: p modulo 2q (a period), then
-/// (n, num) with n = round(2p / q), the nearest multiple of pi / 2, and the remainder (p / q) pi - n pi / 2 =
+/// (n, num, 2q) with n = round(2p / q), the nearest multiple of pi / 2, and the remainder (p / q) pi - n pi / 2 =
 /// num pi / 2q, |num| <= q. The results are those of the unreduced p wherever its products fit in i64.
-fn reduce_pi(p: i64, q: i64) -> (i64, i64) {
+fn reduce_pi(p: i64, q: i64) -> (i64, i128, i128) {
     let (p, q) = (p as i128, q as i128);
     let p = p.rem_euclid(2 * q);
     let n = (4 * p + q).div_euclid(2 * q);
-    (n as i64, (2 * p - n * q) as i64)
+    (n as i64, 2 * p - n * q, 2 * q)
+}
+
+/// whether the integer is an f64 exactly (|x| <= 2^53)
+fn f64_exact(x: i128) -> bool {
+    x.unsigned_abs() <= 1 << 53
+}
+
+/// x as an exact sum of two f64s, |x| < 2^106: its nearest f64 and the integer remainder (below 2^53)
+fn split_int(x: i128) -> (f64, f64) {
+    let hi = x as f64;
+    (hi, (x - hi as i128) as f64)
+}
+
+/// the remainder num pi / 2q in double-double: by f64 operations where num and 2q are f64s exactly, as before, and
+/// otherwise from their exact double-double values
+fn remainder_dd(num: i128, q2: i128) -> DD {
+    if f64_exact(num) && f64_exact(q2) {
+        return PI.mul_f(num as f64) / DD::from_f64(q2 as f64);
+    }
+    let dd = |x: i128| {
+        let (hi, lo) = split_int(x);
+        DD { hi, lo }
+    };
+    PI * dd(num) / dd(q2)
 }
 
 /// sin and cos of (p / q) pi, q > 0, with the reduction in integers: the remainder (2p - n q) pi / (2q) after the
-/// nearest multiple n of pi / 2 is formed from an exact integer, so the result is accurate to about 2^-106 relative
-/// for every p
+/// nearest multiple n of pi / 2 is formed from an exact integer, and divided exactly, so the result is accurate to
+/// about 2^-106 relative for every p and q
 pub fn sin_cos_pi(p: i64, q: i64) -> (DD, DD) {
     assert!(q > 0, "sin_cos_pi: q = {q}");
-    let (n, num) = reduce_pi(p, q);
-    let r = PI.mul_f(num as f64) / DD::from_f64((2 * q) as f64);
-    quadrant(n, sin_cos_series(r))
+    let (n, num, q2) = reduce_pi(p, q);
+    quadrant(n, sin_cos_series(remainder_dd(num, q2)))
 }
 
 /// pi in octo-double: the parts of its greedy round-to-nearest expansion, from 150 decimal digits (checked against
@@ -127,11 +150,19 @@ fn sin_cos_series_od(r: OD, tol: f64) -> (OD, OD) {
 }
 
 /// sin and cos of (p / q) pi, q > 0, in octo-double, reduced in integers as [`sin_cos_pi`]: accurate to about 2^-424
-/// relative for every p, so the constants made from them are exact in every precision of the solve
+/// relative for every p and q, so the constants made from them are exact in every precision of the solve
 pub fn sin_cos_pi_od(p: i64, q: i64) -> (OD, OD) {
     assert!(q > 0, "sin_cos_pi_od: q = {q}");
-    let (n, num) = reduce_pi(p, q);
-    let r = PI_OD.mul_f(num as f64) / OD::from_f64((2 * q) as f64);
+    let (n, num, q2) = reduce_pi(p, q);
+    let r = if f64_exact(num) && f64_exact(q2) {
+        PI_OD.mul_f(num as f64) / OD::from_f64(q2 as f64)
+    } else {
+        let od = |x: i128| {
+            let (hi, lo) = split_int(x);
+            OD::new([hi, lo, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        };
+        PI_OD * od(num) / od(q2)
+    };
     let (s, c) = sin_cos_series_od(r, 1e-136);
     match n.rem_euclid(4) {
         0 => (s, c),
@@ -343,6 +374,96 @@ mod tests {
         let (s, c) = sin_cos_pi(pr + q, q);
         assert_ne!(sin_cos_pi(p, q), (s, c));
         assert_eq!(sin_cos_pi(p, q), (-s, -c));
+    }
+
+    /// sin and cos of x, |x| <= 2^-50, in octo-double by their Taylor series to x^21 (the next term is below 2^-1100
+    /// relative), formed here from x alone
+    fn small_angle(x: OD) -> (OD, OD) {
+        let (mut s, mut c) = (OD::from_f64(0.0), OD::from_f64(0.0));
+        let mut t = OD::from_f64(1.0);
+        for k in 0..22 {
+            if k % 2 == 0 {
+                c = c + if k % 4 == 0 { t } else { -t };
+            } else {
+                s = s + if k % 4 == 1 { t } else { -t };
+            }
+            t = t * x / OD::from_f64((k + 1) as f64);
+        }
+        (s, c)
+    }
+
+    /// the denominators past f64's integers: 2^53 + 1 (2q is not an f64), 2^62 (2q = 2^63 overflows i64) and
+    /// i64::MAX, with p = 1, 3 and -5
+    const LARGE_Q: [i64; 3] = [(1 << 53) + 1, 1 << 62, i64::MAX];
+
+    /// the largest error of a (sin, cos) evaluation of p pi / q against `small_angle`, relative, for each large q
+    fn large_q_error(f: impl Fn(i64, i64) -> (OD, OD)) -> [f64; 3] {
+        LARGE_Q.map(|q| {
+            let mut worst = 0.0f64;
+            for p in [1i64, 3, -5] {
+                let qd = OD::new([
+                    q as f64,
+                    (q as i128 - (q as f64) as i128) as f64,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]);
+                let x = PI_OD.mul_f(p as f64) / qd;
+                let (s0, c0) = small_angle(x);
+                let (s, c) = f(p, q);
+                worst = worst.max((od_diff(s, s0) / s0.to_f64().abs()).max(od_diff(c, c0)));
+            }
+            worst
+        })
+    }
+
+    /// Large denominators: pass, sin_cos_pi_od within 1e-125 and sin_cos_pi within 1e-31 of the small-angle series
+    /// at p / q for q = 2^53 + 1, 2^62 and i64::MAX (relative for sin).
+    #[test]
+    fn sin_cos_pi_takes_large_denominators() {
+        let eo = large_q_error(sin_cos_pi_od);
+        let ed = large_q_error(|p, q| {
+            let (s, c) = sin_cos_pi(p, q);
+            (OD::from_dd(s), OD::from_dd(c))
+        });
+        println!("large q: od {eo:?}, dd {ed:?}");
+        assert!(
+            eo.iter().all(|&e| e < 1e-125) && ed.iter().all(|&e| e < 1e-31),
+            "{eo:?} {ed:?}"
+        );
+    }
+
+    /// The controls of `sin_cos_pi_takes_large_denominators`: the former remainder, num and 2q rounded to f64 (and 2q
+    /// formed in i64, wrapping where it overflows), must fail both bounds at every q: by the rounding of 2q at
+    /// 2^53 + 1, by the overflow at 2^62 and i64::MAX.
+    #[test]
+    fn sin_cos_pi_large_q_control_former_remainder_fails() {
+        let former = |p: i64, q: i64| {
+            let (n, num, _) = reduce_pi(p, q);
+            let r = PI_OD.mul_f(num as f64) / OD::from_f64(q.wrapping_mul(2) as f64);
+            let (s, c) = sin_cos_series_od(r, 1e-136);
+            match n.rem_euclid(4) {
+                0 => (s, c),
+                1 => (c, -s),
+                2 => (-s, -c),
+                _ => (-c, s),
+            }
+        };
+        let eo = large_q_error(former);
+        let ed = large_q_error(|p, q| {
+            let (n, num, _) = reduce_pi(p, q);
+            let r = PI.mul_f(num as f64) / DD::from_f64(q.wrapping_mul(2) as f64);
+            let (s, c) = quadrant(n, sin_cos_series(r));
+            (OD::from_dd(s), OD::from_dd(c))
+        });
+        println!("control, former remainder: od {eo:?}, dd {ed:?}");
+        assert!(
+            eo.iter().all(|&e| e >= 1e-125) && ed.iter().all(|&e| e >= 1e-31),
+            "control did not fire: {eo:?} {ed:?}"
+        );
     }
 
     /// The control of `sin_cos_pi_od_agrees`: the series stopped at terms below 1e-90 must fail sin^2 + cos^2 = 1 at
