@@ -111,6 +111,25 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         for r in 0..self.extra.len() {
             f[re + r] = self.extra_row::<P>(z, r);
         }
+        self.scale_rows::<P>(&mut f)?;
         Ok(f)
+    }
+
+    /// Each row times its `row_scale` factor (nothing when there are none)
+    pub(crate) fn scale_rows<P: Precision<Native>>(&self, f: &mut [P::Scalar]) -> Result<(), String> {
+        if self.row_scale.is_empty() {
+            return Ok(());
+        }
+        if self.row_scale.len() != f.len() {
+            return Err(format!(
+                "row_scale has {} factors for {} rows",
+                self.row_scale.len(),
+                f.len()
+            ));
+        }
+        for (v, &s) in f.iter_mut().zip(&self.row_scale) {
+            *v = *v * P::from_dd(multidouble::dd::DD::from_f64(s));
+        }
+        Ok(())
     }
 }
