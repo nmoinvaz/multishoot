@@ -11,6 +11,7 @@ use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use multidouble::dd::DD;
 use multidouble::field::{horner, Fl};
+use multidouble::native::V8;
 
 /// The planner's settings: Taylor order, tolerance on the last terms (absolute), largest step.
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +54,14 @@ pub fn taylor_path<E: Equations<B>, T: Lane, const B: usize>(
     s
 }
 
+/// whether every value of the field is finite, hi and lo parts, tested lane-wise: x - x is zero exactly when x is
+/// finite (NaN and infinities give NaN)
+pub fn all_finite<const B: usize>(f: &Fl<DV, B>) -> bool {
+    let zero = V8::zero();
+    f.0.iter()
+        .all(|v| v.hi.sub(v.hi).eq(zero).bits() == 0xff && v.lo.sub(v.lo).eq(zero).bits() == 0xff)
+}
+
 /// max over the fields and collocation points of |coefficient k| (hi parts)
 pub fn coef_norm<const B: usize>(w: &Work<DV, B>, k: usize) -> f64 {
     w.c.iter().map(|cf| cf[k].amax()).fold(0.0, f64::max)
@@ -70,8 +79,9 @@ pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
 
 /// Step points from xa to xb (either direction) for the state s0, both ends included and the last exactly xb: each
 /// step from [`step_size`] at the state reached so far; a step that would leave less than 40% of the rest is halved,
-/// so the segment ends in two near-equal steps instead of a sliver. A plan with tol or hmax not positive, or a step
-/// that is not positive or does not move x (coefficients that are not finite, or a singularity at x), panics.
+/// so the segment ends in two near-equal steps instead of a sliver. It panics on an end that is not finite, a plan
+/// with tol or hmax not positive, a Taylor coefficient that is not finite (every order 0..=kt, both parts, as
+/// Horner's rule uses them all), and a step that is not positive or does not move x (a singularity at x).
 pub fn plan_path<E: Equations<B>, const B: usize>(
     eq: &E,
     s0: &[Fl<DV, B>],
@@ -80,6 +90,10 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
     g: &[DV],
     plan: &Plan,
 ) -> Vec<f64> {
+    assert!(
+        xa.is_finite() && xb.is_finite(),
+        "plan_path: ends {xa} and {xb} must be finite"
+    );
     assert!(plan.kt >= 2, "plan_path: Taylor order {} < 2", plan.kt);
     assert!(
         plan.tol > 0.0 && plan.hmax > 0.0,
@@ -97,6 +111,11 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
             w.c[f][0] = *sf;
         }
         eq.taylor_coeffs(x, g, &mut w);
+        for (f, cf) in w.c.iter().enumerate() {
+            if let Some(k) = cf[..=plan.kt].iter().position(|c| !all_finite(c)) {
+                panic!("plan_path: Taylor coefficient {k} of field {f} at x = {x} is not finite");
+            }
+        }
         let mut h = step_size(&w, plan);
         assert!(h > 0.0, "plan_path: step {h:e} at x = {x}");
         let rest = (xb - x) * dir;
