@@ -1,4 +1,5 @@
-//! Scaled rows: the residual, the Jacobian and the jet with `row_scale` are the unscaled ones times the factors.
+//! Scaled rows: the residual, the Jacobian, the jet and the Jacobian-vector product with `row_scale` are the unscaled
+//! ones times the factors.
 mod common;
 
 use common::{perturbed, Planted};
@@ -19,9 +20,9 @@ fn scaled(s: f64) -> (Shooting<Planted<B>, B>, Shooting<Planted<B>, B>, Vec<Vec<
     (plain, sc, perturbed(&zs, 1e-3))
 }
 
-/// Whether the residual, every Jacobian entry and both orders of the jet of `sc` equal `plain`'s times `t` on the
-/// scaled rows and times 1 on the others, bit for bit: one verdict per comparison.
-fn comparisons(plain: &Shooting<Planted<B>, B>, sc: &Shooting<Planted<B>, B>, z: &[Vec<f64>], t: f64) -> [bool; 3] {
+/// Whether the residual, every Jacobian entry, both orders of the jet and the product J v with its residual of `sc`
+/// equal `plain`'s times `t` on the scaled rows and times 1 on the others, bit for bit: one verdict per comparison.
+fn comparisons(plain: &Shooting<Planted<B>, B>, sc: &Shooting<Planted<B>, B>, z: &[Vec<f64>], t: f64) -> [bool; 4] {
     let p = parts(z);
     let f = |r: usize| {
         if sc.row_scale[r] == 1.0 {
@@ -53,24 +54,30 @@ fn comparisons(plain: &Shooting<Planted<B>, B>, sc: &Shooting<Planted<B>, B>, z:
         sc.residual_jet::<Double, 2>(&[p.clone(), parts(&v)], true, 2).unwrap(),
     );
     let jet = (0..2).all(|k| (0..l).all(|r| j0[k][r] * f(r) == j1[k][r]));
-    [res, jac, jet]
+    let ((p0, g0), (p1, g1)) = (
+        plain.jvp::<Double>(&p, &parts(&v), true).unwrap(),
+        sc.jvp::<Double>(&p, &parts(&v), true).unwrap(),
+    );
+    let jvp = (0..l).all(|r| p0[r] * f(r) == p1[r] && g0[r] * f(r) == g1[r]);
+    [res, jac, jet, jvp]
 }
 
-/// Pass: with block 3 scaled by 2^100 the residual, every Jacobian entry and both orders of the jet equal the
-/// unscaled ones times the factor, bit for bit (a power of two scales exactly), and the other rows are unchanged.
+/// Pass: with block 3 scaled by 2^100 the residual, every Jacobian entry, both orders of the jet and the product J v
+/// equal the unscaled ones times the factor, bit for bit (a power of two scales exactly), and the other rows are
+/// unchanged.
 #[test]
 fn row_scale_scales_residual_jacobian_and_jet() {
     let s = 2f64.powi(100);
     let (plain, sc, z) = scaled(s);
-    assert_eq!(comparisons(&plain, &sc, &z, s), [true, true, true]);
+    assert_eq!(comparisons(&plain, &sc, &z, s), [true, true, true, true]);
 }
 
-/// The control of the comparisons: told the factor is 2^101 where it is 2^100, each of the three must fail.
+/// The control of the comparisons: told the factor is 2^101 where it is 2^100, each of the four must fail.
 #[test]
 fn row_scale_control_wrong_factor_fails() {
     let s = 2f64.powi(100);
     let (plain, sc, z) = scaled(s);
-    assert_eq!(comparisons(&plain, &sc, &z, 2.0 * s), [false, false, false]);
+    assert_eq!(comparisons(&plain, &sc, &z, 2.0 * s), [false, false, false, false]);
 }
 
 /// The control: a factor list of the wrong length must be refused, not applied.
@@ -79,4 +86,5 @@ fn row_scale_control_wrong_length_fails() {
     let (_, mut sc, z) = scaled(2.0);
     sc.row_scale.pop();
     assert!(sc.residual::<Double>(&parts(&z), true).is_err() && sc.jacobian::<Double>(&parts(&z), true).is_err());
+    assert!(sc.jvp::<Double>(&parts(&z), &parts(&z), true).is_err());
 }
