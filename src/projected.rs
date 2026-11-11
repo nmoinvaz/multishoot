@@ -22,8 +22,9 @@
 use crate::equations::Equations;
 use crate::periodic::{sin_cos_pi_od, Parity};
 use crate::shooting::Shooting;
+use multidouble::dd::DD;
 use multidouble::od::OD;
-use multidouble::precision::Precision;
+use multidouble::precision::{Double, Precision};
 use multidouble::simd::Native;
 
 /// The projected rows of one field of one block ([`crate::projected`])
@@ -194,6 +195,47 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// field become Pi d (the target's -1 becomes -Pi), and the pinned unknowns' columns gain Pi'.
     pub(crate) fn project_jacobian<P: Precision<Native>>(&self, c: &mut [Vec<f64>], ld: usize) {
         self.project_columns::<P>(c, ld, self.len(), true);
+    }
+
+    /// The projected rows of an f64 matrix (column-major, ld) on the given columns, whose rows rel..rel + NF M are
+    /// block b's: `project_columns` for every projection of block b, in double-double and rounded to f64. `pos` maps an
+    /// unknown to its column, None when it has none (an error for a pinned unknown).
+    pub(crate) fn project_f64_block(
+        &self,
+        b: usize,
+        w: &mut [f64],
+        ld: usize,
+        rel: usize,
+        cols: usize,
+        pos: impl Fn(usize) -> Option<usize>,
+    ) -> Result<(), String> {
+        let m = Self::M;
+        let dd = self.projector_dd();
+        for p in self.projected.iter().filter(|p| p.block == b) {
+            let r0 = rel + p.field * m;
+            for j in 0..cols {
+                if (0..m).all(|i| w[j * ld + r0 + i] == 0.0) {
+                    continue;
+                }
+                let x: Vec<DD> = (0..m).map(|i| DD::from_f64(w[j * ld + r0 + i])).collect();
+                for (i, v) in p.apply::<Double>(&x, None, dd).into_iter().enumerate() {
+                    w[j * ld + r0 + i] = v.hi;
+                }
+            }
+            for jj in 0..m {
+                let c = pos(p.pin + jj).ok_or_else(|| {
+                    format!(
+                        "projected rows of block {b}: the pinned unknown {} has no column here",
+                        p.pin + jj
+                    )
+                })?;
+                for i in 0..m {
+                    let k = c * ld + r0 + i;
+                    w[k] = (DD::from_f64(w[k]) + p.entry::<Double>(false, i, jj, dd)).hi;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `project_jacobian` on the first `ncols` columns of a matrix in P's part arrays, the pinned columns' Pi' added

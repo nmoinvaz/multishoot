@@ -25,6 +25,7 @@ This crate is the engine of that method, generic over the equations, on the arit
 | Jacobian-vector product | J v by one dual pass per block, without forming the Jacobian, in every precision |
 | mode matrix | the linearization for perturbations growing as exp(λt) at a complex rate λ, and its determinant, whose winding number counts the modes |
 | Newton | in double-double, quad-double or octo-double (multidouble's `Precision` trait), with the residual's Taylor series in a parameter of the equations |
+| fast path | the Jacobian in f64 from lanes with f64 tangents, several columns per evaluation, dense or in staircase storage, and the mixed-precision Newton on it |
 
 **Status:** early. The API may change between minor versions until 1.0. It depends on multidouble from crates.io,
 whose `Precision` trait (double-, quad- and octo-double) it is written over.
