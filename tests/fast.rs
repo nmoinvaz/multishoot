@@ -374,6 +374,25 @@ mod controls {
         }
     }
 
+    /// the state read in half its parts (the quad-double state in double-double) keeps the quad-double mixed Newton
+    /// above the 1e-60 of `mixed_newton_reaches_quad_double`, in the same 6 steps
+    #[test]
+    fn half_parts_fail_the_quad_double_mixed_newton() {
+        let (mut sh, zs) = planted();
+        let mut z = perturbed(&zs, 1e-3);
+        sh.newton::<Double>(&mut z, &opts(1e-28, 10)).unwrap();
+        sh.set_control(Control::HalfParts);
+        let mut zq = widen(&z, 4);
+        let rep = sh
+            .newton_mixed::<Quad, Dtn<4>>(&mut zq, &opts(1e-60, 6), Storage::Staircase)
+            .unwrap();
+        println!(
+            "control, half parts: quad-double mixed Newton max |F| {}",
+            sci(&rep.fnorm)
+        );
+        assert!(!rep.converged, "control did not fire");
+    }
+
     /// a pivot off by 1e-6 slows the mixed Newton: it must not converge in the steps `mixed_newton_converges` allows
     #[test]
     fn staircase_pivot_slows_the_mixed_newton() {
