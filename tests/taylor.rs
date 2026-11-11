@@ -385,3 +385,25 @@ fn plan_points_match_reference() {
 fn plan_points_control_tolerance_differs() {
     assert_ne!(plan_hash(1.0 + 2f64.powi(-30)), plan_hash(1.0), "control did not fire");
 }
+
+/// a plan of the rotor at order 2 over one tiny segment, x = 0 to 1e-12, at the tolerance tol
+fn plan_tiny(tol: f64) -> Vec<f64> {
+    let eq = Rotor::<B>::new();
+    plan_path(&eq, &eq.exact(0.0), 0.0, 1e-12, &[], &Plan { kt: 2, tol, hmax: 1.0 })
+}
+
+/// A tolerance so small that tol / e underflows to zero (the smallest subnormal over coefficients above 2) must stop
+/// the planner with its own message about the step, not inside the root.
+#[test]
+#[should_panic(expected = "plan_path: step 0e0")]
+fn planner_reports_an_underflowing_tolerance() {
+    plan_tiny(f64::from_bits(1));
+}
+
+/// The control of `planner_reports_an_underflowing_tolerance`: a tolerance whose quotient does not underflow plans
+/// the segment without panicking, in one step (at order 2 the first root is of degree 1, h = tol / e_1, about 2e-11
+/// at tol = 1e-10 and above the segment's 1e-12).
+#[test]
+fn planner_underflow_control_normal_tolerance_plans() {
+    assert_eq!(plan_tiny(1e-10), vec![0.0, 1e-12]);
+}
