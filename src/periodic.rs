@@ -72,14 +72,22 @@ pub fn sin_cos(x: DD) -> (DD, DD) {
     quadrant(n as i64, sin_cos_series(r))
 }
 
+/// The reduction of the angle (p / q) pi, q > 0, in integers without overflow: p modulo 2q (a period), then
+/// (n, num) with n = round(2p / q), the nearest multiple of pi / 2, and the remainder (p / q) pi - n pi / 2 =
+/// num pi / 2q, |num| <= q. The results are those of the unreduced p wherever its products fit in i64.
+fn reduce_pi(p: i64, q: i64) -> (i64, i64) {
+    let (p, q) = (p as i128, q as i128);
+    let p = p.rem_euclid(2 * q);
+    let n = (4 * p + q).div_euclid(2 * q);
+    (n as i64, (2 * p - n * q) as i64)
+}
+
 /// sin and cos of (p / q) pi, q > 0, with the reduction in integers: the remainder (2p - n q) pi / (2q) after the
 /// nearest multiple n of pi / 2 is formed from an exact integer, so the result is accurate to about 2^-106 relative
 /// for every p
 pub fn sin_cos_pi(p: i64, q: i64) -> (DD, DD) {
     assert!(q > 0, "sin_cos_pi: q = {q}");
-    // n = round(2p / q), the nearest multiple of pi / 2
-    let n = (4 * p + q).div_euclid(2 * q);
-    let num = 2 * p - n * q;
+    let (n, num) = reduce_pi(p, q);
     let r = PI.mul_f(num as f64) / DD::from_f64((2 * q) as f64);
     quadrant(n, sin_cos_series(r))
 }
@@ -122,8 +130,7 @@ fn sin_cos_series_od(r: OD, tol: f64) -> (OD, OD) {
 /// relative for every p, so the constants made from them are exact in every precision of the solve
 pub fn sin_cos_pi_od(p: i64, q: i64) -> (OD, OD) {
     assert!(q > 0, "sin_cos_pi_od: q = {q}");
-    let n = (4 * p + q).div_euclid(2 * q);
-    let num = 2 * p - n * q;
+    let (n, num) = reduce_pi(p, q);
     let r = PI_OD.mul_f(num as f64) / OD::from_f64((2 * q) as f64);
     let (s, c) = sin_cos_series_od(r, 1e-136);
     match n.rem_euclid(4) {
@@ -309,6 +316,30 @@ mod tests {
             }
         }
         println!("sin_cos_pi_od: worst identity error {worst:.3e}");
+    }
+
+    /// The reduction modulo 2q: pass, sin and cos of (p / q) pi in octo-double and double-double equal those of the
+    /// reduced p bit for bit for p near i64::MAX and i64::MIN and q up to 10^15, where 4p + q would overflow.
+    #[test]
+    fn sin_cos_pi_reduces_large_p() {
+        for q in [7i64, 40, 1_000_000_000_000_000] {
+            for p in [i64::MAX, i64::MAX - 5, i64::MIN, i64::MIN + 3] {
+                let pr = (p as i128).rem_euclid(2 * q as i128) as i64;
+                assert_eq!(sin_cos_pi_od(p, q), sin_cos_pi_od(pr, q), "{p}/{q}");
+                assert_eq!(sin_cos_pi(p, q), sin_cos_pi(pr, q), "{p}/{q}");
+            }
+        }
+    }
+
+    /// The control of `sin_cos_pi_reduces_large_p`: the angle half a period on (p + q) must differ, its sine and
+    /// cosine negated.
+    #[test]
+    fn sin_cos_pi_reduction_control_half_period_differs() {
+        let (p, q) = (i64::MAX - 5, 40);
+        let pr = (p as i128).rem_euclid(2 * q as i128) as i64;
+        let (s, c) = sin_cos_pi_od(pr + q, q);
+        assert_ne!(sin_cos_pi_od(p, q), (s, c));
+        assert_eq!(sin_cos_pi_od(p, q), (-s, -c));
     }
 
     /// The control of `sin_cos_pi_od_agrees`: the series stopped at terms below 1e-90 must fail sin^2 + cos^2 = 1 at
