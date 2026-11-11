@@ -331,6 +331,7 @@ impl<const B: usize> Equations<B> for Planted<B> {
             }
         }
         let om = -g[0];
+        let rate = w.rate;
         for k in 0..kt {
             let mut su = Fl::<T, B>::zero();
             let mut sv = Fl::<T, B>::zero();
@@ -341,8 +342,14 @@ impl<const B: usize> Equations<B> for Planted<B> {
                 }
             }
             let (u, v) = (&w.c[0], &w.c[1]);
-            let th = if self.coupled { self.d.apply(&u[k]) } else { u[k] };
-            let du = th.mul_t(om) + multishoot::cs(u, v, k) + su;
+            // -omega u_theta is -u_t, t = theta / omega, whose derivative a mode matrix shifts by its rate; the
+            // pointwise variant's -omega u has no derivative
+            let th = if self.coupled {
+                -rate.shift(&u[k], self.d.apply(&u[k]).mul_t(g[0]))
+            } else {
+                u[k].mul_t(om)
+            };
+            let du = th + multishoot::cs(u, v, k) + su;
             let dv = (multishoot::cs(u, u, k) - v[k]) + sv;
             let ik = DD::ONE / DD::from_f64((k + 1) as f64);
             w.c[0][k + 1] = du.muls(ik);

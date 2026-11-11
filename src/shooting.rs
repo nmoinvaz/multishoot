@@ -18,6 +18,7 @@
 //! system is square when NL + NR = NF and there is one extra row per global.
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
+use crate::mode::Rate;
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -179,11 +180,25 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// evaluation's preparation (`Equations::prepare`): the left endpoint's state at node 0, segment b's Taylor path,
     /// or the right endpoint's state at node K-1.
     pub fn block_state<T: Lane>(&self, b: usize, inp: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.block_state_at(b, inp, g, prep, Rate::ZERO)
+    }
+
+    /// `block_state` with the Taylor steps at the growth rate of a mode-matrix evaluation (`Work::rate`); the
+    /// endpoint maps take theirs from the preparation
+    pub fn block_state_at<T: Lane>(
+        &self,
+        b: usize,
+        inp: &[Fl<T, B>],
+        g: &[T],
+        prep: &E::Prep,
+        rate: Rate,
+    ) -> State<T, B> {
         let k = self.k();
         if b == 0 {
             self.eq.left_state(self.nodes[0], inp, g, prep)
         } else if b < k {
             let mut w = Work::<T, B>::new(E::NF, E::NAUX, self.kt);
+            w.rate = rate;
             taylor_path(&self.eq, inp, &self.segs[b - 1], g, &mut w)
         } else {
             self.eq.right_state(self.nodes[k - 1], inp, g, prep)

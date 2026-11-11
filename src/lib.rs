@@ -30,6 +30,7 @@
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`newton`]: the Newton step and the damped Newton loop;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
+//! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
 //! * [`prec`]: helpers for states held as part arrays in any of multidouble's precisions ([`Precision`]:
 //!   double-double [`Double`], quad-double [`Quad`], octo-double [`Octo`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
@@ -41,6 +42,7 @@ pub mod equations;
 pub mod jacobian;
 pub mod jet;
 pub mod lane;
+pub mod mode;
 pub mod newton;
 pub mod periodic;
 pub mod prec;
@@ -49,6 +51,7 @@ pub mod shooting;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
+pub use mode::{ModeMatrix, Rate};
 pub use multidouble;
 pub use multidouble::dd::DD;
 pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
