@@ -522,9 +522,14 @@ fn mode_matrix_refuses_a_wrong_row_scale() {
 
 /// The FNV-1a hash of every part of the planted problem's mode matrix at z* perturbed by 1e-2 and the rate
 fn mode_hash(rate: Rate) -> u64 {
+    mode_hash_par(rate, true)
+}
+
+/// `mode_hash` with the columns on rayon tasks (`par`) or one after another
+fn mode_hash_par(rate: Rate, par: bool) -> u64 {
     let (sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
     let z = perturbed(&zs, 1e-2);
-    let mm = sh.mode_matrix(&parts(&z), rate, true).unwrap();
+    let mm = sh.mode_matrix(&parts(&z), rate, par).unwrap();
     let mut h = Fnv::new();
     mm.re.iter().chain(&mm.im).flatten().for_each(|&v| h.f64(v));
     h.0
@@ -539,12 +544,17 @@ fn hash_rate() -> Rate {
 const MODE_REFERENCE: u64 = 0x17e8dd6459d89e55;
 
 /// The planted problem's mode matrix at a complex rate. Pass: its FNV-1a hash equals the reference on every SIMD
-/// backend of the CI matrix and with any number of threads.
+/// backend of the CI matrix, with any number of threads, and with the columns in parallel or in sequence.
 #[test]
 fn mode_bytes_match_reference() {
     let h = mode_hash(hash_rate());
     println!("mode matrix hash {h:#018x}");
     assert_eq!(h, MODE_REFERENCE, "the mode matrix's bytes differ from the reference");
+    assert_eq!(
+        mode_hash_par(hash_rate(), false),
+        MODE_REFERENCE,
+        "the sequential mode matrix's bytes differ"
+    );
 }
 
 /// The control of `mode_bytes_match_reference`: one ulp of the rate's imaginary part must change the hash.
