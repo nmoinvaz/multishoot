@@ -96,6 +96,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     P::ZERO
                 };
             }
+            self.scale_rows::<P>(ok)?;
         }
         Ok(out)
     }

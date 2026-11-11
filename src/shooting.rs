@@ -42,6 +42,9 @@ pub struct Shooting<E: Equations<B>, const B: usize> {
     /// the last segment that runs outward (default K - 1: all of them)
     pub match_node: usize,
     pub extra: Vec<ExtraRow>,
+    /// factors of the residual's rows, one per row (empty: none), applied to the residual, the Jacobian and the jet;
+    /// powers of two keep them exact. Newton's correction rule takes the same steps with or without them.
+    pub row_scale: Vec<f64>,
     #[cfg(feature = "mutate")]
     pub(crate) control: crate::control::Control,
 }
@@ -67,6 +70,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             kt,
             match_node,
             extra: Vec::new(),
+            row_scale: Vec::new(),
             #[cfg(feature = "mutate")]
             control: crate::control::Control::None,
         }
