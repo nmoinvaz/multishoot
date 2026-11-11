@@ -36,7 +36,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 [[package]]
 name = "multidouble"
 version = "4.0.0"
-source = "git+https://github.com/nmoinvaz/multidouble?branch=feat%2Fprecision-trait#375c81b5853835aabba3c32a290d44b18b6b7c16"
+source = "git+https://github.com/nmoinvaz/multidouble?rev=63a77a73d0a94393b8211a1b3a21e93c000a137d#63a77a73d0a94393b8211a1b3a21e93c000a137d"
 dependencies = [
  "rayon",
 ]

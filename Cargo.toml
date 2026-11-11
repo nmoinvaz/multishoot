@@ -13,8 +13,8 @@ categories = ["mathematics", "science"]
 publish = false
 
 [dependencies]
-# multidouble's Precision trait is on the branch feat/precision-trait until its release (4.1.0)
-multidouble = { git = "https://github.com/nmoinvaz/multidouble", branch = "feat/precision-trait" }
+# multidouble's Precision trait is on its main branch (PR #41, merged), pinned here until its release (4.1.0)
+multidouble = { git = "https://github.com/nmoinvaz/multidouble", rev = "63a77a73d0a94393b8211a1b3a21e93c000a137d" }
 rayon = "1.10"
 
 [features]
