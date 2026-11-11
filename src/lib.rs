@@ -26,10 +26,20 @@
 //!
 //! Modules:
 //!
+//! * [`equations`]: the [`Equations`] trait, the state and the Taylor work arrays;
+//! * [`taylor`]: Taylor steps, paths and the step planner;
+//! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
 //! * [`lane`]: the lane types the engine is generic over.
+pub mod equations;
 pub mod lane;
 pub mod periodic;
+pub mod shooting;
+pub mod taylor;
 
+pub use equations::{Equations, State, Work};
 pub use multidouble;
 pub use multidouble::dd::DD;
+pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
+pub use shooting::{ExtraRow, Shooting};
+pub use taylor::Plan;
