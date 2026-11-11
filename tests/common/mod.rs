@@ -133,3 +133,33 @@ impl<const B: usize> Equations<B> for Rotor<B> {
         vec![data[0], Fl::cst(&self.exact(x)[1])]
     }
 }
+
+/// FNV-1a over the bits of f64s: a fingerprint of results that must be the same on every SIMD backend
+pub struct Fnv(pub u64);
+
+impl Fnv {
+    pub fn new() -> Self {
+        Fnv(0xcbf29ce484222325)
+    }
+
+    pub fn f64(&mut self, x: f64) {
+        for b in x.to_bits().to_le_bytes() {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+    }
+
+    /// every value's hi and lo parts
+    pub fn field<const B: usize>(&mut self, f: &Fl<DV, B>) {
+        for j in 0..8 * B {
+            let v = f.get(j);
+            self.f64(v.hi);
+            self.f64(v.lo);
+        }
+    }
+}
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}

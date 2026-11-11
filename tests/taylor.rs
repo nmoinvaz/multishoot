@@ -1,7 +1,7 @@
 //! Taylor stepping and the planner on the linear model `Rotor`, whose solution is known in closed form.
 mod common;
 
-use common::{max_diff, Rotor, Wrong};
+use common::{max_diff, Fnv, Rotor, Wrong};
 use multishoot::lane::DV;
 use multishoot::taylor::{taylor_step, Plan};
 use multishoot::{Equations, Shooting, State, Work};
@@ -24,8 +24,9 @@ fn exact_z(sh: &Shooting<Rotor<B>, B>) -> (Vec<f64>, Vec<f64>) {
 }
 
 /// The state carried through every segment in the direction of the layout, each from the state the previous
-/// segment delivered, starting from the exact state at the first segment's source; the largest error at the nodes.
-fn carry_error(sh: &Shooting<Rotor<B>, B>) -> f64 {
+/// segment delivered, starting from the exact state at the first segment's source with `tweak` applied to it: the
+/// states delivered at the nodes, with the node of each.
+fn carry(sh: &Shooting<Rotor<B>, B>, tweak: impl Fn(&mut State<DV, B>)) -> Vec<(usize, State<DV, B>)> {
     let k = sh.k();
     let order: Vec<usize> = if sh.match_node == 0 {
         (1..k).rev().collect()
@@ -33,13 +34,21 @@ fn carry_error(sh: &Shooting<Rotor<B>, B>) -> f64 {
         (1..k).collect()
     };
     let mut s: State<DV, B> = sh.eq.exact(sh.nodes[sh.seg_source(order[0])]);
-    let mut err = 0.0f64;
+    tweak(&mut s);
+    let mut out = Vec::new();
     for &b in &order {
         s = sh.block_state::<DV>(b, &s, &[]);
-        let dst = if sh.seg_inward(b) { b - 1 } else { b };
-        err = err.max(max_diff(&s, &sh.eq.exact(sh.nodes[dst])));
+        out.push((if sh.seg_inward(b) { b - 1 } else { b }, s.clone()));
     }
-    err
+    out
+}
+
+/// The largest error of the carried states at the nodes
+fn carry_error(sh: &Shooting<Rotor<B>, B>) -> f64 {
+    carry(sh, |_| {})
+        .iter()
+        .map(|(n, s)| max_diff(s, &sh.eq.exact(sh.nodes[*n])))
+        .fold(0.0, f64::max)
 }
 
 fn rotor_shooting(wrong: Wrong, match_node: usize) -> Shooting<Rotor<B>, B> {
@@ -164,4 +173,47 @@ fn planner_bound_control_doubled_steps_fails() {
     let (worst, _) = plan_ratios(&plan, 2.0);
     println!("doubled steps: largest error / tol {worst:.3e}");
     assert!(worst > 1.0, "control did not fire: {worst:e} tol");
+}
+
+/// The fingerprint of the Taylor stepping: the planned step points and the carried node states, outward and inward,
+/// every part's bits, with `tweak` applied to each carry's starting state
+fn stepping_hash(tweak: impl Fn(&mut State<DV, B>) + Copy) -> u64 {
+    let mut h = Fnv::new();
+    for match_node in [4, 0] {
+        let sh = rotor_shooting(Wrong::None, match_node);
+        sh.segs.iter().flatten().for_each(|&x| h.f64(x));
+        for (_, s) in carry(&sh, tweak) {
+            s.iter().for_each(|f| h.field(f));
+        }
+    }
+    h.0
+}
+
+/// the reference fingerprint, recorded on aarch64 (NEON) and on the portable backend
+const STEPPING_REFERENCE: u64 = 0xc8d40d2c1841b8cd;
+
+/// The Taylor stepping's results do not depend on multidouble's SIMD backend. Pass: `stepping_hash` equals the
+/// reference on every build of the CI matrix (SSE2, AVX2, NEON, portable, MSVC).
+#[test]
+fn stepping_bytes_match_reference() {
+    let h = stepping_hash(|_| {});
+    println!("stepping hash {h:#018x}");
+    assert_eq!(
+        h, STEPPING_REFERENCE,
+        "the Taylor stepping's bytes differ from the reference"
+    );
+}
+
+/// The control of `stepping_bytes_match_reference`: one ulp of one value of the starting state must change the
+/// fingerprint.
+#[test]
+fn stepping_bytes_control_one_ulp_differs() {
+    let h = stepping_hash(|s| {
+        let mut v: Vec<f64> = (0..8 * B).map(|j| s[1].get(j).hi).collect();
+        let l: Vec<f64> = (0..8 * B).map(|j| s[1].get(j).lo).collect();
+        v[5] = f64::from_bits(v[5].to_bits() + 1);
+        s[1] = multishoot::Fl::load(&v, &l);
+    });
+    assert_ne!(h, STEPPING_REFERENCE, "control did not fire");
+    assert_ne!(h, stepping_hash(|_| {}), "control did not fire");
 }
