@@ -1,5 +1,5 @@
 //! The periodic direction: collocation grids in theta, the spectral derivative d/dtheta on them, and sines and
-//! cosines in double-double for their constants.
+//! cosines in double-double, and in octo-double for constants that must be exact in every precision.
 //!
 //! A field is held on M = 8 B points. Without symmetry ([`Parity::Full`]) the grid is theta_j = 2 pi j / M over the
 //! period. A field odd under theta -> theta + pi (odd harmonics only) or even (even harmonics only) is held on the
@@ -11,6 +11,7 @@
 //! Spectral Methods in MATLAB, SIAM 2000, ch. 3).
 use crate::lane::DMat;
 use multidouble::dd::DD;
+use multidouble::od::OD;
 
 /// pi in double-double
 pub const PI: DD = DD {
@@ -81,6 +82,56 @@ pub fn sin_cos_pi(p: i64, q: i64) -> (DD, DD) {
     let num = 2 * p - n * q;
     let r = PI.mul_f(num as f64) / DD::from_f64((2 * q) as f64);
     quadrant(n, sin_cos_series(r))
+}
+
+/// pi in octo-double: the parts of its greedy round-to-nearest expansion, from 150 decimal digits (checked against
+/// `OD::parse` and Machin's formula in the tests)
+pub const PI_OD: OD = OD {
+    x: [
+        std::f64::consts::PI,
+        1.2246467991473532e-16,
+        -2.9947698097183397e-33,
+        1.1124542208633653e-49,
+        5.672231979640316e-66,
+        1.7449862161352486e-83,
+        6.02937273224954e-100,
+        1.91012354687999e-116,
+    ],
+};
+
+/// sin and cos of r in octo-double by their Taylor series, |r| <= pi / 4 (+ rounding): terms to below tol (1e-136
+/// for octo-double)
+fn sin_cos_series_od(r: OD, tol: f64) -> (OD, OD) {
+    let r2 = r * r;
+    let (mut s, mut c) = (r, OD::from_f64(1.0));
+    let (mut ts, mut tc) = (r, OD::from_f64(1.0));
+    for k in 1..80 {
+        let kf = k as f64;
+        ts = -(ts * r2) / OD::from_f64((2.0 * kf) * (2.0 * kf + 1.0));
+        tc = -(tc * r2) / OD::from_f64((2.0 * kf - 1.0) * (2.0 * kf));
+        s = s + ts;
+        c = c + tc;
+        if tc.to_f64().abs() < tol && ts.to_f64().abs() < tol {
+            break;
+        }
+    }
+    (s, c)
+}
+
+/// sin and cos of (p / q) pi, q > 0, in octo-double, reduced in integers as [`sin_cos_pi`]: accurate to about 2^-424
+/// relative for every p, so the constants made from them are exact in every precision of the solve
+pub fn sin_cos_pi_od(p: i64, q: i64) -> (OD, OD) {
+    assert!(q > 0, "sin_cos_pi_od: q = {q}");
+    let n = (4 * p + q).div_euclid(2 * q);
+    let num = 2 * p - n * q;
+    let r = PI_OD.mul_f(num as f64) / OD::from_f64((2 * q) as f64);
+    let (s, c) = sin_cos_series_od(r, 1e-136);
+    match n.rem_euclid(4) {
+        0 => (s, c),
+        1 => (c, -s),
+        2 => (-s, -c),
+        _ => (-c, s),
+    }
 }
 
 /// The number of grid points per period: 2M on the half grids, M on the full one
@@ -190,6 +241,88 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// |a - b| in octo-double, as an f64
+    fn od_diff(a: OD, b: OD) -> f64 {
+        (a - b).to_f64().abs()
+    }
+
+    /// arctan(1 / n) in octo-double by its series, n >= 5: terms to below 1e-140
+    fn atan_inv(n: f64) -> OD {
+        let x = OD::from_f64(1.0) / OD::from_f64(n);
+        let x2 = x * x;
+        let (mut s, mut p) = (x, x);
+        for k in 1..200 {
+            p = -(p * x2);
+            let t = p / OD::from_f64((2 * k + 1) as f64);
+            s = s + t;
+            if t.to_f64().abs() < 1e-140 {
+                break;
+            }
+        }
+        s
+    }
+
+    /// PI_OD against the parse of its 150 decimal digits (every part), and against Machin's formula
+    /// pi = 16 arctan(1/5) - 4 arctan(1/239) in octo-double; pass: equal parts, and 1e-125
+    #[test]
+    fn pi_od_is_pi() {
+        let parsed = OD::parse(
+            "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535940813",
+        )
+        .unwrap();
+        assert_eq!(parsed.x, PI_OD.x);
+        let machin = atan_inv(5.0).mul_f(16.0) - atan_inv(239.0).mul_f(4.0);
+        let e = od_diff(machin, PI_OD);
+        println!("|Machin - PI_OD| = {e:.3e}");
+        assert!(e < 1e-125, "{e:e}");
+    }
+
+    /// The control of `pi_od_is_pi`: pi in quad-double (its first four parts) must fail Machin's bound.
+    #[test]
+    fn pi_od_control_quad_parts_fail() {
+        let mut q = PI_OD;
+        q.x[4..].iter_mut().for_each(|v| *v = 0.0);
+        let machin = atan_inv(5.0).mul_f(16.0) - atan_inv(239.0).mul_f(4.0);
+        assert!(od_diff(machin, q) > 1e-125);
+    }
+
+    /// sin_cos_pi_od against sin_cos_pi in double-double (1e-31), sin^2 + cos^2 = 1 (1e-126), and the double angle
+    /// sin 2x = 2 sin x cos x against the value at 2p (1e-125), for p / q over three periods and three q
+    #[test]
+    fn sin_cos_pi_od_agrees() {
+        let mut worst = 0.0f64;
+        for q in [7i64, 16, 40] {
+            for p in -3 * q..3 * q {
+                let (s, c) = sin_cos_pi_od(p, q);
+                let (sd, cd) = sin_cos_pi(p, q);
+                assert!(
+                    (s.to_dd() - sd).hi.abs() < 1e-31 && (c.to_dd() - cd).hi.abs() < 1e-31,
+                    "{p}/{q}"
+                );
+                let one = od_diff(s * s + c * c, OD::from_f64(1.0));
+                let (s2, _) = sin_cos_pi_od(2 * p, q);
+                let dbl = od_diff((s * c).mul_f(2.0), s2);
+                worst = worst.max(one).max(dbl);
+                assert!(one < 1e-126 && dbl < 1e-125, "{p}/{q}: {one:e} {dbl:e}");
+            }
+        }
+        println!("sin_cos_pi_od: worst identity error {worst:.3e}");
+    }
+
+    /// The control of `sin_cos_pi_od_agrees`: the series stopped at terms below 1e-90 must fail sin^2 + cos^2 = 1 at
+    /// some angle p pi / 160.
+    #[test]
+    fn sin_cos_pi_od_control_short_series_fails() {
+        let worst = (1..40)
+            .map(|p| {
+                let (s, c) = sin_cos_series_od(PI_OD.mul_f(p as f64) / OD::from_f64(160.0), 1e-90);
+                od_diff(s * s + c * c, OD::from_f64(1.0))
+            })
+            .fold(0.0f64, f64::max);
+        println!("control, short series: sin^2 + cos^2 - 1 up to {worst:.3e}");
+        assert!(worst > 1e-126, "{worst:e}");
     }
 
     /// the control: a harmonic of the wrong parity is not differentiated by the folded matrix (cos 2 theta on the
