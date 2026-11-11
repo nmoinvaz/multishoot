@@ -23,4 +23,13 @@
 //! crate, where it computes Choptuik's critical solution in D dimensions; that crate keeps the equations.
 //!
 //! Status: under construction (0.1.0, not published).
+//!
+//! Modules:
+//!
+//! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
+//! * [`lane`]: the lane types the engine is generic over.
+pub mod lane;
+pub mod periodic;
+
 pub use multidouble;
+pub use multidouble::dd::DD;
