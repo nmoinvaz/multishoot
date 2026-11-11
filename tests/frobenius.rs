@@ -117,12 +117,14 @@ fn jacobian_differences(wrong_per_column: bool) -> (usize, usize, usize) {
 }
 
 /// The pointwise Jacobian against the same problem column by column. Pass: every entry equal in every part (as f64
-/// values).
+/// values), from 10 dual evaluations (one per input field of each block) where the column-by-column Jacobian takes 80
+/// (one per point); the second count is the first's control, the same count on a problem without the batching.
 #[test]
 fn bessel_pointwise_jacobian_equals_per_column() {
     let (differ, n1, n2) = jacobian_differences(false);
     println!("Bessel Jacobian: {n1} evaluations against {n2}, {differ} entries differ");
     assert_eq!(differ, 0);
+    assert_eq!((n1, n2), (10, 80), "the pointwise batching's evaluation count");
 }
 
 /// The control of `bessel_pointwise_jacobian_equals_per_column`: with c_3 wrong on the column-by-column side only,
