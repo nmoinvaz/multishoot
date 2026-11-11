@@ -490,8 +490,9 @@ fn projected_rows_scale_control_wrong_factor_fails() {
     assert_eq!(scaled_projection(2f64.powi(81)), (false, false));
 }
 
-/// Pass: `project_rows` refuses a block past the last, a field past NF, pinned unknowns past the fields, and a field
-/// projected twice.
+/// Pass: `project_rows` refuses a block past the last, a field past NF, pinned unknowns past the fields (an offset
+/// near usize::MAX included, whose end would overflow), a field projected twice, and pinned unknowns that overlap
+/// another projection's; it accepts ones that adjoin them.
 #[test]
 fn project_rows_refuses_bad_layouts() {
     let (mut sh, _) = Planted::<B>::shooting(&NODES, 30, 1e-32);
@@ -499,8 +500,14 @@ fn project_rows_refuses_bad_layouts() {
     assert!(sh.project_rows(k + 1, 0, 0, Parity::Odd, 3).is_err());
     assert!(sh.project_rows(k, 2, 0, Parity::Odd, 3).is_err());
     assert!(sh.project_rows(k, 1, og - M + 1, Parity::Even, 2).is_err());
+    assert!(sh.project_rows(k, 1, usize::MAX - 3, Parity::Even, 2).is_err());
     assert!(sh.project_rows(k, 1, 0, Parity::Even, 2).is_ok());
     assert!(sh.project_rows(k, 1, 0, Parity::Even, 2).is_err());
+    // another field whose pinned unknowns overlap the first projection's, by one unknown and wholly
+    assert!(sh.project_rows(k, 0, M - 1, Parity::Odd, 3).is_err());
+    assert!(sh.project_rows(k, 0, 0, Parity::Odd, 3).is_err());
+    // the control: pinned unknowns that only adjoin the first projection's are accepted
+    assert!(sh.project_rows(k, 0, M, Parity::Odd, 3).is_ok());
 }
 
 /// The control (feature `mutate`): with the projectors rounded to double-double the octo-double Newton converges to

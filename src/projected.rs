@@ -136,7 +136,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// Projects field `field`'s rows of block `block` ([`crate::projected`]): Pi onto the harmonics k <= kmax of
-    /// the grid of `parity`, the unknowns at `pin` (M of them, before the globals) held to Pi'.
+    /// the grid of `parity`, the unknowns at `pin` (M of them, before the globals, apart from any other projection's)
+    /// held to Pi'.
     pub fn project_rows(
         &mut self,
         block: usize,
@@ -149,15 +150,24 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         if block > self.k() || field >= E::NF {
             return Err(format!("project_rows: no field {field} of block {block}"));
         }
-        if pin + m > self.off_global() {
+        if pin.checked_add(m).is_none_or(|end| end > self.off_global()) {
             return Err(format!(
-                "project_rows: the pinned unknowns {pin}..{} pass the fields",
-                pin + m
+                "project_rows: the pinned unknowns from {pin} pass the fields (they end at {})",
+                self.off_global()
             ));
         }
         if self.projected.iter().any(|p| p.block == block && p.field == field) {
             return Err(format!(
                 "project_rows: field {field} of block {block} is projected already"
+            ));
+        }
+        // two projections holding the same unknowns would give them two conditions and leave others without one
+        if let Some(p) = self.projected.iter().find(|p| p.pin < pin + m && pin < p.pin + m) {
+            return Err(format!(
+                "project_rows: the pinned unknowns {pin}..{} overlap those of field {} of block {}",
+                pin + m,
+                p.field,
+                p.block
             ));
         }
         self.projected
