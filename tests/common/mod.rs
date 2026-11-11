@@ -98,6 +98,7 @@ impl<const B: usize> Equations<B> for Rotor<B> {
     const NL: usize = 1;
     const NR: usize = 1;
     const NAUX: usize = 2;
+    type Prep = ();
 
     fn taylor_coeffs<T: Lane>(&self, x0: f64, _g: &[T], w: &mut Work<T, B>) {
         // s (k+1) u_(k+1) + k u_k = s R_k + R_(k-1) - a u_k, s = 1 + x0, R the right-hand side without the decay
@@ -131,12 +132,12 @@ impl<const B: usize> Equations<B> for Rotor<B> {
     }
 
     /// u at the left end is the exact one at x; the data is v
-    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![Fl::cst(&self.exact(x)[0]), data[0]]
     }
 
     /// v at the right end is the exact one at x; the data is u
-    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![data[0], Fl::cst(&self.exact(x)[1])]
     }
 }
@@ -311,6 +312,7 @@ impl<const B: usize> Equations<B> for Planted<B> {
     const NR: usize = 1;
     const NG: usize = 1;
     const NAUX: usize = 0;
+    type Prep = ();
 
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
         let kt = w.kt;
@@ -349,12 +351,12 @@ impl<const B: usize> Equations<B> for Planted<B> {
     }
 
     /// u at the left end is u*; the data is v
-    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![Fl::cst(&self.exact(x)[0]), data[0]]
     }
 
     /// v at the right end is v*; the data is u
-    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![data[0], Fl::cst(&self.exact(x)[1])]
     }
 }
@@ -370,15 +372,19 @@ impl<E: Equations<B>, const B: usize> Equations<B> for Pointwise<E> {
     const NG: usize = E::NG;
     const NAUX: usize = E::NAUX;
     const POINTWISE: bool = true;
+    type Prep = E::Prep;
 
+    fn prepare(&self, zh: &[f64], zl: &[f64]) -> E::Prep {
+        self.0.prepare(zh, zl)
+    }
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
         self.0.taylor_coeffs(x0, g, w)
     }
-    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B> {
-        self.0.left_state(x, data, g)
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.0.left_state(x, data, g, prep)
     }
-    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B> {
-        self.0.right_state(x, data, g)
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.0.right_state(x, data, g, prep)
     }
 }
 
@@ -491,6 +497,7 @@ impl<const B: usize> Equations<B> for Cylinder<B> {
     const NL: usize = 1;
     const NR: usize = 1;
     const NG: usize = 2;
+    type Prep = ();
 
     fn taylor_coeffs<T: Lane>(&self, _x0: f64, g: &[T], w: &mut Work<T, B>) {
         let mu = if self.freeze_mu {
@@ -515,12 +522,12 @@ impl<const B: usize> Equations<B> for Cylinder<B> {
     }
 
     /// u(0) = 0; the data is v(0)
-    fn left_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn left_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![Fl::zero(), data[0]]
     }
 
     /// u(1) = 0; the data is v(1)
-    fn right_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+    fn right_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T], _prep: &()) -> State<T, B> {
         vec![Fl::zero(), data[0]]
     }
 }
