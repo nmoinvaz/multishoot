@@ -1,0 +1,52 @@
+name: Lint
+on: [workflow_dispatch, pull_request]
+env:
+  CARGO_TERM_COLOR: always
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Run rustfmt
+      run: cargo fmt --check
+
+  # multidouble's backend is selected by the target and its features, so the engine is linted against each.
+  clippy:
+    name: Clippy ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SSE2
+            os: ubuntu-latest
+          - name: portable
+            os: ubuntu-latest
+            features: portable,mutate
+          - name: NEON
+            os: ubuntu-24.04-arm
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Run clippy
+      run: cargo clippy --all-targets --features ${{ matrix.features || 'mutate' }} -- -D warnings
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Build documentation
+      run: cargo doc --no-deps --features portable,mutate

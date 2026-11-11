@@ -1,0 +1,27 @@
+[package]
+name = "multishoot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Multiple-shooting boundary-value solver in double-, quad- and octo-double precision: Taylor-jet stepping between nodes, exact Jacobians by forward-mode duals, Newton over multidouble's Precision trait"
+license = "BSD-3-Clause"
+repository = "https://github.com/nmoinvaz/multishoot"
+readme = "README.md"
+keywords = ["boundary-value", "multiple-shooting", "taylor-series", "extended-precision", "newton"]
+categories = ["mathematics", "science"]
+# not on crates.io until it depends on a released multidouble with the Precision trait
+publish = false
+
+[dependencies]
+# multidouble's Precision trait is on the branch feat/precision-trait until its release (4.1.0)
+multidouble = { git = "https://github.com/nmoinvaz/multidouble", branch = "feat/precision-trait" }
+rayon = "1.10"
+
+[features]
+# the plain-array SIMD backend of multidouble on every target
+portable = ["multidouble/portable"]
+# the mutation controls of the tests: each accuracy check is run once on a deliberately wrong input and must fail
+mutate = []
+
+[profile.release]
+opt-level = 3

@@ -1,0 +1,78 @@
+name: Build
+on:
+  pull_request:
+  push:
+    branches: [main]
+env:
+  CARGO_TERM_COLOR: always
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # multidouble's SIMD backend is chosen at compile time by the target and its features: the plain x86-64
+          # build is SSE2, aarch64 is NEON, and the feature portable forces the plain array. The engine's results
+          # must not depend on it.
+          - name: Ubuntu x86_64 SSE2
+            os: ubuntu-latest
+
+          - name: Ubuntu x86_64 portable
+            os: ubuntu-latest
+            cargo-args: --features portable
+
+          - name: Ubuntu x86_64 AVX2
+            os: ubuntu-latest
+            rustflags: -C target-feature=+avx2,+fma
+
+          - name: Ubuntu x86_64 mutation controls
+            os: ubuntu-latest
+            cargo-args: --features mutate
+
+          - name: Ubuntu ARM64 NEON
+            os: ubuntu-24.04-arm
+
+          - name: macOS ARM64 NEON
+            os: macos-latest
+
+          - name: Windows MSVC x64 SSE2
+            os: windows-latest
+
+          # The oldest supported Rust, as multidouble's.
+          - name: Ubuntu x86_64 MSRV
+            os: ubuntu-latest
+            toolchain: "1.89"
+            msrv: true
+
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install toolchain
+        if: matrix.toolchain
+        run: |
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal
+          rustup default ${{ matrix.toolchain }}
+
+      - name: Check library (MSRV)
+        if: matrix.msrv
+        run: |
+          cargo check --lib
+          cargo check --lib --features portable
+
+      - name: Build project
+        if: ${{ !matrix.msrv }}
+        run: cargo build --release ${{ matrix.cargo-args }}
+
+      # Release mode: the planted-truth problems run Newton in quad- and octo-double.
+      - name: Run tests
+        if: ${{ !matrix.msrv }}
+        timeout-minutes: 30
+        run: cargo test --release ${{ matrix.cargo-args }}
