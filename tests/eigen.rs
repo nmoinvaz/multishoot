@@ -2,7 +2,7 @@
 //! whose lowest eigenvalue is pi^2 + mu with the mode sin(pi x) cos theta / pi.
 mod common;
 
-use common::{perturbed_exact as perturbed, wave, Cylinder, Fnv};
+use common::{perturbed, wave, Cylinder, Fnv};
 use multishoot::prec::{max_abs, parts, widen};
 use multishoot::{Double, NewtonOpts, Octo, Prec, Quad, Shooting, DD};
 
