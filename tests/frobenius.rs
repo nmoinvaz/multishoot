@@ -3,7 +3,7 @@
 mod common;
 
 use common::{perturbed, Bessel, PerColumn};
-use multishoot::prec::{max_abs, nan_max, parts, widen};
+use multishoot::prec::{nan_max, parts, widen};
 use multishoot::{Double, Native, NewtonOpts, Precision, Quad, Shooting, DD};
 use std::sync::atomic::Ordering;
 
@@ -96,25 +96,40 @@ fn prepare_control_counts_each_evaluation() {
     assert_eq!(sh.eq.prepared.load(Ordering::Relaxed) - n0, 2);
 }
 
-/// The pointwise Jacobian (one dual evaluation per input field) against the same problem column by column, at the
-/// perturbed solution. Pass: every entry equal in every part (as f64 values).
-#[test]
-fn bessel_pointwise_jacobian_equals_per_column() {
+/// The number of entries (in any part) in which the pointwise Jacobian, one dual evaluation per input field,
+/// differs from the column-by-column one of the problem with the Frobenius coefficient c_3 wrong when `wrong_per_column`,
+/// at the perturbed solution; and the two evaluation counts
+fn jacobian_differences(wrong_per_column: bool) -> (usize, usize, usize) {
     let (sh, zs) = bessel(false);
     let z = perturbed(&zs, 1e-3);
     let (c1, _) = sh.jacobian::<Double>(&parts(&z), true).unwrap();
-    let n1 = sh.jac_tasks().len();
-    let mut pc = Shooting::new(PerColumn(Bessel::new(0.5, 2.0)), sh.nodes.clone(), sh.kt);
+    let mut eq = Bessel::new(0.5, 2.0);
+    eq.wrong = wrong_per_column;
+    let mut pc = Shooting::new(PerColumn(eq), sh.nodes.clone(), sh.kt);
     pc.segs = sh.segs.clone();
     let (c2, _) = pc.jacobian::<Double>(&parts(&z), true).unwrap();
-    let n2 = pc.jac_tasks().len();
     let differ = c1
         .iter()
         .zip(&c2)
         .map(|(a, b)| a.iter().zip(b).filter(|(x, y)| x != y).count())
         .sum::<usize>();
+    (differ, sh.jac_tasks().len(), pc.jac_tasks().len())
+}
+
+/// The pointwise Jacobian against the same problem column by column. Pass: every entry equal in every part (as f64
+/// values).
+#[test]
+fn bessel_pointwise_jacobian_equals_per_column() {
+    let (differ, n1, n2) = jacobian_differences(false);
     println!("Bessel Jacobian: {n1} evaluations against {n2}, {differ} entries differ");
     assert_eq!(differ, 0);
-    let f = sh.residual::<Double>(&parts(&zs), true).unwrap();
-    println!("max |F(z*)| = {:.3e}", max_abs::<Double>(&f));
+}
+
+/// The control of `bessel_pointwise_jacobian_equals_per_column`: with c_3 wrong on the column-by-column side only,
+/// the same comparison must find entries that differ.
+#[test]
+fn bessel_pointwise_jacobian_control_one_side_wrong_differs() {
+    let (differ, ..) = jacobian_differences(true);
+    println!("control, c_3 wrong on one side: {differ} entries differ");
+    assert!(differ > 0, "control did not fire");
 }
