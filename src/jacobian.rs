@@ -11,10 +11,11 @@
 //! point j's rows. A column's entries are those of the evaluation seeded on its point alone, lane for lane.
 use crate::equations::{Equations, State};
 use crate::lane::BaseLane;
-use crate::prec::Prec;
 use crate::shooting::Shooting;
 use multidouble::field::Fl;
 use multidouble::linalg::ld_for;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 use rayon::prelude::*;
 
 /// What a Jacobian column task differentiates along: point j of a block's input field f, every point of input
@@ -59,7 +60,12 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
 
     /// One column task: block b's state (NF M values) differentiated along the seed, with dual lanes, at the values
     /// v of its inputs and the globals g.
-    pub fn jac_column<P: Prec>(&self, z: &[&[f64]], g: &[P::Scalar], (b, seed): (usize, Seed)) -> Vec<P::Scalar> {
+    pub fn jac_column<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        g: &[P::Scalar],
+        (b, seed): (usize, Seed),
+    ) -> Vec<P::Scalar> {
         let m = Self::M;
         let inp: Vec<Fl<P::U, B>> = self
             .block_inputs(b)
@@ -98,7 +104,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The exact Jacobian at z: (PARTS column-major part arrays, ld). The system must be square.
-    pub fn jacobian<P: Prec>(&self, z: &[&[f64]], par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
+    pub fn jacobian<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
         self.check_z::<P>(z)?;
         if !self.is_square() {
             return Err(format!("jacobian: {} rows for {} unknowns", self.rows(), self.len()));

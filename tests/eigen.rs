@@ -4,7 +4,7 @@ mod common;
 
 use common::{perturbed, wave, Cylinder, Fnv};
 use multishoot::prec::{max_abs, parts, widen};
-use multishoot::{Double, NewtonOpts, Octo, Prec, Quad, Shooting, DD};
+use multishoot::{Double, Native, NewtonOpts, Octo, Precision, Quad, Shooting, DD};
 
 const B: usize = 1;
 const KT: usize = 30;
@@ -27,8 +27,11 @@ fn solve(sh: &Sh, zs: &[Vec<f64>]) -> (bool, f64, f64, f64, f64) {
     let mut zq = widen(&z, 4);
     let qd = sh.newton::<Quad>(&mut zq, &opts(1e-60, 4)).unwrap();
     let og = sh.off_global();
-    let q = |i: usize| <Quad as Prec>::new(&[zq[0][i], zq[1][i], zq[2][i], zq[3][i]]);
-    let lam_err = (q(og) - <Quad as Prec>::from_dd(sh.eq.lambda())).to_dd().hi.abs();
+    let q = |i: usize| <Quad as Precision<Native>>::new(&[zq[0][i], zq[1][i], zq[2][i], zq[3][i]]);
+    let lam_err = (q(og) - <Quad as Precision<Native>>::from_dd(sh.eq.lambda()))
+        .to_dd()
+        .hi
+        .abs();
     let nu = q(og + 1).to_dd().hi.abs();
     let zerr = (0..sh.len())
         .map(|i| (q(i).to_dd() - DD::new(zs[0][i], zs[1][i])).hi.abs())
@@ -195,7 +198,7 @@ fn jet_precisions_agree() {
         for i in 0..jd[k].len() {
             let s = jq[k][i].to_dd().hi.abs().max(1.0);
             dq = dq.max((jd[k][i] - jq[k][i].to_dd()).hi.abs() / s);
-            let d = <Octo as Prec>::new(&jq[k][i].x) - jo[k][i];
+            let d = <Octo as Precision<Native>>::new(&jq[k][i].x) - jo[k][i];
             qo = qo.max(max_abs::<Octo>(&[d]) / s);
         }
     }

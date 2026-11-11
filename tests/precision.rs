@@ -4,7 +4,7 @@ mod common;
 
 use common::{perturbed, Fnv, Planted};
 use multishoot::prec::{max_abs, nan_max, parts, widen};
-use multishoot::{Double, NewtonOpts, Octo, Prec, Quad, Shooting};
+use multishoot::{Double, Native, NewtonOpts, Octo, Precision, Quad, Shooting};
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
@@ -28,7 +28,7 @@ fn sci(v: &[f64]) -> String {
 }
 
 /// max |a_i - b_i| over the unknowns of two states in P's parts
-fn state_diff<P: Prec>(a: &[Vec<f64>], b: &[Vec<f64>]) -> f64 {
+fn state_diff<P: Precision<Native>>(a: &[Vec<f64>], b: &[Vec<f64>]) -> f64 {
     let pick = |z: &[Vec<f64>], i: usize| -> P::Scalar {
         let p: Vec<f64> = z.iter().map(|q| q[i]).collect();
         P::new(&p)
@@ -94,7 +94,7 @@ fn precisions_agree_on_the_residual() {
     let qo: Vec<_> = fq
         .iter()
         .zip(&fo)
-        .map(|(q, o)| <Octo as Prec>::new(&q.x) - *o)
+        .map(|(q, o)| <Octo as Precision<Native>>::new(&q.x) - *o)
         .collect();
     let qo = max_abs::<Octo>(&qo);
     let dq = fd
@@ -107,7 +107,7 @@ fn precisions_agree_on_the_residual() {
 }
 
 /// FNV-1a over the bits of every part of the scalars
-fn fnv<P: Prec>(f: &[P::Scalar]) -> u64 {
+fn fnv<P: Precision<Native>>(f: &[P::Scalar]) -> u64 {
     let mut h = Fnv::new();
     for &v in f {
         for q in 0..P::PARTS {
@@ -123,11 +123,12 @@ fn full_parts_z(zs: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let l = z[0].len();
     let mut out: Vec<Vec<f64>> = (0..8).map(|_| vec![0.0; l]).collect();
     for i in 0..l {
-        let x = <Octo as Prec>::new(&[z[0][i]]);
-        let r = <Octo as Prec>::ONE + <Octo as Prec>::new(&[1e-3]) * <Octo as Prec>::new(&[1.0 / (3.0 + i as f64)]);
+        let x = <Octo as Precision<Native>>::new(&[z[0][i]]);
+        let r = <Octo as Precision<Native>>::ONE
+            + <Octo as Precision<Native>>::new(&[1e-3]) * <Octo as Precision<Native>>::new(&[1.0 / (3.0 + i as f64)]);
         let v = x * r * r;
         for (q, o) in out.iter_mut().enumerate() {
-            o[i] = <Octo as Prec>::part(v, q);
+            o[i] = <Octo as Precision<Native>>::part(v, q);
         }
     }
     out
@@ -142,7 +143,7 @@ fn hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>]) -> [u64; 4] {
     let fo = sh.residual::<Octo>(&p, true).unwrap();
     let st = sh.newton_step::<Quad>(&p[..4], true).unwrap();
     let dz: Vec<_> = (0..sh.len())
-        .map(|i| <Quad as Prec>::from_raw(&[st.dz[0][i], st.dz[1][i], st.dz[2][i], st.dz[3][i]]))
+        .map(|i| <Quad as Precision<Native>>::from_raw(&[st.dz[0][i], st.dz[1][i], st.dz[2][i], st.dz[3][i]]))
         .collect();
     [fnv::<Double>(&fd), fnv::<Quad>(&fq), fnv::<Octo>(&fo), fnv::<Quad>(&dz)]
 }
