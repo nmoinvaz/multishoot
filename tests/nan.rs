@@ -4,6 +4,7 @@ mod common;
 
 use common::Planted;
 use multishoot::lane::DV;
+use multishoot::newton::Damping;
 use multishoot::prec::{max_abs, parts};
 use multishoot::taylor::{coef_norm, step_size, Plan};
 use multishoot::{Double, Fl, NewtonOpts, Shooting, Work, DD};
@@ -46,17 +47,28 @@ fn max_abs_control_old_fold_drops_nan() {
     assert!(old_max_abs(&one).is_finite() && old_max_abs(&all) == 0.0);
 }
 
-/// Newton from a state whose residual is NaN in every row. Pass: it returns not converged, with the NaN recorded.
+/// Newton from a state whose residual is NaN in every row, with either damping rule. Pass: it returns not
+/// converged, with the NaN recorded.
 #[test]
 fn newton_on_nan_residual_does_not_converge() {
     let (sh, zs) = planted();
-    let mut z: Vec<Vec<f64>> = zs.iter().map(|p| vec![f64::NAN; p.len()]).collect();
-    let rep = sh.newton::<Double>(&mut z, &NewtonOpts::default()).unwrap();
-    println!(
-        "Newton on a NaN state: converged {}, max |F| {:?}",
-        rep.converged, rep.fnorm
-    );
-    assert!(!rep.converged && rep.fnorm.iter().all(|v| v.is_nan()));
+    for damping in [Damping::Correction, Damping::Residual] {
+        let mut z: Vec<Vec<f64>> = zs.iter().map(|p| vec![f64::NAN; p.len()]).collect();
+        let rep = sh
+            .newton::<Double>(
+                &mut z,
+                &NewtonOpts {
+                    damping,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        println!(
+            "Newton ({damping:?}) on a NaN state: converged {}, max |F| {:?}",
+            rep.converged, rep.fnorm
+        );
+        assert!(!rep.converged && rep.fnorm.iter().all(|v| v.is_nan()));
+    }
 }
 
 /// The control of `newton_on_nan_residual_does_not_converge`: under the old fold that residual scores 0, at or below
