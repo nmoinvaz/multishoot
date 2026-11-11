@@ -185,6 +185,8 @@ impl Default for Fnv {
 pub struct Planted<const B: usize> {
     pub d: DMat<B>,
     pub omega: f64,
+    /// whether the points are coupled through -omega u_theta; without it the term is -omega u, pointwise
+    pub coupled: bool,
     /// the manufactured solution's fields A, B (odd), C, E (even)
     pub a: Fl<DV, B>,
     pub b: Fl<DV, B>,
@@ -197,6 +199,11 @@ pub struct Planted<const B: usize> {
 
 impl<const B: usize> Planted<B> {
     pub fn new() -> Self {
+        Self::with_coupling(true)
+    }
+
+    /// the problem with -omega u_theta (coupled) or -omega u (pointwise) in the u equation
+    pub fn with_coupling(coupled: bool) -> Self {
         let m = 8 * B;
         let sc = |j: usize, k: i64| multishoot::periodic::sin_cos_grid(Parity::Odd, m, j, k);
         let a = field::<B>(|j| sc(j, 1).0 + sc(j, 3).1.mul_f(0.3));
@@ -206,16 +213,13 @@ impl<const B: usize> Planted<B> {
         let d = dmat::<B>(Parity::Odd);
         let omega = 1.3;
         let om = DD::from_f64(omega);
-        let su = vec![
-            d.apply(&b).muls(om) - b * e,
-            d.apply(&a).muls(om) - a * e,
-            -a - b * c,
-            -(a * c),
-        ];
+        let th = |f: &Fl<DV, B>| if coupled { d.apply(f) } else { *f };
+        let su = vec![th(&b).muls(om) - b * e, th(&a).muls(om) - a * e, -a - b * c, -(a * c)];
         let sv = vec![e - b * b, -(a * b).mulf(2.0), c - a * a, -c.mulf(2.0)];
         Planted {
             d,
             omega,
+            coupled,
             a,
             b,
             c,
@@ -234,7 +238,17 @@ impl<const B: usize> Planted<B> {
     /// The shooting problem on the nodes with its extra row omega = omega*, planned from the manufactured solution
     /// (order kt, last terms below tol, steps at most 0.5), and that solution's z.
     pub fn shooting(nodes: &[f64], kt: usize, tol: f64) -> (multishoot::Shooting<Planted<B>, B>, Vec<Vec<f64>>) {
-        let mut sh = multishoot::Shooting::new(Planted::<B>::new(), nodes.to_vec(), kt);
+        Self::shooting_of(Planted::<B>::new(), nodes, kt, tol)
+    }
+
+    /// `shooting` for a given problem
+    pub fn shooting_of(
+        eq: Planted<B>,
+        nodes: &[f64],
+        kt: usize,
+        tol: f64,
+    ) -> (multishoot::Shooting<Planted<B>, B>, Vec<Vec<f64>>) {
+        let mut sh = multishoot::Shooting::new(eq, nodes.to_vec(), kt);
         let og = sh.off_global();
         sh.extra.push(multishoot::ExtraRow {
             terms: vec![(og, DD::ONE)],
@@ -317,7 +331,8 @@ impl<const B: usize> Equations<B> for Planted<B> {
                 }
             }
             let (u, v) = (&w.c[0], &w.c[1]);
-            let du = self.d.apply(&u[k]).mul_t(om) + multishoot::cs(u, v, k) + su;
+            let th = if self.coupled { self.d.apply(&u[k]) } else { u[k] };
+            let du = th.mul_t(om) + multishoot::cs(u, v, k) + su;
             let dv = (multishoot::cs(u, u, k) - v[k]) + sv;
             let ik = DD::ONE / DD::from_f64((k + 1) as f64);
             w.c[0][k + 1] = du.muls(ik);
@@ -334,4 +349,38 @@ impl<const B: usize> Equations<B> for Planted<B> {
     fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
         vec![data[0], Fl::cst(&self.exact(x)[1])]
     }
+}
+
+/// A problem declared pointwise (`Equations::POINTWISE`), the methods of E unchanged: the batched Jacobian columns of
+/// a problem that is pointwise, or the control of a coupled one that is not.
+pub struct Pointwise<E>(pub E);
+
+impl<E: Equations<B>, const B: usize> Equations<B> for Pointwise<E> {
+    const NF: usize = E::NF;
+    const NL: usize = E::NL;
+    const NR: usize = E::NR;
+    const NG: usize = E::NG;
+    const NAUX: usize = E::NAUX;
+    const POINTWISE: bool = true;
+
+    fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
+        self.0.taylor_coeffs(x0, g, w)
+    }
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B> {
+        self.0.left_state(x, data, g)
+    }
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T]) -> State<T, B> {
+        self.0.right_state(x, data, g)
+    }
+}
+
+/// The same problem declared pointwise, with the layout (segments, extra rows) of sh
+pub fn as_pointwise<const B: usize>(
+    sh: multishoot::Shooting<Planted<B>, B>,
+) -> multishoot::Shooting<Pointwise<Planted<B>>, B> {
+    let mut p = multishoot::Shooting::new(Pointwise(sh.eq), sh.nodes, sh.kt);
+    p.segs = sh.segs;
+    p.extra = sh.extra;
+    p.match_node = sh.match_node;
+    p
 }

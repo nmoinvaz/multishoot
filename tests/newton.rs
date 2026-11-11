@@ -2,7 +2,7 @@
 //! solution is manufactured.
 mod common;
 
-use common::{perturbed, Planted};
+use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::prec::{max_abs, parts};
 use multishoot::{Double, NewtonOpts, Shooting, DD};
 
@@ -113,6 +113,107 @@ fn newton_step_solves_the_linear_system() {
     let fmax = max_abs::<Double>(&st.f);
     println!("max |J dz + F| = {worst:.3e}, max |F| = {fmax:.3e}");
     assert!(worst < 1e-28 * fmax, "{worst:e}");
+}
+
+/// The pointwise problem (-omega u in place of -omega u_theta) declared pointwise, whose Jacobian takes one dual
+/// evaluation per input field (all M columns at once), against the same problem column by column. Pass: every entry
+/// equal in every part (as f64 values, so the zeros' signs do not count), at z* perturbed by 1e-2.
+#[test]
+fn pointwise_jacobian_equals_per_column() {
+    let (sh, z) = Planted::<B>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
+    let zp = perturbed(&z, 1e-2);
+    let (c1, _) = sh.jacobian::<Double>(&parts(&zp), true).unwrap();
+    let n1 = sh.jac_tasks().len();
+    let pw = as_pointwise(sh);
+    let (c2, _) = pw.jacobian::<Double>(&parts(&zp), true).unwrap();
+    let n2 = pw.jac_tasks().len();
+    let differ = c1
+        .iter()
+        .zip(&c2)
+        .map(|(a, b)| a.iter().zip(b).filter(|(x, y)| x != y).count())
+        .sum::<usize>();
+    println!("pointwise Jacobian: {n2} evaluations instead of {n1}, {differ} entries differ");
+    assert_eq!(differ, 0);
+}
+
+/// The control of `pointwise_jacobian_equals_per_column`: the coupled problem declared pointwise must give a
+/// different Jacobian (some entry off by more than 1e-3), since d/dtheta carries a point's tangent to the others.
+#[test]
+fn pointwise_control_coupled_problem_differs() {
+    let (sh, z) = planted();
+    let zp = perturbed(&z, 1e-2);
+    let (c1, _) = sh.jacobian::<Double>(&parts(&zp), true).unwrap();
+    let (c2, _) = as_pointwise(sh).jacobian::<Double>(&parts(&zp), true).unwrap();
+    let worst = c1[0].iter().zip(&c2[0]).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
+    println!("control, coupled problem declared pointwise: largest difference {worst:.3e}");
+    assert!(worst > 1e-3, "control did not fire: {worst:e}");
+}
+
+/// The fingerprints of the double-double results: the residual at z* perturbed by 1e-3, the Newton solution from
+/// there, and the pointwise problem's batched Jacobian at z* perturbed by 1e-2; `ulp` changes the last bit of
+/// unknown 37's hi part in both starting points, and `ulp_rhs` that of the extra row's omega*
+fn results_hashes(ulp: bool, ulp_rhs: bool) -> [u64; 3] {
+    let bump = |z: &mut Vec<Vec<f64>>| z[0][37] = f64::from_bits(z[0][37].to_bits() + 1);
+    let (mut sh, zs) = planted();
+    if ulp_rhs {
+        sh.extra[0].rhs.hi = f64::from_bits(sh.extra[0].rhs.hi.to_bits() + 1);
+    }
+    let mut z = perturbed(&zs, 1e-3);
+    if ulp {
+        bump(&mut z);
+    }
+    let f = sh.residual::<Double>(&parts(&z), true).unwrap();
+    let mut hf = Fnv::new();
+    f.iter().for_each(|v| {
+        hf.f64(v.hi);
+        hf.f64(v.lo)
+    });
+    sh.newton::<Double>(
+        &mut z,
+        &NewtonOpts {
+            tol: 1e-28,
+            max_iter: 10,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut hz = Fnv::new();
+    z.iter().flatten().for_each(|&v| hz.f64(v));
+    let (pw, zs) = Planted::<B>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
+    let mut zp = perturbed(&zs, 1e-2);
+    if ulp {
+        bump(&mut zp);
+    }
+    let (c, _) = as_pointwise(pw).jacobian::<Double>(&parts(&zp), true).unwrap();
+    let mut hj = Fnv::new();
+    c.iter().flatten().for_each(|&v| hj.f64(v));
+    [hf.0, hz.0, hj.0]
+}
+
+/// the reference fingerprints, recorded on aarch64 (NEON) and on the portable backend
+const RESULTS_REFERENCE: [u64; 3] = [0x6a9375ef5a585246, 0xe94673921ef2a77e, 0xb58aae4150531691];
+
+/// The residual, the Newton solution and the batched Jacobian do not depend on multidouble's SIMD backend or on the
+/// number of threads. Pass: `results_hashes` equals the reference on every build of the CI matrix.
+#[test]
+fn results_bytes_match_reference() {
+    let h = results_hashes(false, false);
+    println!(
+        "results hashes [{}]",
+        h.iter().map(|v| format!("{v:#018x}")).collect::<Vec<_>>().join(", ")
+    );
+    assert_eq!(h, RESULTS_REFERENCE, "the results' bytes differ from the reference");
+}
+
+/// The control of `results_bytes_match_reference`: one ulp of one unknown must change the residual's and the
+/// Jacobian's fingerprints, and one ulp of omega* the Newton solution's.
+#[test]
+fn results_bytes_control_one_ulp_differs() {
+    let base = results_hashes(false, false);
+    let h = results_hashes(true, false);
+    assert!(h[0] != base[0] && h[2] != base[2], "control did not fire");
+    let h = results_hashes(false, true);
+    assert_ne!(h[1], base[1], "control did not fire");
 }
 
 /// The controls (feature `mutate`): a dropped Jacobian column must fail `jacobian_matches_central_differences`, and

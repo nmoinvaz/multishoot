@@ -5,6 +5,10 @@
 //! Block b's rows depend on its inputs, its target node (through the -1 of the mismatch) and the globals; the extra
 //! rows on the unknowns they name, with their constant weights. Every other entry is zero. The matrix is stored
 //! column-major with leading dimension `ld_for(L)`, part q of entry (i, j) at `c[q][j ld + i]`.
+//!
+//! For a pointwise problem (`Equations::POINTWISE`) the lanes are independent, so one evaluation seeds a unit
+//! tangent on every point of an input field and gives that field's M columns at once: point j's tangent reaches only
+//! point j's rows. A column's entries are those of the evaluation seeded on its point alone, lane for lane.
 use crate::equations::{Equations, State};
 use crate::lane::BaseLane;
 use crate::prec::Prec;
@@ -13,19 +17,26 @@ use multidouble::field::Fl;
 use multidouble::linalg::ld_for;
 use rayon::prelude::*;
 
-/// What a Jacobian column task differentiates along: lane j of a block's input field f, or global i
+/// What a Jacobian column task differentiates along: point j of a block's input field f, every point of input
+/// field f at once (pointwise problems), or global i
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seed {
     Field(usize, usize),
+    Points(usize),
     Global(usize),
 }
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
-    /// The Jacobian's column tasks: (block, seed), every lane of every input field of every block, then its globals.
+    /// The Jacobian's column tasks: (block, seed), every point of every input field of every block (one task per
+    /// field for a pointwise problem), then its globals.
     pub fn jac_tasks(&self) -> Vec<(usize, Seed)> {
         let mut tasks = Vec::new();
         for b in 0..self.k() + 1 {
             for f in 0..self.block_inputs(b).len() {
+                if E::POINTWISE {
+                    tasks.push((b, Seed::Points(f)));
+                    continue;
+                }
                 for j in 0..Self::M {
                     tasks.push((b, Seed::Field(f, j)));
                 }
@@ -37,11 +48,12 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         tasks
     }
 
-    /// The z index a task's seed sits on
-    pub fn seed_index(&self, b: usize, s: Seed) -> usize {
+    /// The z indices of a task's columns
+    pub fn seed_columns(&self, b: usize, s: Seed) -> Vec<usize> {
         match s {
-            Seed::Field(f, j) => self.block_inputs(b)[f] + j,
-            Seed::Global(i) => self.off_global() + i,
+            Seed::Field(f, j) => vec![self.block_inputs(b)[f] + j],
+            Seed::Points(f) => (0..Self::M).map(|j| self.block_inputs(b)[f] + j).collect(),
+            Seed::Global(i) => vec![self.off_global() + i],
         }
     }
 
@@ -56,6 +68,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             .map(|(fi, &o)| {
                 let t = match seed {
                     Seed::Field(f, j) if f == fi => Fl::<P::V, B>::unit(j),
+                    Seed::Points(f) if f == fi => Fl::<P::V, B>::splat(multidouble::dd::DD::ONE),
                     _ => Fl::zero(),
                 };
                 P::field_dual(&self.load::<P>(z, o), &t)
@@ -109,16 +122,24 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 cq[idx] = P::part(s, q);
             }
         };
+        let nf = E::NF;
         for (&(b, seed), col) in tasks.iter().zip(&cols) {
-            let cj = self.seed_index(b, seed);
-            #[cfg(feature = "mutate")]
-            if self.control == crate::control::Control::DropColumn(cj) {
-                continue;
-            }
             let r0 = self.row_block(b);
-            for (r, v) in col.iter().enumerate() {
-                for (q, cq) in c.iter_mut().enumerate() {
-                    cq[cj * ld + r0 + r] = P::part(*v, q);
+            for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
+                #[cfg(feature = "mutate")]
+                if self.control == crate::control::Control::DropColumn(cj) {
+                    continue;
+                }
+                // a pointwise task's column jj has point jj of every output field; any other task's column is whole
+                let rows: Vec<usize> = if let Seed::Points(_) = seed {
+                    (0..nf).map(|q| q * m + jj).collect()
+                } else {
+                    (0..nf * m).collect()
+                };
+                for r in rows {
+                    for (q, cq) in c.iter_mut().enumerate() {
+                        cq[cj * ld + r0 + r] = P::part(col[r], q);
+                    }
                 }
             }
         }
