@@ -8,6 +8,7 @@
 //! adjacent node, by a series at a singular point or by boundary conditions at a regular one. `NG` global unknowns
 //! (an eigenvalue, a period) enter every block.
 use crate::lane::Lane;
+use crate::mode::Rate;
 use multidouble::field::Fl;
 
 /// The state at a point: the `NF` fields
@@ -23,6 +24,9 @@ pub struct Work<T: Lane, const B: usize> {
     pub kt: usize,
     pub c: Vec<Vec<Fl<T, B>>>,
     pub aux: Vec<Vec<Fl<T, B>>>,
+    /// the growth rate of a mode-matrix evaluation, zero otherwise: the recursion passes each t-derivative of a
+    /// coefficient through `rate.shift` ([`crate::mode`])
+    pub rate: Rate,
 }
 
 impl<T: Lane, const B: usize> Work<T, B> {
@@ -33,6 +37,7 @@ impl<T: Lane, const B: usize> Work<T, B> {
             kt,
             c: (0..nf).map(|_| v()).collect(),
             aux: (0..naux).map(|_| v()).collect(),
+            rate: Rate::ZERO,
         }
     }
 }
@@ -72,6 +77,14 @@ pub trait Equations<const B: usize>: Sync {
     /// lane's precision by iterative refinement (Moler, J. ACM 14, 316 (1967)).
     fn prepare(&self, _zh: &[f64], _zl: &[f64]) -> Self::Prep {
         Self::Prep::default()
+    }
+
+    /// The preparation for a mode-matrix evaluation at the growth rate ([`crate::mode`]): `prepare`'s by default,
+    /// which serves endpoint maps without a t-derivative. Endpoint maps with one keep the rate in their preparation,
+    /// with what it changes (the factors of a shifted periodic solve), and pass their t-derivatives through
+    /// `rate.shift`.
+    fn prepare_rate(&self, zh: &[f64], zl: &[f64], _rate: Rate) -> Self::Prep {
+        self.prepare(zh, zl)
     }
 
     /// Taylor coefficients 1..=w.kt of every field about x0, from order 0 in `w.c[f][0]`; g holds the globals.

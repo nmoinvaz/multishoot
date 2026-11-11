@@ -22,6 +22,7 @@ This crate is the engine of that method, generic over the equations, on the arit
 | periodic direction | fields that depend on a periodic variable, on collocation points, with exact derivatives in it |
 | layout | node blocks, mismatch rows, global parameters (an eigenvalue), a phase condition, pinned rows |
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
+| mode matrix | the linearization for perturbations growing as exp(λt) at a complex rate λ, and its determinant, whose winding number counts the modes |
 | Newton | in double-double, quad-double or octo-double (multidouble's `Precision` trait), with the residual's Taylor series in a parameter of the equations |
 
 **Status:** early. The API may change between minor versions until 1.0. It depends on multidouble from crates.io,
