@@ -308,7 +308,7 @@ fn projected_jet_control_unprojected_fails() {
 }
 
 /// max_i |(J v)_i - jvp_i| over the rows, relative to max_i sum_j |J_ij| |v_j|, in P: J the Jacobian of `jac` at
-/// z, jvp the projected problem's product; and whether the projected product's residual equals `residual`'s
+/// z, jvp the projected problem's product; and whether the projected product's residual equals `jac`'s `residual`
 fn jvp_against_jacobian<P: Precision<Native>>(
     jac: &Shooting<Planted<B>, B>,
     z: &[&[f64]],
@@ -331,7 +331,7 @@ fn jvp_against_jacobian<P: Precision<Native>>(
         );
         err = nan_max(err, P::to_dd(prod - ji).hi.abs());
     }
-    let fr = sh.residual::<P>(z, true).unwrap();
+    let fr = jac.residual::<P>(z, true).unwrap();
     let same = (0..l).all(|i| (0..P::PARTS).all(|q| P::part(f[i], q) == P::part(fr[i], q)));
     (err / scale, same)
 }
@@ -360,17 +360,18 @@ fn projected_jvp_is_the_jacobian_product() {
     assert!(ed < 1e-28 && eo < 1e-115 && sd && so, "{ed:e} {eo:e} {sd} {so}");
 }
 
-/// The control of `projected_jvp_is_the_jacobian_product`: the unprojected Jacobian's product must fail it in both
-/// precisions.
+/// The controls of `projected_jvp_is_the_jacobian_product`: the unprojected problem's Jacobian times v must fail its
+/// bound, and its residual the equality with the product's residual, in both precisions.
 #[test]
 fn projected_jvp_control_unprojected_fails() {
     let (plain, _) = Planted::<B>::shooting(&NODES, 30, 1e-32);
     let (z, v) = product_state();
     let (z, v) = (parts(&z), parts(&v));
-    let (ed, _) = jvp_against_jacobian::<Double>(&plain, &z[..2], &v[..2]);
-    let (eo, _) = jvp_against_jacobian::<Octo>(&plain, &z, &v);
-    println!("control, unprojected J v: dd {ed:.3e}, od {eo:.3e}");
-    assert!(ed >= 1e-28 && eo >= 1e-115, "control did not fire");
+    let (ed, sd) = jvp_against_jacobian::<Double>(&plain, &z[..2], &v[..2]);
+    let (eo, so) = jvp_against_jacobian::<Octo>(&plain, &z, &v);
+    println!("control, unprojected J v: dd {ed:.3e}, od {eo:.3e}; unprojected residual equal {sd} {so}");
+    assert!(ed >= 1e-28 && eo >= 1e-115, "the product's control did not fire");
+    assert!(!sd && !so, "the residual's control did not fire");
 }
 
 /// FNV-1a over every part of the scalars

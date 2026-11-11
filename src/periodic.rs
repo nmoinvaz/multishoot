@@ -332,7 +332,7 @@ mod tests {
     }
 
     /// The control of `sin_cos_pi_reduces_large_p`: the angle half a period on (p + q) must differ, its sine and
-    /// cosine negated.
+    /// cosine negated, in octo-double and in double-double.
     #[test]
     fn sin_cos_pi_reduction_control_half_period_differs() {
         let (p, q) = (i64::MAX - 5, 40);
@@ -340,6 +340,9 @@ mod tests {
         let (s, c) = sin_cos_pi_od(pr + q, q);
         assert_ne!(sin_cos_pi_od(p, q), (s, c));
         assert_eq!(sin_cos_pi_od(p, q), (-s, -c));
+        let (s, c) = sin_cos_pi(pr + q, q);
+        assert_ne!(sin_cos_pi(p, q), (s, c));
+        assert_eq!(sin_cos_pi(p, q), (-s, -c));
     }
 
     /// The control of `sin_cos_pi_od_agrees`: the series stopped at terms below 1e-90 must fail sin^2 + cos^2 = 1 at
