@@ -20,7 +20,7 @@ This crate is the engine of that method, generic over the equations, on the arit
 | equations trait | the problem enters as the Taylor coefficients of its right-hand side, and the series that start the solution at singular endpoints |
 | Taylor stepping | the solution carried between nodes by Taylor series, each step planned so that its truncation term stays below a tolerance |
 | periodic direction | fields that depend on a periodic variable, on collocation points, with exact derivatives in it |
-| layout | node blocks, mismatch rows, global parameters (an eigenvalue), a phase condition, pinned rows |
+| layout | node blocks, mismatch rows, global parameters (an eigenvalue), a phase condition, pinned rows, projected rows (a field's high harmonics unmatched and held at zero elsewhere, exact in every precision) |
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
 | Jacobian-vector product | J v by one dual pass per block, without forming the Jacobian, in every precision |
 | mode matrix | the linearization for perturbations growing as exp(λt) at a complex rate λ, and its determinant, whose winding number counts the modes |

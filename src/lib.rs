@@ -36,6 +36,7 @@
 //! * [`prec`]: helpers for states held as part arrays in any of multidouble's precisions ([`Precision`]:
 //!   double-double [`Double`], quad-double [`Quad`], octo-double [`Octo`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
+//! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
 //! * [`lane`]: the lane types the engine is generic over;
 //! * `control` (feature `mutate`): deliberate errors, the controls of the accuracy checks.
 #[cfg(feature = "mutate")]
@@ -49,6 +50,7 @@ pub mod mode;
 pub mod newton;
 pub mod periodic;
 pub mod prec;
+pub mod projected;
 pub mod residual;
 pub mod shooting;
 pub mod taylor;
@@ -61,5 +63,6 @@ pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
 pub use multidouble::precision::{Double, Octo, Precision, Quad};
 pub use multidouble::simd::Native;
 pub use newton::{NewtonOpts, NewtonReport};
+pub use projected::ProjectedRows;
 pub use shooting::{ExtraRow, Shooting};
 pub use taylor::Plan;

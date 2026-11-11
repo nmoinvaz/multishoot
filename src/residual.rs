@@ -107,6 +107,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 }
             }
         }
+        self.project_residual::<P>(&mut f, |p| (0..m).map(|j| self.scalar::<P>(z, p.pin + j)).collect());
         let re = self.row_extra();
         for r in 0..self.extra.len() {
             f[re + r] = self.extra_row::<P>(z, r);

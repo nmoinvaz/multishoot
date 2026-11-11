@@ -21,4 +21,6 @@ pub enum Control {
     RateNotInSteps,
     /// the mode matrix with the preparation of `Equations::prepare`, without the rate
     RateNotPrepared,
+    /// the projected rows' projectors read in double-double (their first two parts) in every precision
+    ProjectorDD,
 }
