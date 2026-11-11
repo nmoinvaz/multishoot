@@ -3,7 +3,7 @@
 mod common;
 
 use common::{perturbed, Bessel, PerColumn};
-use multishoot::prec::{max_abs, parts, widen};
+use multishoot::prec::{max_abs, nan_max, parts, widen};
 use multishoot::{Double, Native, NewtonOpts, Precision, Quad, Shooting, DD};
 use std::sync::atomic::Ordering;
 
@@ -33,8 +33,8 @@ fn solve(sh: &Shooting<Bessel, 1>, zs: &[Vec<f64>]) -> (bool, f64, f64, f64) {
     let q = |i: usize| <Quad as Precision<Native>>::new(&[zq[0][i], zq[1][i], zq[2][i], zq[3][i]]).to_dd();
     let zerr = (0..sh.len())
         .map(|i| (q(i) - DD::new(zs[0][i], zs[1][i])).hi.abs())
-        .fold(0.0, f64::max);
-    let aerr = (0..8).map(|i| (q(i) - DD::ONE).hi.abs()).fold(0.0, f64::max);
+        .fold(0.0, nan_max);
+    let aerr = (0..8).map(|i| (q(i) - DD::ONE).hi.abs()).fold(0.0, nan_max);
     let fq = *qd.fnorm.last().unwrap();
     println!(
         "dd max |F| {:?}, qd {:?}; max |a - 1| {aerr:.3e}, max |z - z*| {zerr:.3e}",
