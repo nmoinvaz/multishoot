@@ -424,36 +424,89 @@ fn planted_block_comparison(
     block_comparison(&mm, &c, ld)
 }
 
-/// (entries of the mode matrix of `pw` that differ from that of `plain`, in either part) at z* perturbed by 1e-2 and
-/// the fingerprint's rate: one evaluation per input field for the pointwise declaration against one per column
-fn pointwise_differs(plain: &Shooting<Planted<PB>, PB>, z: &[Vec<f64>], coupled: bool) -> usize {
+/// (entries of the mode matrix of `pw` that differ from that of `plain`, in either part; entries of plain's with a
+/// nonzero imaginary part) at z* perturbed by 1e-2 and the fingerprint's rate: one evaluation per input field for
+/// the pointwise declaration against one per column, the declared problem's layout changed by `set` (a control)
+fn pointwise_differs(
+    plain: &Shooting<Planted<PB>, PB>,
+    z: &[Vec<f64>],
+    coupled: bool,
+    set: impl Fn(&mut Shooting<common::Pointwise<Planted<PB>>, PB>),
+) -> (usize, usize) {
     let (sh, _) = Planted::<PB>::shooting_of(Planted::with_coupling(coupled), &NODES, 30, 1e-32);
-    let pw = as_pointwise(sh);
+    let mut pw = as_pointwise(sh);
+    set(&mut pw);
     let a = plain.mode_matrix(&parts(z), hash_rate(), true).unwrap();
     let b = pw.mode_matrix(&parts(z), hash_rate(), true).unwrap();
-    (0..a.n)
-        .flat_map(|j| (0..a.n).map(move |i| (i, j)))
-        .filter(|&(i, j)| a.at(i, j) != b.at(i, j))
-        .count()
+    let all = || (0..a.n).flat_map(|j| (0..a.n).map(move |i| (i, j)));
+    (
+        all().filter(|&(i, j)| a.at(i, j) != b.at(i, j)).count(),
+        all().filter(|&(i, j)| a.at(i, j).1 != DD::ZERO).count(),
+    )
 }
 
-/// The pointwise problem's mode matrix at a complex rate, batched (one evaluation per input field, every point's
-/// tangent at once) against per column. Pass: every entry equal in both parts.
+/// The pointwise problem's mode matrix at a complex rate (its -omega u marked as a t-derivative, so the rate enters
+/// every point), batched against per column. Pass: every entry equal in both parts, with imaginary parts that are
+/// not zero.
 #[test]
 fn pointwise_mode_matrix_equals_per_column() {
     let (plain, zs) = Planted::<PB>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
-    let d = pointwise_differs(&plain, &perturbed(&zs, 1e-2), false);
-    println!("pointwise mode matrix against per column: {d} entries differ");
-    assert_eq!(d, 0);
+    let (d, im) = pointwise_differs(&plain, &perturbed(&zs, 1e-2), false, |_| {});
+    println!("pointwise mode matrix against per column: {d} entries differ, {im} imaginary parts nonzero");
+    assert!(d == 0 && im > 0, "{d} {im}");
 }
 
 /// The control of `pointwise_mode_matrix_equals_per_column`: the coupled problem declared pointwise must differ, as
-/// d/dtheta carries a point's tangent to the others.
+/// d/dtheta carries a point's tangent to the others (a second control, the rate's real part only, is with the
+/// `mutate` controls).
 #[test]
 fn pointwise_mode_control_coupled_differs() {
     let (plain, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
-    let d = pointwise_differs(&plain, &perturbed(&zs, 1e-2), true);
+    let (d, _) = pointwise_differs(&plain, &perturbed(&zs, 1e-2), true, |_| {});
     println!("control, coupled problem declared pointwise: {d} entries differ");
+    assert!(d > 0, "control did not fire");
+}
+
+/// (entries of the mode matrix with block 2's rows scaled by 2^60 that differ from the unscaled one times `t` there
+/// and times 1 elsewhere, in either part; imaginary parts of the unscaled matrix that are not zero) at the
+/// fingerprint's complex rate
+fn complex_scaling_differs(t: f64) -> (usize, usize) {
+    let (plain, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let (mut sc, _) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let (r0, r1) = (sc.row_block(2), sc.row_block(3));
+    sc.row_scale = (0..sc.rows())
+        .map(|r| if (r0..r1).contains(&r) { 2f64.powi(60) } else { 1.0 })
+        .collect();
+    let z = perturbed(&zs, 1e-2);
+    let a = plain.mode_matrix(&parts(&z), hash_rate(), true).unwrap();
+    let b = sc.mode_matrix(&parts(&z), hash_rate(), true).unwrap();
+    let all = || (0..a.n).flat_map(|j| (0..a.n).map(move |i| (i, j)));
+    let f = |i: usize| DD::from_f64(if (r0..r1).contains(&i) { t } else { 1.0 });
+    (
+        all()
+            .filter(|&(i, j)| {
+                let ((ar, ai), (br, bi)) = (a.at(i, j), b.at(i, j));
+                ar * f(i) != br || ai * f(i) != bi
+            })
+            .count(),
+        all().filter(|&(i, j)| a.at(i, j).1 != DD::ZERO).count(),
+    )
+}
+
+/// Row scaling at a complex rate: pass, the scaled mode matrix is the unscaled one times the factors in both parts of
+/// every entry, bit for bit (a power of two scales exactly), with imaginary parts that are not zero.
+#[test]
+fn complex_rate_rows_scale() {
+    let (d, im) = complex_scaling_differs(2f64.powi(60));
+    println!("complex rate, scaled rows: {d} entries differ, {im} imaginary parts nonzero");
+    assert!(d == 0 && im > 0, "{d} {im}");
+}
+
+/// The control of `complex_rate_rows_scale`: told the factor is 2^61, the comparison must fail.
+#[test]
+fn complex_rate_rows_scale_control_wrong_factor() {
+    let (d, _) = complex_scaling_differs(2f64.powi(61));
+    println!("control, wrong factor at a complex rate: {d} entries differ");
     assert!(d > 0, "control did not fire");
 }
 
@@ -502,18 +555,60 @@ fn mode_bytes_control_one_ulp_differs() {
     assert_ne!(mode_hash(r), mode_hash(hash_rate()), "control did not fire");
 }
 
-/// The shift at rate zero is no shift: pass, a nonzero rate on a value lane returns dx bit for bit, and so does the
-/// zero rate on a tangent lane.
+/// the bits of both words of every value of a double-double field
+fn bits(f: &Fl<multishoot::lane::DV, 1>) -> Vec<u64> {
+    (0..8)
+        .flat_map(|j| [f.get(j).hi.to_bits(), f.get(j).lo.to_bits()])
+        .collect()
+}
+
+/// The shift at rate zero, or on a lane without a tangent, is no shift: pass, a nonzero rate on a value lane returns
+/// dx in every bit of both words, and so does the zero rate on a tangent lane, value and tangent, with dx holding
+/// signed zeros among its values and tangents.
 #[test]
 fn shift_is_the_identity_without_a_tangent_or_a_rate() {
-    let x = Fl::<multishoot::lane::DV, 1>::splat(DD::from_f64(0.7));
-    let dx = Fl::<multishoot::lane::DV, 1>::splat(DD::from_f64(-1.3));
+    let (x, dx) = identity_inputs();
     let r = Rate::new(DD::from_f64(0.5), DD::from_f64(0.25)).shift(&x, dx);
-    assert!((0..8).all(|j| r.get(j) == dx.get(j)));
+    assert_eq!(bits(&r), bits(&dx));
     let xu = Fl::<multishoot::lane::Du, 1>::unit_tangent(&x, 3);
-    let du = Fl::<multishoot::lane::Du, 1>::unit_tangent(&dx, 5);
+    let du = Fl::<multishoot::lane::Du, 1>::from_vt(&dx, &dx);
     let ru = Rate::ZERO.shift(&xu, du);
-    assert!((0..8).all(|j| ru.tan().get(j) == du.tan().get(j) && ru.val().get(j) == du.val().get(j)));
+    assert_eq!(bits(&ru.val()), bits(&du.val()));
+    assert_eq!(bits(&ru.tan()), bits(&du.tan()));
+}
+
+/// x and dx of the identity checks: dx with -0 and +0 among its values
+fn identity_inputs() -> (Fl<multishoot::lane::DV, 1>, Fl<multishoot::lane::DV, 1>) {
+    let x = Fl::<multishoot::lane::DV, 1>::splat(DD::from_f64(0.7));
+    let v: Vec<DD> = (0..8)
+        .map(|j| match j {
+            2 => DD { hi: -0.0, lo: 0.0 },
+            5 => DD::ZERO,
+            _ => DD::from_f64(-1.3 + j as f64),
+        })
+        .collect();
+    let (h, l) = multidouble::dd::split(&v);
+    (x, Fl::load(&h, &l))
+}
+
+/// The controls of the bitwise comparison in `shift_is_the_identity_without_a_tangent_or_a_rate`: dx with its -0
+/// made +0 must differ in the bits (though equal as numbers), and a value-lane result moved by one ulp must differ.
+#[test]
+fn shift_identity_controls_signed_zero_and_value_differ() {
+    let (_, dx) = identity_inputs();
+    let mut v: Vec<DD> = (0..8).map(|j| dx.get(j)).collect();
+    v[2] = DD::ZERO;
+    let (h, l) = multidouble::dd::split(&v);
+    let flipped = Fl::<multishoot::lane::DV, 1>::load(&h, &l);
+    assert!(
+        (0..8).all(|j| flipped.get(j) == dx.get(j)),
+        "the signed zero is not a numeric change"
+    );
+    assert_ne!(bits(&flipped), bits(&dx));
+    v[2] = dx.get(2);
+    v[0].hi = f64::from_bits(v[0].hi.to_bits() + 1);
+    let (h, l) = multidouble::dd::split(&v);
+    assert_ne!(bits(&Fl::<multishoot::lane::DV, 1>::load(&h, &l)), bits(&dx));
 }
 
 /// The control of `shift_is_the_identity_without_a_tangent_or_a_rate`: a real rate on a tangent lane must move the
@@ -582,6 +677,17 @@ mod controls {
             .fold(0.0f64, |a, e| a.max(e.0).max(e.1));
         println!("control, rate not prepared: worst determinant error {worst:.3e}");
         assert!(worst >= 1e-10, "control did not fire");
+    }
+
+    /// the batched pointwise matrix with the rate's real part only: it must differ from the per-column one
+    #[test]
+    fn pointwise_rate_real_differs() {
+        let (plain, zs) = Planted::<PB>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
+        let (d, _) = pointwise_differs(&plain, &perturbed(&zs, 1e-2), false, |pw| {
+            pw.set_control(Control::RateReal)
+        });
+        println!("control, pointwise with the real rate only: {d} entries differ");
+        assert!(d > 0, "control did not fire");
     }
 
     /// a dropped column: the rate-zero matrix differs from the Jacobian's block
