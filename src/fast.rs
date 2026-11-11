@@ -278,9 +278,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The f64 Jacobian of `jacobian_f64` built block by block and factored in staircase storage (multidouble's
-    /// `StaircaseLu`), never forming the dense matrix. Each block's columns are computed (in parallel with `par`) by
-    /// the same evaluations as the dense Jacobian's, so the blocks hold its entries. It needs a square system with
-    /// one global (`NG` = 1) and one extra row, whose terms lie on the left data, the global and node 0.
+    /// `StaircaseLu`), never forming the dense matrix. Every block's columns are computed first (in parallel with
+    /// `par`) by the same evaluations as the dense Jacobian's, so the blocks hold its entries. It needs a square system
+    /// with one global (`NG` = 1) and one extra row, whose terms lie on the left data, the global and node 0.
     pub fn jacobian_staircase<T: Lane>(&self, z: &[&[f64]], par: bool) -> Result<StaircaseLu, String> {
         self.check_z::<Double>(z)?;
         if !self.is_square() || E::NG != 1 || self.extra.len() != 1 {
@@ -309,13 +309,16 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         };
         let gs = self.staircase_groups();
         let rblocks: Vec<(usize, usize)> = (0..=self.k()).map(|b| (self.row_block(b), E::NF * m)).collect();
-        // the column groups of each block, in task order (jac_tasks emits the blocks in turn)
-        let mut by_block: Vec<Vec<Vec<(usize, Seed)>>> = vec![Vec::new(); self.k() + 1];
-        for gr in self.f64_groups::<T>() {
-            by_block[gr[0].0].push(gr);
+        // every block's columns before the factorization, which asks for the blocks in turn, so the evaluations of all
+        // blocks run in parallel as the dense Jacobian's do
+        let groups = self.f64_groups::<T>();
+        let cols = self.f64_columns::<T>(z, &groups, par);
+        let tasks: Vec<(usize, Seed)> = groups.into_iter().flatten().collect();
+        // each block's task indices, in task order (jac_tasks emits the blocks in turn)
+        let mut by_block: Vec<Vec<usize>> = vec![Vec::new(); self.k() + 1];
+        for (i, t) in tasks.iter().enumerate() {
+            by_block[t.0].push(i);
         }
-        let g = self.globals::<Double>(z);
-        let prep = self.eq.prepare(z[0], z[1]);
         let gc = gs.clone();
         let fill = |b: usize, w: &mut [f64], ld: usize, r0: usize| -> Result<(), String> {
             let (p, q) = (gc[b], gc[b + 1]);
@@ -334,15 +337,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     ))
                 }
             };
-            let bg = &by_block[b];
-            let one = |gr: &Vec<(usize, Seed)>| self.jac_columns_f64::<T>(z, &g, &prep, gr);
-            let cols: Vec<Vec<Vec<f64>>> = if par {
-                bg.par_iter().map(one).collect()
-            } else {
-                bg.iter().map(one).collect()
-            };
             let rb = self.row_block(b);
-            for (&(_, seed), col) in bg.iter().flatten().zip(cols.iter().flatten()) {
+            for &i in &by_block[b] {
+                let (seed, col) = (tasks[i].1, &cols[i]);
                 for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
                     if self.dropped(cj) {
                         continue;
