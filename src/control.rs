@@ -8,7 +8,7 @@ pub enum Control {
     /// none
     None,
     /// the Jacobian's column c without its block derivative (only the -1 of its target and the extra rows' weights
-    /// remain)
+    /// remain), in the Jacobian and in the Jacobian-vector product (v's entry c not seeded into its block)
     DropColumn(usize),
     /// residual row r matched to the unknown after its target instead of its target
     ShiftRow(usize),

@@ -15,7 +15,8 @@
 //! * between the nodes the solution is carried by Taylor series, with steps planned so that each truncation term
 //!   stays below a tolerance;
 //! * the fields may depend on a periodic variable, represented on collocation points, with exact derivatives in it;
-//! * the Jacobian is exact, by forward-mode dual numbers over the same code that forms the residual;
+//! * the Jacobian is exact, by forward-mode dual numbers over the same code that forms the residual, and so is its
+//!   product with a vector, from one pass per block;
 //! * Newton's method runs in double-double, quad-double or octo-double (multidouble's `Precision`), as the
 //!   conditioning requires, and the residual can be expanded as a Taylor series in a parameter of the equations.
 //!
@@ -28,6 +29,7 @@
 //! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
+//! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
 //! * [`newton`]: the Newton step and the damped Newton loop;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
@@ -41,6 +43,7 @@ pub mod control;
 pub mod equations;
 pub mod jacobian;
 pub mod jet;
+pub mod jvp;
 pub mod lane;
 pub mod mode;
 pub mod newton;
