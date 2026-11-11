@@ -307,6 +307,72 @@ fn projected_jet_control_unprojected_fails() {
     assert!(e >= 1e-28, "control did not fire: {e:e}");
 }
 
+/// max_i |(J v)_i - jvp_i| over the rows, relative to max_i sum_j |J_ij| |v_j|, in P: J the Jacobian of `jac` at
+/// z, jvp the projected problem's product; and whether the projected product's residual equals `residual`'s
+fn jvp_against_jacobian<P: Precision<Native>>(
+    jac: &Shooting<Planted<B>, B>,
+    z: &[&[f64]],
+    v: &[&[f64]],
+) -> (f64, bool) {
+    let (sh, _) = projected();
+    let l = sh.len();
+    let (jv, f) = sh.jvp::<P>(z, v, true).unwrap();
+    let (c, ld) = jac.jacobian::<P>(z, true).unwrap();
+    let entry = |i: usize, j: usize| P::from_raw(&c.iter().map(|cq| cq[j * ld + i]).collect::<Vec<_>>());
+    let vj: Vec<P::Scalar> = (0..l)
+        .map(|j| P::from_raw(&v.iter().map(|q| q[j]).collect::<Vec<_>>()))
+        .collect();
+    let (mut scale, mut err) = (0.0f64, 0.0f64);
+    for (i, &ji) in jv.iter().enumerate() {
+        let prod = P::dot((0..l).map(|j| (entry(i, j), vj[j])));
+        scale = nan_max(
+            scale,
+            (0..l).map(|j| P::part(entry(i, j), 0).abs() * v[0][j].abs()).sum(),
+        );
+        err = nan_max(err, P::to_dd(prod - ji).hi.abs());
+    }
+    let fr = sh.residual::<P>(z, true).unwrap();
+    let same = (0..l).all(|i| (0..P::PARTS).all(|q| P::part(f[i], q) == P::part(fr[i], q)));
+    (err / scale, same)
+}
+
+/// the state and direction of the projected product checks: z* perturbed by 1e-3 and `direction`, every
+/// octo-double part in use
+fn product_state() -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+    let (sh, zs) = projected();
+    (
+        full_parts(&perturbed(&zs, 1e-3)[0]),
+        full_parts(&direction(sh.len())[0]),
+    )
+}
+
+/// The projected problem's Jacobian-vector product against its projected Jacobian times v, in double- and
+/// octo-double, at a state and direction with every part in use. Pass: within 1e-28 and 1e-115 of max_i sum_j
+/// |J_ij| |v_j|, and the product's residual equal to `residual`'s in every part.
+#[test]
+fn projected_jvp_is_the_jacobian_product() {
+    let (sh, _) = projected();
+    let (z, v) = product_state();
+    let (z, v) = (parts(&z), parts(&v));
+    let (ed, sd) = jvp_against_jacobian::<Double>(&sh, &z[..2], &v[..2]);
+    let (eo, so) = jvp_against_jacobian::<Octo>(&sh, &z, &v);
+    println!("projected jvp against J v: dd {ed:.3e}, od {eo:.3e}; residual equal {sd} {so}");
+    assert!(ed < 1e-28 && eo < 1e-115 && sd && so, "{ed:e} {eo:e} {sd} {so}");
+}
+
+/// The control of `projected_jvp_is_the_jacobian_product`: the unprojected Jacobian's product must fail it in both
+/// precisions.
+#[test]
+fn projected_jvp_control_unprojected_fails() {
+    let (plain, _) = Planted::<B>::shooting(&NODES, 30, 1e-32);
+    let (z, v) = product_state();
+    let (z, v) = (parts(&z), parts(&v));
+    let (ed, _) = jvp_against_jacobian::<Double>(&plain, &z[..2], &v[..2]);
+    let (eo, _) = jvp_against_jacobian::<Octo>(&plain, &z, &v);
+    println!("control, unprojected J v: dd {ed:.3e}, od {eo:.3e}");
+    assert!(ed >= 1e-28 && eo >= 1e-115, "control did not fire");
+}
+
 /// FNV-1a over every part of the scalars
 fn fnv<P: Precision<Native>>(f: &[P::Scalar]) -> u64 {
     let mut h = Fnv::new();

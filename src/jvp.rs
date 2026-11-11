@@ -2,7 +2,7 @@
 //! 463 (1964)), with the block's inputs and the globals carrying v's entries as their tangents, in any precision.
 //!
 //! Block b's rows of J v are the tangent of its state along v minus v at its target node; the extra rows are linear,
-//! `sum_i w_i v_i`; with `row_scale` every row is scaled as the residual's. A product costs K + 1 dual evaluations, about as many as K + 1 Jacobian columns, against one per
+//! `sum_i w_i v_i`; projected rows and `row_scale` act as on the residual. A product costs K + 1 dual evaluations, about as many as K + 1 Jacobian columns, against one per
 //! unknown for the Jacobian, so a Krylov solver or a directional derivative needs no matrix. The residual comes with
 //! it, from the values of the same pass.
 use crate::equations::{Equations, State};
@@ -96,6 +96,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 }
             }
         }
+        // projected rows: Pi on the rows, Pi' on the pinned unknowns' direction (the product) and values (the residual)
+        self.project_residual::<P>(&mut jv, |p| (0..m).map(|j| self.scalar::<P>(v, p.pin + j)).collect());
+        self.project_residual::<P>(&mut f, |p| (0..m).map(|j| self.scalar::<P>(z, p.pin + j)).collect());
         let re = self.row_extra();
         for (r, row) in self.extra.iter().enumerate() {
             jv[re + r] = P::dot(row.terms.iter().map(|&(i, w)| (P::from_dd(w), self.scalar::<P>(v, i))));
