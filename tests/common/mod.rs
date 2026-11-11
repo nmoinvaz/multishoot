@@ -286,6 +286,25 @@ pub fn planted_z<const B: usize>(sh: &multishoot::Shooting<Planted<B>, B>) -> Ve
     vec![zh, zl]
 }
 
+/// A deterministic sequence in [-1, 1] from integer arithmetic and one IEEE division, so the same on every platform
+/// (a libm `sin` is not correctly rounded everywhere)
+pub fn wave(i: usize) -> f64 {
+    let n = (i as u64).wrapping_mul(2654435761).wrapping_add(12345) % 2001;
+    n as f64 / 1000.0 - 1.0
+}
+
+/// z plus a perturbation of relative size eps on every unknown from `wave`, the same on every platform
+pub fn perturbed_exact(z: &[Vec<f64>], eps: f64) -> Vec<Vec<f64>> {
+    let mut out = z.to_vec();
+    for (i, v) in out[0].iter_mut().enumerate() {
+        *v += eps * wave(i) * v.abs().max(0.1);
+    }
+    for p in out.iter_mut().skip(1) {
+        p.iter_mut().for_each(|v| *v = 0.0);
+    }
+    out
+}
+
 /// z plus a deterministic perturbation of relative size eps on every unknown
 pub fn perturbed(z: &[Vec<f64>], eps: f64) -> Vec<Vec<f64>> {
     let mut out = z.to_vec();

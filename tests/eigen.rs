@@ -2,7 +2,7 @@
 //! whose lowest eigenvalue is pi^2 + mu with the mode sin(pi x) cos theta / pi.
 mod common;
 
-use common::{perturbed, Cylinder, Fnv};
+use common::{perturbed_exact as perturbed, wave, Cylinder, Fnv};
 use multishoot::prec::{max_abs, parts, widen};
 use multishoot::{Double, NewtonOpts, Octo, Prec, Quad, Shooting, DD};
 
@@ -87,12 +87,9 @@ fn eigenpair_control_phase_row_along_amplitude_fails() {
     assert!(!ok, "control did not fire");
 }
 
-/// a direction for z_1: every unknown moved by about 0.1
+/// a direction for z_1: every unknown moved by up to 0.1, from `wave` (the same on every platform)
 fn direction(l: usize) -> Vec<Vec<f64>> {
-    vec![
-        (0..l).map(|i| 0.1 * (1.3 * i as f64 + 0.5).sin()).collect(),
-        vec![0.0; l],
-    ]
+    vec![(0..l).map(|i| 0.1 * wave(i + 1000)).collect(), vec![0.0; l]]
 }
 
 /// F(z + h v; mu + h) for the shooting problem
@@ -250,7 +247,7 @@ fn jet_hashes(ulp: bool) -> [u64; 3] {
 }
 
 /// the reference fingerprints, recorded on aarch64 (NEON) and on the portable backend
-const JET_REFERENCE: [u64; 3] = [0x9b28079cc310382d, 0x6c0b7268b218e4bd, 0x65ff74079f7284dc];
+const JET_REFERENCE: [u64; 3] = [0x1c1e0f05043cc0ea, 0xc773b58691b23171, 0x8b6a08899263ffbf];
 
 /// The jet's bytes in every precision do not depend on multidouble's SIMD backend. Pass: `jet_hashes` equals the
 /// reference on every build of the CI matrix.
