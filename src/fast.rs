@@ -309,7 +309,11 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         };
         let gs = self.staircase_groups();
         let rblocks: Vec<(usize, usize)> = (0..=self.k()).map(|b| (self.row_block(b), E::NF * m)).collect();
-        let groups = self.f64_groups::<T>();
+        // the column groups of each block, in task order (jac_tasks emits the blocks in turn)
+        let mut by_block: Vec<Vec<Vec<(usize, Seed)>>> = vec![Vec::new(); self.k() + 1];
+        for gr in self.f64_groups::<T>() {
+            by_block[gr[0].0].push(gr);
+        }
         let g = self.globals::<Double>(z);
         let prep = self.eq.prepare(z[0], z[1]);
         let gc = gs.clone();
@@ -330,15 +334,15 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     ))
                 }
             };
-            let bg: Vec<&Vec<(usize, Seed)>> = groups.iter().filter(|gr| gr[0].0 == b).collect();
-            let one = |gr: &&Vec<(usize, Seed)>| self.jac_columns_f64::<T>(z, &g, &prep, gr);
+            let bg = &by_block[b];
+            let one = |gr: &Vec<(usize, Seed)>| self.jac_columns_f64::<T>(z, &g, &prep, gr);
             let cols: Vec<Vec<Vec<f64>>> = if par {
                 bg.par_iter().map(one).collect()
             } else {
                 bg.iter().map(one).collect()
             };
             let rb = self.row_block(b);
-            for (&(_, seed), col) in bg.iter().copied().flatten().zip(cols.iter().flatten()) {
+            for (&(_, seed), col) in bg.iter().flatten().zip(cols.iter().flatten()) {
                 for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
                     if self.dropped(cj) {
                         continue;
