@@ -380,6 +380,50 @@ fn projected_bytes_control_one_ulp_differs() {
     }
 }
 
+/// The projected problem with the right block's rows scaled by 2^80 (`row_scale`, applied after the projection):
+/// (whether the residual equals the unscaled one times the factors bit for bit, whether every Jacobian entry does),
+/// with the comparison told the factor `t`
+fn scaled_projection(t: f64) -> (bool, bool) {
+    let (plain, zs) = projected();
+    let (mut sc, _) = projected();
+    let r0 = sc.row_block(sc.k());
+    sc.row_scale = (0..sc.rows())
+        .map(|r| if r >= r0 && r < r0 + 2 * M { 2f64.powi(80) } else { 1.0 })
+        .collect();
+    let z = perturbed(&zs, 1e-3);
+    let f = |r: usize| DD::from_f64(if sc.row_scale[r] == 1.0 { 1.0 } else { t });
+    let (f0, f1) = (
+        plain.residual::<Double>(&parts(&z), true).unwrap(),
+        sc.residual::<Double>(&parts(&z), true).unwrap(),
+    );
+    let ((c0, ld), (c1, _)) = (
+        plain.jacobian::<Double>(&parts(&z), true).unwrap(),
+        sc.jacobian::<Double>(&parts(&z), true).unwrap(),
+    );
+    let l = sc.len();
+    (
+        (0..l).all(|r| f0[r] * f(r) == f1[r]),
+        (0..l).all(|j| {
+            (0..l).all(|r| {
+                DD::new(c0[0][j * ld + r], c0[1][j * ld + r]) * f(r) == DD::new(c1[0][j * ld + r], c1[1][j * ld + r])
+            })
+        }),
+    )
+}
+
+/// Pass: with the right block scaled by 2^80, the projected residual and Jacobian are the unscaled ones times the
+/// factors, bit for bit (the projection comes before the scaling).
+#[test]
+fn projected_rows_scale_after_the_projection() {
+    assert_eq!(scaled_projection(2f64.powi(80)), (true, true));
+}
+
+/// The control of `projected_rows_scale_after_the_projection`: told the factor is 2^81, both comparisons must fail.
+#[test]
+fn projected_rows_scale_control_wrong_factor_fails() {
+    assert_eq!(scaled_projection(2f64.powi(81)), (false, false));
+}
+
 /// Pass: `project_rows` refuses a block past the last, a field past NF, pinned unknowns past the fields, and a field
 /// projected twice.
 #[test]
