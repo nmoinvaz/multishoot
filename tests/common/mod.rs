@@ -531,3 +531,215 @@ impl<const B: usize> Equations<B> for Cylinder<B> {
         vec![Fl::zero(), data[0]]
     }
 }
+
+/// Bessel's equation `x^2 y'' + x y' + (x^2 - nu^2) y = 0` for the orders nu = 0..7, one per lane (B = 1, pointwise),
+/// as the system `x y' = p`, `x p' = (nu^2 - x^2) y` in y and p = x y'.
+///
+/// x = 0 is a regular singular point. The regular solution starts from its Frobenius series `y = a sum_m c_m
+/// x^(nu + 2m)`, c_0 = 1, `c_m = -c_(m-1) / (4 m (m + nu))`, summed to the first node once per evaluation
+/// (`prepare`); its amplitude a is the left data. At the right end y = y*(x_R) and p is the data. The solution is
+/// a = 1 and y = y* = 2^nu nu! J_nu(x), whose values `exact` takes from the closed form `c_m = (-1)^m / D_m`, D_m =
+/// 4^m m! (nu + 1)...(nu + m) as one product.
+pub struct Bessel {
+    pub nu: Fl<DV, 1>,
+    pub nu2: Fl<DV, 1>,
+    pub x_left: f64,
+    pub x_right: f64,
+    /// the control: the Frobenius coefficient c_3 off by 2^-60
+    pub wrong: bool,
+    /// the number of `prepare` calls
+    pub prepared: std::sync::atomic::AtomicUsize,
+    /// 4 m (m + nu) for m = 1..=40, and x_left where nu > p (else 1) for p = 0..7, lane-wise constants
+    dens: Vec<Fl<DV, 1>>,
+    xsel: Vec<Fl<DV, 1>>,
+    y_right: Fl<DV, 1>,
+}
+
+/// The Frobenius series at the first node: y and p = x y' of the solution with a = 1
+pub struct BesselPrep {
+    pub x: f64,
+    pub phi: Fl<DV, 1>,
+    pub psi: Fl<DV, 1>,
+}
+
+impl Default for BesselPrep {
+    fn default() -> Self {
+        BesselPrep {
+            x: f64::NAN,
+            phi: Fl::zero(),
+            psi: Fl::zero(),
+        }
+    }
+}
+
+impl Bessel {
+    pub fn new(x_left: f64, x_right: f64) -> Self {
+        let nu = field::<1>(|j| DD::from_f64(j as f64));
+        let dens = (1..=40)
+            .map(|m| field::<1>(|j| DD::from_f64((4 * m * (m + j)) as f64)))
+            .collect();
+        let xsel = (0..7)
+            .map(|p| field::<1>(|j| if j > p { DD::from_f64(x_left) } else { DD::ONE }))
+            .collect();
+        let mut b = Bessel {
+            nu,
+            nu2: nu * nu,
+            x_left,
+            x_right,
+            wrong: false,
+            prepared: std::sync::atomic::AtomicUsize::new(0),
+            dens,
+            xsel,
+            y_right: Fl::zero(),
+        };
+        b.y_right = b.exact(x_right)[0];
+        b
+    }
+
+    /// (y*, p*) at x from the closed-form coefficients, lane by lane
+    pub fn exact(&self, x: f64) -> State<DV, 1> {
+        let xd = DD::from_f64(x);
+        let lane = |j: usize| -> (DD, DD) {
+            let mut xp = DD::ONE;
+            for _ in 0..j {
+                xp = xp * xd;
+            }
+            let (mut y, mut p) = (DD::ZERO, DD::ZERO);
+            let mut d = DD::ONE;
+            for m in 0..40usize {
+                if m > 0 {
+                    d = d * DD::from_f64((4 * m * (j + m)) as f64);
+                    xp = xp * xd * xd;
+                }
+                let t = xp / d;
+                let t = if m % 2 == 1 { -t } else { t };
+                y = y + t;
+                p = p + t.mul_f((j + 2 * m) as f64);
+            }
+            (y, p)
+        };
+        vec![field::<1>(|j| lane(j).0), field::<1>(|j| lane(j).1)]
+    }
+
+    /// The shooting problem on five nodes from x_left to x_right, planned from the solution (order kt, last terms
+    /// below 1e-32, steps at most 0.25), and the solution's z
+    pub fn shooting(eq: Bessel, kt: usize) -> (multishoot::Shooting<Bessel, 1>, Vec<Vec<f64>>) {
+        let (xl, xr) = (eq.x_left, eq.x_right);
+        let nodes: Vec<f64> = (0..5).map(|i| xl + (xr - xl) * i as f64 / 4.0).collect();
+        let mut sh = multishoot::Shooting::new(eq, nodes, kt);
+        let l = sh.len();
+        let (mut zh, mut zl) = (vec![0.0; l], vec![0.0; l]);
+        let mut put = |o: usize, f: &Fl<DV, 1>| f.store(&mut zh[o..o + 8], &mut zl[o..o + 8]);
+        put(0, &Fl::splat(DD::ONE));
+        for i in 0..sh.k() {
+            let s = sh.eq.exact(sh.nodes[i]);
+            put(sh.off_node(i), &s[0]);
+            put(sh.off_node(i) + 8, &s[1]);
+        }
+        put(sh.off_right(), &sh.eq.exact(xr)[1]);
+        let z = vec![zh, zl];
+        sh.plan_segments(
+            &z[0],
+            &z[1],
+            &multishoot::Plan {
+                kt,
+                tol: 1e-32,
+                hmax: 0.25,
+            },
+        );
+        (sh, z)
+    }
+}
+
+impl Equations<1> for Bessel {
+    const NF: usize = 2;
+    const NL: usize = 1;
+    const NR: usize = 1;
+    const POINTWISE: bool = true;
+    type Prep = BesselPrep;
+
+    /// the Frobenius series at x_left, lane by lane in the vector arithmetic: x^nu, then the terms by their ratio
+    fn prepare(&self, _zh: &[f64], _zl: &[f64]) -> BesselPrep {
+        self.prepared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let x = DD::from_f64(self.x_left);
+        let mut t = Fl::<DV, 1>::splat(DD::ONE);
+        for s in &self.xsel {
+            t = t * *s;
+        }
+        let x2 = Fl::<DV, 1>::splat(x * x);
+        let (mut phi, mut psi) = (t, t * self.nu);
+        for (i, den) in self.dens.iter().enumerate() {
+            let m = i + 1;
+            t = -(t * x2) / *den;
+            if self.wrong && m == 3 {
+                t = t + t.mulf(2f64.powi(-60));
+            }
+            phi = phi + t;
+            psi = psi + t * (self.nu + Fl::splat(DD::from_f64(2.0 * m as f64)));
+        }
+        BesselPrep {
+            x: self.x_left,
+            phi,
+            psi,
+        }
+    }
+
+    fn taylor_coeffs<T: Lane>(&self, x0: f64, _g: &[T], w: &mut Work<T, 1>) {
+        // x0 (k+1) y_(k+1) + k y_k = p_k;  x0 (k+1) p_(k+1) + k p_k = nu^2 y_k - (x^2 y)_k
+        let x0d = DD::from_f64(x0);
+        let (x0sq, x02) = (x0d * x0d, x0d.mul_f(2.0));
+        let nu2 = Fl::<T, 1>::cst(&self.nu2);
+        for k in 0..w.kt {
+            let ik = DD::ONE / (x0d * DD::from_f64((k + 1) as f64));
+            let (y, p) = (&w.c[0], &w.c[1]);
+            let mut x2y = y[k].muls(x0sq);
+            if k >= 1 {
+                x2y = x2y + y[k - 1].muls(x02);
+            }
+            if k >= 2 {
+                x2y = x2y + y[k - 2];
+            }
+            let yn = (p[k] - y[k].mulf(k as f64)).muls(ik);
+            let pn = ((nu2 * y[k] - x2y) - p[k].mulf(k as f64)).muls(ik);
+            w.c[0][k + 1] = yn;
+            w.c[1][k + 1] = pn;
+        }
+    }
+
+    /// the Frobenius series times the amplitude a, at the first node
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, 1>], _g: &[T], prep: &BesselPrep) -> State<T, 1> {
+        assert_eq!(x, prep.x, "the preparation is for x = {}", prep.x);
+        vec![data[0] * Fl::cst(&prep.phi), data[0] * Fl::cst(&prep.psi)]
+    }
+
+    /// y = y*(x_R); the data is p
+    fn right_state<T: Lane>(&self, _x: f64, data: &[Fl<T, 1>], _g: &[T], _prep: &BesselPrep) -> State<T, 1> {
+        vec![Fl::cst(&self.y_right), data[0]]
+    }
+}
+
+/// A problem declared not pointwise, the methods of E unchanged: its Jacobian column by column
+pub struct PerColumn<E>(pub E);
+
+impl<E: Equations<B>, const B: usize> Equations<B> for PerColumn<E> {
+    const NF: usize = E::NF;
+    const NL: usize = E::NL;
+    const NR: usize = E::NR;
+    const NG: usize = E::NG;
+    const NAUX: usize = E::NAUX;
+    const POINTWISE: bool = false;
+    type Prep = E::Prep;
+
+    fn prepare(&self, zh: &[f64], zl: &[f64]) -> E::Prep {
+        self.0.prepare(zh, zl)
+    }
+    fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
+        self.0.taylor_coeffs(x0, g, w)
+    }
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.0.left_state(x, data, g, prep)
+    }
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.0.right_state(x, data, g, prep)
+    }
+}
