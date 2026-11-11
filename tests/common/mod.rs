@@ -402,7 +402,7 @@ pub fn as_pointwise<const B: usize>(
 /// as the first-order system u_x = v, v_x = -mu D^2 u - lambda u - nu D u, with two globals, lambda and nu, and two
 /// extra rows on v(0): an amplitude row `sum (2/M) cos theta_j v_j(0) = 1` and a phase row `sum sin theta_j v_j(0) =
 /// 0`. The lowest mode is `u = sin(pi x) cos theta / pi` with lambda = pi^2 + mu and nu = 0. Without nu and the
-/// phase row its shifts in theta would be solutions too; nu unfolds that family, as Delta does in hp's problem.
+/// phase row its shifts in theta would be solutions too; nu unfolds that family, as a period does for a periodic orbit.
 /// mu = 1 is the equations' parameter, entered through the lanes' parameter arithmetic.
 pub struct Cylinder<const B: usize> {
     pub d: DMat<B>,
