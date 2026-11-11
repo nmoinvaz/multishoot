@@ -3,7 +3,7 @@
 mod common;
 
 use common::{perturbed, Fnv, Planted};
-use multishoot::prec::{max_abs, parts, widen};
+use multishoot::prec::{max_abs, nan_max, parts, widen};
 use multishoot::{Double, NewtonOpts, Octo, Prec, Quad, Shooting};
 
 const B: usize = 2;
@@ -101,7 +101,7 @@ fn precisions_agree_on_the_residual() {
         .iter()
         .zip(&fq)
         .map(|(d, q)| (*d - q.to_dd()).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     println!("|F_qd - F_od| = {qo:.3e}, |F_dd - F_qd| = {dq:.3e}");
     assert!(qo < 1e-60 && dq < 1e-29, "{qo:e} {dq:e}");
 }

@@ -3,7 +3,7 @@
 mod common;
 
 use common::{as_pointwise, perturbed, Fnv, Planted};
-use multishoot::prec::{max_abs, parts};
+use multishoot::prec::{max_abs, nan_max, parts};
 use multishoot::{Double, NewtonOpts, Shooting, DD};
 
 const B: usize = 2;
@@ -29,10 +29,10 @@ fn jacobian_vs_central(sh: &Shooting<Planted<B>, B>, z: &[Vec<f64>], h: f64) -> 
         let fp = sh.residual::<Double>(&parts(&zp), true).unwrap();
         let fm = sh.residual::<Double>(&parts(&zm), true).unwrap();
         let col: Vec<DD> = (0..l).map(|i| DD::new(c[0][j * ld + i], c[1][j * ld + i])).collect();
-        let scale = col.iter().map(|v| v.hi.abs()).fold(1.0, f64::max);
+        let scale = col.iter().map(|v| v.hi.abs()).fold(1.0, nan_max);
         let err = (0..l)
             .map(|i| (col[i] - (fp[i] - fm[i]) / DD::from_f64(2.0 * h)).hi.abs())
-            .fold(0.0, f64::max);
+            .fold(0.0, nan_max);
         if err / scale > worst.0 {
             worst = (err / scale, j);
         }
@@ -83,7 +83,7 @@ fn planted_newton_converges() {
     let rep = sh.newton::<Double>(&mut z, &opts).unwrap();
     let err = (0..sh.len())
         .map(|i| (DD::new(z[0][i], z[1][i]) - DD::new(zs[0][i], zs[1][i])).hi.abs())
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     println!(
         "max |F|: {:?}; steps {:?}; max |z - z*| = {err:.3e}",
         rep.fnorm.iter().map(|v| format!("{v:.2e}")).collect::<Vec<_>>(),
@@ -144,7 +144,7 @@ fn pointwise_control_coupled_problem_differs() {
     let zp = perturbed(&z, 1e-2);
     let (c1, _) = sh.jacobian::<Double>(&parts(&zp), true).unwrap();
     let (c2, _) = as_pointwise(sh).jacobian::<Double>(&parts(&zp), true).unwrap();
-    let worst = c1[0].iter().zip(&c2[0]).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
+    let worst = c1[0].iter().zip(&c2[0]).map(|(x, y)| (x - y).abs()).fold(0.0, nan_max);
     println!("control, coupled problem declared pointwise: largest difference {worst:.3e}");
     assert!(worst > 1e-3, "control did not fire: {worst:e}");
 }
@@ -247,7 +247,7 @@ mod controls {
         let rep = sh.newton::<Double>(&mut z, &opts).unwrap();
         let err = (0..sh.len())
             .map(|i| (DD::new(z[0][i], z[1][i]) - DD::new(zs[0][i], zs[1][i])).hi.abs())
-            .fold(0.0, f64::max);
+            .fold(0.0, nan_max);
         println!(
             "control, shifted row: converged {}, max |F| {:.3e}, max |z - z*| = {err:.3e}",
             rep.converged,

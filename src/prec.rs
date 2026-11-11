@@ -176,9 +176,29 @@ pub fn parts(z: &[Vec<f64>]) -> Vec<&[f64]> {
     z.iter().map(|p| p.as_slice()).collect()
 }
 
-/// max |x| over the scalars (hi part of the double-double rounding)
+/// The larger of a and b, NaN when either is (`f64::max` returns the other operand for a NaN, so a fold with it
+/// would drop them)
+pub fn nan_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
+}
+
+/// The smaller of a and b, NaN when either is (as `nan_max`)
+pub fn nan_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.min(b)
+    }
+}
+
+/// max |x| over the scalars (hi part of the double-double rounding); NaN when any is NaN, so a residual with a NaN
+/// never passes a tolerance
 pub fn max_abs<P: Prec>(x: &[P::Scalar]) -> f64 {
-    x.iter().map(|&v| P::to_dd(v).hi.abs()).fold(0.0, f64::max)
+    x.iter().map(|&v| P::to_dd(v).hi.abs()).fold(0.0, nan_max)
 }
 
 /// Quad-double and octo-double: every precision of multidouble's `Precision` trait on the compile-time backend, its

@@ -143,6 +143,7 @@ pub fn dmat<const B: usize>(parity: Parity) -> DMat<B> {
 mod tests {
     use super::*;
     use crate::lane::DV;
+    use crate::prec::nan_max;
     use multidouble::field::Fl;
 
     /// sin_cos against sin_cos_pi at multiples of pi / 7 and against f64 at random points; pass: 1e-30 and 1e-15
@@ -205,7 +206,7 @@ mod tests {
         let dc = d.apply(&c);
         let err = (0..m)
             .map(|j| (dc.get(j) + s[j].mul_f(2.0)).hi.abs())
-            .fold(0.0, f64::max);
+            .fold(0.0, nan_max);
         assert!(err > 1e-3, "{err:e}");
     }
 }

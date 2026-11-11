@@ -91,7 +91,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// Newton's method from z (PARTS part arrays, updated in place): steps until max |F| <= tol, each halved while it
-    /// does not lower max |F|, at most `max_halvings` times.
+    /// does not lower max |F|, at most `max_halvings` times. A residual that is not finite (NaN or infinite) is never
+    /// converged: at the start it stops the method, and a trial with one is halved, and stops the method if the last
+    /// halving still has one.
     pub fn newton<P: Prec>(&self, z: &mut Vec<Vec<f64>>, opts: &NewtonOpts) -> Result<NewtonReport, String> {
         let mut rep = NewtonReport {
             fnorm: Vec::new(),
@@ -101,6 +103,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let mut fn0 = max_abs::<P>(&self.residual::<P>(&parts(z), opts.par)?);
         for _ in 0..opts.max_iter {
             rep.fnorm.push(fn0);
+            if !fn0.is_finite() {
+                return Ok(rep);
+            }
             if fn0 <= opts.tol {
                 rep.converged = true;
                 return Ok(rep);
@@ -117,6 +122,10 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 }
                 s *= 0.5;
                 h += 1;
+            }
+            if !fnn.is_finite() {
+                rep.fnorm.push(fnn);
+                return Ok(rep);
             }
             rep.scale.push(s);
             *z = zn;
