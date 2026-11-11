@@ -384,6 +384,9 @@ impl<E: Equations<B>, const B: usize> Equations<B> for Pointwise<E> {
     fn prepare(&self, zh: &[f64], zl: &[f64]) -> E::Prep {
         self.0.prepare(zh, zl)
     }
+    fn prepare_rate(&self, zh: &[f64], zl: &[f64], rate: multishoot::Rate) -> E::Prep {
+        self.0.prepare_rate(zh, zl, rate)
+    }
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
         self.0.taylor_coeffs(x0, g, w)
     }
@@ -739,6 +742,9 @@ impl<E: Equations<B>, const B: usize> Equations<B> for PerColumn<E> {
 
     fn prepare(&self, zh: &[f64], zl: &[f64]) -> E::Prep {
         self.0.prepare(zh, zl)
+    }
+    fn prepare_rate(&self, zh: &[f64], zl: &[f64], rate: multishoot::Rate) -> E::Prep {
+        self.0.prepare_rate(zh, zl, rate)
     }
     fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
         self.0.taylor_coeffs(x0, g, w)
