@@ -32,6 +32,7 @@
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`newton`]: the Newton step and the damped Newton loop;
+//! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`prec`]: the precisions they run in ([`prec::Prec`]: double-double [`prec::Double`], quad-double [`Quad`],
 //!   octo-double [`Octo`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
@@ -41,6 +42,7 @@
 pub mod control;
 pub mod equations;
 pub mod jacobian;
+pub mod jet;
 pub mod lane;
 pub mod newton;
 pub mod periodic;

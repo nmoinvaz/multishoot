@@ -384,3 +384,135 @@ pub fn as_pointwise<const B: usize>(
     p.match_node = sh.match_node;
     p
 }
+
+/// The eigenproblem on a cylinder: u odd in theta on the half grid, x in [0, 1],
+///
+/// ```text
+/// u_xx + mu u_theta_theta + lambda u + nu u_theta = 0,   u(0, theta) = u(1, theta) = 0
+/// ```
+///
+/// as the first-order system u_x = v, v_x = -mu D^2 u - lambda u - nu D u, with two globals, lambda and nu, and two
+/// extra rows on v(0): an amplitude row `sum (2/M) cos theta_j v_j(0) = 1` and a phase row `sum sin theta_j v_j(0) =
+/// 0`. The lowest mode is `u = sin(pi x) cos theta / pi` with lambda = pi^2 + mu and nu = 0. Without nu and the
+/// phase row its shifts in theta would be solutions too; nu unfolds that family, as Delta does in hp's problem.
+/// mu = 1 is the equations' parameter, entered through the lanes' parameter arithmetic.
+pub struct Cylinder<const B: usize> {
+    pub d: DMat<B>,
+    pub mu: DD,
+    /// the control of the jet: mu a constant instead of the parameter
+    pub freeze_mu: bool,
+    /// the control of the eigenvalue: lambda's coefficient scaled by 1 + 2^-50
+    pub wrong_lambda: bool,
+}
+
+impl<const B: usize> Cylinder<B> {
+    pub fn new() -> Self {
+        Cylinder {
+            d: dmat::<B>(Parity::Odd),
+            mu: DD::ONE,
+            freeze_mu: false,
+            wrong_lambda: false,
+        }
+    }
+
+    /// the eigenvalue of the lowest mode, pi^2 + mu, in double-double
+    pub fn lambda(&self) -> DD {
+        multishoot::periodic::PI * multishoot::periodic::PI + self.mu
+    }
+
+    /// the lowest mode (u, v) at x
+    pub fn exact(&self, x: f64) -> State<DV, B> {
+        let m = 8 * B;
+        let px = multishoot::periodic::PI * DD::from_f64(x);
+        let (s, c) = sin_cos(px);
+        let ipi = DD::ONE / multishoot::periodic::PI;
+        let cth = |j: usize| multishoot::periodic::sin_cos_grid(Parity::Odd, m, j, 1).1;
+        vec![field::<B>(|j| s * ipi * cth(j)), field::<B>(|j| c * cth(j))]
+    }
+
+    /// The shooting problem on five nodes with its two extra rows, planned from the lowest mode (order kt, last
+    /// terms below 1e-34, steps at most 0.25), and that mode's z.
+    pub fn shooting(eq: Cylinder<B>, kt: usize) -> (multishoot::Shooting<Cylinder<B>, B>, Vec<Vec<f64>>) {
+        let m = 8 * B;
+        let mut sh = multishoot::Shooting::new(eq, vec![0.0, 0.25, 0.5, 0.75, 1.0], kt);
+        let sc = |j: usize| multishoot::periodic::sin_cos_grid(Parity::Odd, m, j, 1);
+        let two_m = DD::from_f64(2.0 / m as f64);
+        sh.extra.push(multishoot::ExtraRow {
+            terms: (0..m).map(|j| (j, sc(j).1 * two_m)).collect(),
+            rhs: DD::ONE,
+        });
+        sh.extra.push(multishoot::ExtraRow {
+            terms: (0..m).map(|j| (j, sc(j).0)).collect(),
+            rhs: DD::ZERO,
+        });
+        let l = sh.len();
+        let (mut zh, mut zl) = (vec![0.0; l], vec![0.0; l]);
+        let mut put = |o: usize, f: &Fl<DV, B>| f.store(&mut zh[o..o + m], &mut zl[o..o + m]);
+        put(0, &sh.eq.exact(0.0)[1]);
+        for i in 0..sh.k() {
+            let s = sh.eq.exact(sh.nodes[i]);
+            put(sh.off_node(i), &s[0]);
+            put(sh.off_node(i) + m, &s[1]);
+        }
+        put(sh.off_right(), &sh.eq.exact(1.0)[1]);
+        let og = sh.off_global();
+        let lam = sh.eq.lambda();
+        (zh[og], zl[og]) = (lam.hi, lam.lo);
+        let z = vec![zh, zl];
+        sh.plan_segments(
+            &z[0],
+            &z[1],
+            &multishoot::Plan {
+                kt,
+                tol: 1e-34,
+                hmax: 0.25,
+            },
+        );
+        (sh, z)
+    }
+}
+
+impl<const B: usize> Default for Cylinder<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const B: usize> Equations<B> for Cylinder<B> {
+    const NF: usize = 2;
+    const NL: usize = 1;
+    const NR: usize = 1;
+    const NG: usize = 2;
+
+    fn taylor_coeffs<T: Lane>(&self, _x0: f64, g: &[T], w: &mut Work<T, B>) {
+        let mu = if self.freeze_mu {
+            <T::P as multishoot::lane::Param>::from_dd(self.mu)
+        } else {
+            <T::P as multishoot::lane::Param>::var(self.mu)
+        };
+        let (lam, nu) = (g[0], g[1]);
+        let lam = if self.wrong_lambda {
+            lam.muls(DD::ONE + DD::from_f64(2f64.powi(-50)))
+        } else {
+            lam
+        };
+        for k in 0..w.kt {
+            let ik = DD::ONE / DD::from_f64((k + 1) as f64);
+            let u = w.c[0][k];
+            let du = self.d.apply(&u);
+            let rhs = -(self.d.apply(&du).mulp(mu) + u.mul_t(lam) + du.mul_t(nu));
+            w.c[0][k + 1] = w.c[1][k].muls(ik);
+            w.c[1][k + 1] = rhs.muls(ik);
+        }
+    }
+
+    /// u(0) = 0; the data is v(0)
+    fn left_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+        vec![Fl::zero(), data[0]]
+    }
+
+    /// u(1) = 0; the data is v(1)
+    fn right_state<T: Lane>(&self, _x: f64, data: &[Fl<T, B>], _g: &[T]) -> State<T, B> {
+        vec![Fl::zero(), data[0]]
+    }
+}
