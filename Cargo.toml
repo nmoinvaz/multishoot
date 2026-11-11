@@ -9,8 +9,7 @@ repository = "https://github.com/nmoinvaz/multishoot"
 readme = "README.md"
 keywords = ["boundary-value", "multiple-shooting", "taylor-series", "extended-precision", "newton"]
 categories = ["mathematics", "science"]
-# not on crates.io until Nathan decides
-publish = false
+exclude = ["/.github", "/.claude", "/CLAUDE.md"]
 
 [dependencies]
 # 4.1.0: the Precision trait over double-, quad- and octo-double (Double, Quad, Octo)

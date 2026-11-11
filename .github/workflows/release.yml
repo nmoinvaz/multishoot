@@ -1,0 +1,137 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Bump version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # a RELEASE_TOKEN is needed only if main gets a protection the default token cannot pass
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Normalize version
+        id: version
+        env:
+          INPUT: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.2.3, got $INPUT"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update Cargo.toml
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+
+      - name: Update Cargo.lock
+        run: cargo update --workspace
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          # A pull request may already have set the version; then there is nothing to commit and the tag goes on HEAD.
+          if ! git diff --cached --quiet; then
+            git commit -m "release: bump version to $VERSION"
+          fi
+          git tag "$VERSION"
+          git push origin "HEAD:$BRANCH"
+          git push origin "$VERSION"
+
+  test:
+    name: ${{ matrix.name }}
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Ubuntu x86_64 SSE2
+            os: ubuntu-latest
+
+          - name: Ubuntu x86_64 AVX2
+            os: ubuntu-latest
+            rustflags: -C target-feature=+avx2,+fma
+
+          - name: Ubuntu x86_64 portable
+            os: ubuntu-latest
+            cargo-args: --features portable
+
+          - name: Ubuntu ARM64 NEON
+            os: ubuntu-24.04-arm
+
+          - name: macOS ARM64 NEON
+            os: macos-latest
+
+          - name: Windows MSVC x64 SSE2
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.version }}
+
+      - name: Run tests
+        timeout-minutes: 30
+        run: cargo test --release --locked --features mutate ${{ matrix.cargo-args }}
+
+      - name: Package dry run
+        if: runner.os == 'Linux' && !matrix.rustflags && !matrix.cargo-args
+        run: cargo publish --locked --dry-run
+
+  release:
+    name: Publish release
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >
+          gh release create "$VERSION"
+          --repo ${{ github.repository }}
+          --title "$VERSION"
+          --generate-notes
+
+  crate:
+    name: Publish crate
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.version }}
+
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked

@@ -3,6 +3,8 @@
 [![Build](https://github.com/nmoinvaz/multishoot/actions/workflows/build.yml/badge.svg)](https://github.com/nmoinvaz/multishoot/actions/workflows/build.yml)
 [![Lint](https://github.com/nmoinvaz/multishoot/actions/workflows/lint.yml/badge.svg)](https://github.com/nmoinvaz/multishoot/actions/workflows/lint.yml)
 [![codecov](https://codecov.io/gh/nmoinvaz/multishoot/graph/badge.svg)](https://codecov.io/gh/nmoinvaz/multishoot)
+[![crates.io](https://img.shields.io/crates/v/multishoot.svg)](https://crates.io/crates/multishoot)
+[![docs.rs](https://docs.rs/multishoot/badge.svg)](https://docs.rs/multishoot)
 
 Multiple shooting for boundary-value problems, in double-, quad- and octo-double precision.
 
@@ -22,8 +24,8 @@ This crate is the engine of that method, generic over the equations, on the arit
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
 | Newton | in double-double, quad-double or octo-double (multidouble's `Precision` trait), with the residual's Taylor series in a parameter of the equations |
 
-**Status:** under construction, not published. It depends on multidouble 4.1.0 from crates.io, whose `Precision`
-trait (double-, quad- and octo-double) it is written over.
+**Status:** early. The API may change between minor versions until 1.0. It depends on multidouble from crates.io,
+whose `Precision` trait (double-, quad- and octo-double) it is written over.
 
 ## Building
 
