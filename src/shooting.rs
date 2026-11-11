@@ -14,6 +14,9 @@
 //! * block K: the state at node K-1 from the right data, minus node K-1;
 //! * the extra rows ([`ExtraRow`]): linear conditions on z, such as a phase condition.
 //!
+//! One field's rows of a block can be replaced by a projected condition ([`crate::projected`]), which drops the
+//! matching of the field's high harmonics and holds those of other unknowns at zero in its place.
+//!
 //! Segment b runs outward, node b-1 to node b, for b <= `match_node`, and inward, node b to node b-1, after it. The
 //! system is square when NL + NR = NF and there is one extra row per global.
 use crate::equations::{Equations, State, Work};
@@ -48,6 +51,8 @@ pub struct Shooting<E: Equations<B>, const B: usize> {
     /// residual stop (max |F| at most `tol`) reads the scaled rows; with `tol` 0 and `tol_dz` the stop does not
     /// depend on them either.
     pub row_scale: Vec<f64>,
+    /// projected rows (`Shooting::project_rows`, [`crate::projected`]), at most one per field of a block
+    pub projected: Vec<crate::projected::ProjectedRows>,
     #[cfg(feature = "mutate")]
     pub(crate) control: crate::control::Control,
 }
@@ -74,6 +79,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             match_node,
             extra: Vec::new(),
             row_scale: Vec::new(),
+            projected: Vec::new(),
             #[cfg(feature = "mutate")]
             control: crate::control::Control::None,
         }

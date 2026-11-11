@@ -81,6 +81,19 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 }
             }
         }
+        for (k, ok) in out.iter_mut().enumerate() {
+            self.project_residual::<P>(ok, |p| {
+                (0..m)
+                    .map(|j| {
+                        if k < zs.len() {
+                            self.scalar::<P>(&zs[k], p.pin + j)
+                        } else {
+                            P::ZERO
+                        }
+                    })
+                    .collect()
+            });
+        }
         let re = self.row_extra();
         for (k, ok) in out.iter_mut().enumerate() {
             for (r, row) in self.extra.iter().enumerate() {

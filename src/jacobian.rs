@@ -158,6 +158,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 add(&mut c, (t + r) * ld + r0 + r, -P::ONE);
             }
         }
+        self.project_jacobian::<P>(&mut c, ld);
         let re = self.row_extra();
         for (r, row) in self.extra.iter().enumerate() {
             for &(i, w) in &row.terms {
