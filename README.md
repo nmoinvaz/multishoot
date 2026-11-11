@@ -22,8 +22,8 @@ This crate is the engine of that method, generic over the equations, on the arit
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
 | Newton | in double-double, quad-double or octo-double (multidouble's `Precision` trait), with the residual's Taylor series in a parameter of the equations |
 
-**Status:** under construction. Not published; it depends on multidouble's `Precision` trait, which is not yet
-released.
+**Status:** under construction, not published. It depends on multidouble 4.1.0 from crates.io, whose `Precision`
+trait (double-, quad- and octo-double) it is written over.
 
 ## Building
 
