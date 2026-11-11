@@ -1,5 +1,9 @@
 # multishoot
 
+[![Build](https://github.com/nmoinvaz/multishoot/actions/workflows/build.yml/badge.svg)](https://github.com/nmoinvaz/multishoot/actions/workflows/build.yml)
+[![Lint](https://github.com/nmoinvaz/multishoot/actions/workflows/lint.yml/badge.svg)](https://github.com/nmoinvaz/multishoot/actions/workflows/lint.yml)
+[![codecov](https://codecov.io/gh/nmoinvaz/multishoot/graph/badge.svg)](https://codecov.io/gh/nmoinvaz/multishoot)
+
 Multiple shooting for boundary-value problems, in double-, quad- and octo-double precision.
 
 A boundary-value problem asks for the solution of differential equations that meets conditions at two or more places.
