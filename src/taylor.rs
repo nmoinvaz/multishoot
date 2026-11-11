@@ -181,9 +181,12 @@ pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
     let floor = |e: f64| if e.is_nan() { e } else { e.max(1e-300) };
     let e1 = floor(coef_norm(w, kt - 1));
     let e2 = floor(coef_norm(w, kt));
-    // an infinite quotient (a vanishing coefficient against a large tol) allows any step; a NaN stays NaN
+    // an infinite quotient (a vanishing coefficient against a large tol) allows any step; a NaN stays NaN; a quotient
+    // that underflows to zero (a tiny tol) gives the step 0, which plan_path reports
     let root = |a: f64, k: usize| {
-        if a.is_finite() {
+        if a == 0.0 {
+            0.0
+        } else if a.is_finite() {
             kth_root(a, k as u32)
         } else if a.is_nan() {
             a

@@ -159,7 +159,8 @@ fn jet_orders_match_central_differences() {
 }
 
 /// The control of `jet_orders_match_central_differences`: mu entered as a constant instead of the parameter must
-/// break order 1 (above 1e-13).
+/// break order 1 (above 1e-13) and order 2 (above 1e-7). The differences still move mu in the equations, since a
+/// value lane forms mu the same way frozen or not.
 #[test]
 fn jet_control_frozen_parameter_fails() {
     let mut eq = Cylinder::<B>::new();
@@ -167,27 +168,23 @@ fn jet_control_frozen_parameter_fails() {
     let (mut sh, zs) = Cylinder::<B>::shooting(eq, KT);
     let z = perturbed(&zs, 1e-3);
     let v = direction(sh.len());
-    // the differences move mu in the equations, which the frozen jet ignores
-    sh.eq.freeze_mu = false;
-    let f_pm = (resid_along(&mut sh, &z, &v, 1e-9), resid_along(&mut sh, &z, &v, -1e-9));
-    sh.eq.freeze_mu = true;
-    let jet = sh.residual_jet::<Double, 2>(&[parts(&z), parts(&v)], true, 2).unwrap();
-    let d1 = (0..jet[1].len())
-        .map(|i| (jet[1][i] - (f_pm.0[i] - f_pm.1[i]) / DD::from_f64(2e-9)).hi.abs())
-        .fold(0.0, nan_max);
-    println!("control, frozen mu: order 1 off by {d1:.3e}");
-    assert!(d1 > 1e-13, "control did not fire: {d1:e}");
+    let (_, d1, d2) = jet_vs_differences(&mut sh, &z, &v);
+    println!("control, frozen mu: order 1 off by {d1:.3e}, order 2 by {d2:.3e}");
+    assert!(d1 > 1e-13 && d2 > 1e-7, "control did not fire: {d1:e} {d2:e}");
 }
 
-/// The jet in the three precisions at a double-double (z, v): Jet against QJet to 1e-28 and QJet against OJet to
-/// 1e-60, every order, relative to max(1, |coefficient|).
-#[test]
-fn jet_precisions_agree() {
+/// The jet's largest disagreements between the precisions at a double-double (z, v), every order, relative to
+/// max(1, |coefficient|): (|dd - qd|, |qd - od|). With `wrong_quad` the quad-double jet is taken from the problem
+/// with lambda's coefficient off by 2^-50.
+fn precision_gaps(wrong_quad: bool) -> (f64, f64) {
     let (sh, zs) = Cylinder::<B>::shooting(Cylinder::new(), KT);
+    let mut wq = Cylinder::<B>::new();
+    wq.wrong_lambda = wrong_quad;
+    let (shq, _) = Cylinder::<B>::shooting(wq, KT);
     let z = perturbed(&zs, 1e-3);
     let v = direction(sh.len());
     let jd = sh.residual_jet::<Double, 3>(&[parts(&z), parts(&v)], true, 3).unwrap();
-    let jq = sh
+    let jq = shq
         .residual_jet::<Quad, 3>(&[parts(&widen(&z, 4)), parts(&widen(&v, 4))], true, 3)
         .unwrap();
     let jo = sh
@@ -197,13 +194,31 @@ fn jet_precisions_agree() {
     for k in 0..3 {
         for i in 0..jd[k].len() {
             let s = jq[k][i].to_dd().hi.abs().max(1.0);
-            dq = dq.max((jd[k][i] - jq[k][i].to_dd()).hi.abs() / s);
+            dq = nan_max(dq, (jd[k][i] - jq[k][i].to_dd()).hi.abs() / s);
             let d = <Octo as Precision<Native>>::new(&jq[k][i].x) - jo[k][i];
-            qo = qo.max(max_abs::<Octo>(&[d]) / s);
+            qo = nan_max(qo, max_abs::<Octo>(&[d]) / s);
         }
     }
+    (dq, qo)
+}
+
+/// The jet in the three precisions at a double-double (z, v). Pass: Jet against QJet within 1e-28 (double-double's
+/// rounding, about 1e-32, carried over the steps) and QJet against OJet within 1e-60 (quad-double's), every order,
+/// relative to max(1, |coefficient|).
+#[test]
+fn jet_precisions_agree() {
+    let (dq, qo) = precision_gaps(false);
     println!("jet: |dd - qd| {dq:.3e}, |qd - od| {qo:.3e}");
     assert!(dq < 1e-28 && qo < 1e-60, "{dq:e} {qo:e}");
+}
+
+/// The control of `jet_precisions_agree`: the quad-double jet of a wrong problem (lambda's coefficient off by 2^-50)
+/// must break both bounds.
+#[test]
+fn jet_precisions_control_wrong_quad_fails() {
+    let (dq, qo) = precision_gaps(true);
+    println!("control, wrong quad-double run: |dd - qd| {dq:.3e}, |qd - od| {qo:.3e}");
+    assert!(dq > 1e-28 && qo > 1e-60, "control did not fire: {dq:e} {qo:e}");
 }
 
 /// the fingerprints of the jet in dd, qd and od at (z, v), `ulp` changing one unknown of z by one ulp
