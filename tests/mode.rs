@@ -2,7 +2,7 @@
 //! linear problem `Wave`, whose determinant is known in closed form for every complex lambda.
 mod common;
 
-use common::{perturbed, wave, Fnv, Planted};
+use common::{as_pointwise, perturbed, wave, Fnv, Planted};
 use multishoot::lane::{DMat, Lane};
 use multishoot::periodic::{dmat, Parity};
 use multishoot::prec::parts;
@@ -422,6 +422,49 @@ fn planted_block_comparison(
     set(&mut sh);
     let mm = sh.mode_matrix(&parts(&z), Rate::ZERO, true).unwrap();
     block_comparison(&mm, &c, ld)
+}
+
+/// (entries of the mode matrix of `pw` that differ from that of `plain`, in either part) at z* perturbed by 1e-2 and
+/// the fingerprint's rate: one evaluation per input field for the pointwise declaration against one per column
+fn pointwise_differs(plain: &Shooting<Planted<PB>, PB>, z: &[Vec<f64>], coupled: bool) -> usize {
+    let (sh, _) = Planted::<PB>::shooting_of(Planted::with_coupling(coupled), &NODES, 30, 1e-32);
+    let pw = as_pointwise(sh);
+    let a = plain.mode_matrix(&parts(z), hash_rate(), true).unwrap();
+    let b = pw.mode_matrix(&parts(z), hash_rate(), true).unwrap();
+    (0..a.n)
+        .flat_map(|j| (0..a.n).map(move |i| (i, j)))
+        .filter(|&(i, j)| a.at(i, j) != b.at(i, j))
+        .count()
+}
+
+/// The pointwise problem's mode matrix at a complex rate, batched (one evaluation per input field, every point's
+/// tangent at once) against per column. Pass: every entry equal in both parts.
+#[test]
+fn pointwise_mode_matrix_equals_per_column() {
+    let (plain, zs) = Planted::<PB>::shooting_of(Planted::with_coupling(false), &NODES, 30, 1e-32);
+    let d = pointwise_differs(&plain, &perturbed(&zs, 1e-2), false);
+    println!("pointwise mode matrix against per column: {d} entries differ");
+    assert_eq!(d, 0);
+}
+
+/// The control of `pointwise_mode_matrix_equals_per_column`: the coupled problem declared pointwise must differ, as
+/// d/dtheta carries a point's tangent to the others.
+#[test]
+fn pointwise_mode_control_coupled_differs() {
+    let (plain, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let d = pointwise_differs(&plain, &perturbed(&zs, 1e-2), true);
+    println!("control, coupled problem declared pointwise: {d} entries differ");
+    assert!(d > 0, "control did not fire");
+}
+
+/// Pass: a `row_scale` of the wrong length is refused by the mode matrix, as by the residual.
+#[test]
+fn mode_matrix_refuses_a_wrong_row_scale() {
+    let (mut sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    sh.row_scale = vec![1.0; sh.rows() - 1];
+    assert!(sh.mode_matrix(&parts(&zs), Rate::ZERO, true).is_err());
+    sh.row_scale.push(1.0);
+    assert!(sh.mode_matrix(&parts(&zs), Rate::ZERO, true).is_ok());
 }
 
 /// The FNV-1a hash of every part of the planted problem's mode matrix at z* perturbed by 1e-2 and the rate
