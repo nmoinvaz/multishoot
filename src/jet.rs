@@ -7,16 +7,17 @@
 //! of the Taylor continuation in the parameter; with z_1 given, order 1 is J z_1 + dF/dparameter.
 use crate::equations::{Equations, State};
 use crate::lane::BaseLane;
-use crate::prec::Prec;
 use crate::shooting::Shooting;
 use multidouble::field::Fl;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 use rayon::prelude::*;
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The residual's coefficients of orders 0..nout - 1 on the jet state with coefficient vectors zs (each PARTS
     /// part arrays of length `len()`, at most N of them, z_k zero past them), nout <= N, one scalar per row. The
     /// extra rows are linear: order 0 is `sum w_i z_0,i - rhs`, order k >= 1 `sum w_i z_k,i`.
-    pub fn residual_jet<P: Prec, const N: usize>(
+    pub fn residual_jet<P: Precision<Native>, const N: usize>(
         &self,
         zs: &[Vec<&[f64]>],
         par: bool,
