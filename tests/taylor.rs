@@ -1,6 +1,8 @@
 //! Taylor stepping and the planner on the linear model `Rotor`, whose solution is known in closed form.
 mod common;
 
+use multishoot::prec::nan_max;
+
 use common::{max_diff, Fnv, Rotor, Wrong};
 use multishoot::lane::DV;
 use multishoot::taylor::{plan_path, taylor_step, Plan};
@@ -48,7 +50,7 @@ fn carry_error(sh: &Shooting<Rotor<B>, B>) -> f64 {
     carry(sh, |_| {})
         .iter()
         .map(|(n, s)| max_diff(s, &sh.eq.exact(sh.nodes[*n])))
-        .fold(0.0, f64::max)
+        .fold(0.0, nan_max)
 }
 
 fn rotor_shooting(wrong: Wrong, match_node: usize) -> Shooting<Rotor<B>, B> {

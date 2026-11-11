@@ -9,6 +9,7 @@
 //! ratio of consecutive terms.
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
+use crate::prec::nan_min;
 use multidouble::dd::DD;
 use multidouble::field::{horner, Fl};
 use multidouble::native::V8;
@@ -62,19 +63,25 @@ pub fn all_finite<const B: usize>(f: &Fl<DV, B>) -> bool {
         .all(|v| v.hi.sub(v.hi).eq(zero).bits() == 0xff && v.lo.sub(v.lo).eq(zero).bits() == 0xff)
 }
 
-/// max over the fields and collocation points of |coefficient k| (hi parts)
+/// max over the fields and collocation points of |coefficient k| (hi parts); NaN when any coefficient is not finite
+/// (`Fl::amax` alone would skip a NaN)
 pub fn coef_norm<const B: usize>(w: &Work<DV, B>, k: usize) -> f64 {
+    if w.c.iter().any(|cf| !all_finite(&cf[k])) {
+        return f64::NAN;
+    }
     w.c.iter().map(|cf| cf[k].amax()).fold(0.0, f64::max)
 }
 
 /// The step the planner takes from coefficients w (orders kt - 1 and kt), before the cap at the end of the segment.
 pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
     let kt = w.kt;
-    let e1 = coef_norm(w, kt - 1).max(1e-300);
-    let e2 = coef_norm(w, kt).max(1e-300);
+    // the floor keeps a zero coefficient from dividing by zero; a NaN stays NaN, and so does the step
+    let floor = |e: f64| if e.is_nan() { e } else { e.max(1e-300) };
+    let e1 = floor(coef_norm(w, kt - 1));
+    let e2 = floor(coef_norm(w, kt));
     let h1 = (plan.tol / e1).powf(1.0 / (kt - 1) as f64);
     let h2 = (plan.tol / e2).powf(1.0 / kt as f64);
-    h1.min(h2).min(plan.hmax)
+    nan_min(nan_min(h1, h2), plan.hmax)
 }
 
 /// Step points from xa to xb (either direction) for the state s0, both ends included and the last exactly xb: each

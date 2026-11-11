@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 use multishoot::lane::{DMat, Lane, DV};
 use multishoot::periodic::{dmat, sin_cos, theta, Parity};
+use multishoot::prec::nan_max;
 use multishoot::{Equations, Fl, State, Work, DD};
 
 /// a double-double field from its values at the collocation points
@@ -14,7 +15,7 @@ pub fn field<const B: usize>(f: impl Fn(usize) -> DD) -> Fl<DV, B> {
 /// max over the fields and points of |a - b| (hi part of the double-double difference)
 pub fn max_diff<const B: usize>(a: &[Fl<DV, B>], b: &[Fl<DV, B>]) -> f64 {
     assert_eq!(a.len(), b.len());
-    a.iter().zip(b).map(|(x, y)| (*x - *y).amax()).fold(0.0, f64::max)
+    a.iter().zip(b).map(|(x, y)| (*x - *y).amax()).fold(0.0, nan_max)
 }
 
 /// Mutations of the model problems' recursions, the controls of the accuracy tests
