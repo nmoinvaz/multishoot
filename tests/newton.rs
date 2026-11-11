@@ -256,3 +256,38 @@ mod controls {
         assert!(!rep.converged || err >= 1e-27, "control did not fire");
     }
 }
+
+/// Options outside their ranges are refused before any step: lambda0 must lie in (0, 1] (infinity, NaN, 0 and 2 are
+/// refused), and max_halvings at most 1074, past which 0.5^max_halvings is zero in f64. The control: the defaults,
+/// and lambda0 1 and max_halvings 1074, are accepted, so the refusals are not blanket ones.
+#[test]
+fn newton_refuses_options_out_of_range() {
+    let (sh, zs) = planted();
+    for (lambda0, max_halvings) in [(f64::INFINITY, 10), (f64::NAN, 10), (0.0, 10), (2.0, 10), (1.0, 1075)] {
+        let mut z = perturbed(&zs, 1e-3);
+        let opts = NewtonOpts {
+            lambda0,
+            max_halvings,
+            ..Default::default()
+        };
+        assert!(
+            sh.newton::<Double>(&mut z, &opts).is_err(),
+            "lambda0 {lambda0}, max_halvings {max_halvings}"
+        );
+        assert_eq!(z, perturbed(&zs, 1e-3), "a refused call must leave z alone");
+    }
+    for (lambda0, max_halvings) in [(1.0, 10), (1.0, 1074), (0.25, 10)] {
+        let mut z = perturbed(&zs, 1e-3);
+        let opts = NewtonOpts {
+            tol: 1e-28,
+            max_iter: 10,
+            lambda0,
+            max_halvings,
+            ..Default::default()
+        };
+        assert!(
+            sh.newton::<Double>(&mut z, &opts).is_ok(),
+            "lambda0 {lambda0}, max_halvings {max_halvings}"
+        );
+    }
+}

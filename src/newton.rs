@@ -106,9 +106,14 @@ fn axpy<P: Precision<Native>>(z: &[&[f64]], dz: &[P::Scalar], s: f64) -> Vec<Vec
     out
 }
 
-/// the Euclidean norm of the scalars, from the hi parts of their double-double roundings
+/// the Euclidean norm of the scalars, from the hi parts of their double-double roundings, scaled by their largest
+/// magnitude so that no square overflows; NaN when any is NaN
 fn norm2<P: Precision<Native>>(v: &[P::Scalar]) -> f64 {
-    v.iter().map(|&x| P::to_dd(x).hi).map(|x| x * x).sum::<f64>().sqrt()
+    let m = max_abs::<P>(v);
+    if m == 0.0 || !m.is_finite() {
+        return m;
+    }
+    m * v.iter().map(|&x| P::to_dd(x).hi / m).map(|x| x * x).sum::<f64>().sqrt()
 }
 
 /// -J^-1 r with the factored J
@@ -149,6 +154,16 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         z: &mut Vec<Vec<f64>>,
         opts: &NewtonOpts,
     ) -> Result<NewtonReport, String> {
+        if !(opts.lambda0 > 0.0 && opts.lambda0 <= 1.0) {
+            return Err(format!("newton: lambda0 must lie in (0, 1], not {}", opts.lambda0));
+        }
+        // 0.5^1074 is the smallest positive f64; past it the minimum step length would be zero
+        if opts.max_halvings > 1074 {
+            return Err(format!(
+                "newton: max_halvings {} is beyond f64's range (at most 1074)",
+                opts.max_halvings
+            ));
+        }
         match opts.damping {
             Damping::Correction => self.newton_correction::<P>(z, opts),
             Damping::Residual => self.newton_residual::<P>(z, opts),
@@ -197,7 +212,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             };
             let mut raised = false;
             loop {
-                if lam.is_nan() || lam < lam_min {
+                if lam.is_nan() || lam < lam_min || lam == 0.0 {
                     rep.fnorm.push(fmax);
                     return Ok(rep);
                 }
@@ -282,5 +297,29 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         rep.fnorm.push(fn0);
         rep.converged = fn0 <= opts.tol;
         Ok(rep)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Double, DD};
+
+    /// The norm of two entries of 1e160 is 1.414e160, finite. The control is the unscaled sum of squares, which
+    /// overflows to infinity, so the scaling is what the check sees.
+    #[test]
+    fn norm2_does_not_overflow() {
+        let v = [DD::from_f64(1e160), DD::from_f64(1e160)];
+        let n = norm2::<Double>(&v);
+        assert!((n / (1e160 * 2f64.sqrt()) - 1.0).abs() < 1e-15, "norm {n}");
+        let naive = v.iter().map(|x| x.hi * x.hi).sum::<f64>().sqrt();
+        assert!(naive.is_infinite());
+    }
+
+    /// A NaN entry makes the norm NaN, and zeros give zero.
+    #[test]
+    fn norm2_nan_and_zero() {
+        assert!(norm2::<Double>(&[DD::from_f64(1.0), DD::from_f64(f64::NAN)]).is_nan());
+        assert_eq!(norm2::<Double>(&[DD::ZERO, DD::ZERO]), 0.0);
     }
 }
