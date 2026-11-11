@@ -183,6 +183,18 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The projected rows of a Jacobian (PARTS column-major part arrays, ld): each column's rows d of a projected
     /// field become Pi d (the target's -1 becomes -Pi), and the pinned unknowns' columns gain Pi'.
     pub(crate) fn project_jacobian<P: Precision<Native>>(&self, c: &mut [Vec<f64>], ld: usize) {
+        self.project_columns::<P>(c, ld, self.len(), true);
+    }
+
+    /// `project_jacobian` on the first `ncols` columns of a matrix in P's part arrays, the pinned columns' Pi' added
+    /// only with `pinned` (a mode matrix's imaginary part has none)
+    pub(crate) fn project_columns<P: Precision<Native>>(
+        &self,
+        c: &mut [Vec<f64>],
+        ld: usize,
+        ncols: usize,
+        pinned: bool,
+    ) {
         let m = Self::M;
         let dd = self.projector_dd();
         let at = |c: &[Vec<f64>], k: usize| P::from_raw(&c.iter().map(|cq| cq[k]).collect::<Vec<_>>());
@@ -193,7 +205,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         };
         for p in &self.projected {
             let r0 = self.row_block(p.block) + p.field * m;
-            for j in 0..self.len() {
+            for j in 0..ncols {
                 // only the block's own columns and its target's have entries in these rows
                 if (0..m).all(|i| c[0][j * ld + r0 + i] == 0.0) {
                     continue;
@@ -203,7 +215,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     put(c, j * ld + r0 + i, v);
                 }
             }
-            for jj in 0..m {
+            for jj in 0..if pinned { m } else { 0 } {
                 for i in 0..m {
                     let k = (p.pin + jj) * ld + r0 + i;
                     put(c, k, at(c, k) + p.entry::<P>(false, i, jj, dd));

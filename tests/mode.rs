@@ -316,6 +316,99 @@ fn rate_zero_control_unscaled_differs() {
     assert!(differ > 0, "control did not fire");
 }
 
+/// the planted problem's rows of u in block 2 projected onto the odd harmonics k <= 3, node 1's u pinned (an input
+/// of block 2, so its columns carry both the block derivative and Pi'), and block 2 scaled by 2^60
+fn project_and_scale(sh: &mut Shooting<Planted<PB>, PB>) {
+    let pin = sh.off_node(1);
+    sh.project_rows(2, 0, pin, multishoot::periodic::Parity::Odd, 3)
+        .unwrap();
+    let (r0, r1) = (sh.row_block(2), sh.row_block(3));
+    sh.row_scale = (0..sh.rows())
+        .map(|r| if (r0..r1).contains(&r) { 2f64.powi(60) } else { 1.0 })
+        .collect();
+}
+
+/// The rate-zero comparison with projected and scaled rows (`project_and_scale`), which the Jacobian and the mode
+/// matrix both carry, the projection first. Pass: equal in both parts of every entry, imaginary parts zero.
+#[test]
+fn rate_zero_is_the_projected_jacobian_block() {
+    let (differ, nonzero) = planted_block_comparison(project_and_scale, |_| {});
+    println!("rate zero against the projected Jacobian: {differ} entries differ, {nonzero} imaginary parts nonzero");
+    assert_eq!((differ, nonzero), (0, 0));
+}
+
+/// The controls of `rate_zero_is_the_projected_jacobian_block`: the mode matrix without the projection, and the
+/// mode matrix with the factor 2^61 in place of 2^60, must each differ from the Jacobian's block.
+#[test]
+fn rate_zero_projected_controls_differ() {
+    let (unprojected, _) = planted_block_comparison(project_and_scale, |sh| sh.projected.clear());
+    let (wrong, _) = planted_block_comparison(project_and_scale, |sh| {
+        sh.row_scale
+            .iter_mut()
+            .filter(|s| **s != 1.0)
+            .for_each(|s| *s = 2f64.powi(61))
+    });
+    println!("controls, projected rate zero: unprojected {unprojected}, wrong factor {wrong} entries differ");
+    assert!(unprojected > 0 && wrong > 0, "control did not fire");
+}
+
+/// (entries of the projected mode matrix that differ from the unprojected one's projected by hand, in either part),
+/// at a complex rate: Pi on the real and imaginary parts of block 2's u rows in every column, Pi' added to the real
+/// part of the pinned columns; with `real_only` the hand projection leaves the imaginary part alone (the control)
+fn complex_projection_differs(real_only: bool) -> usize {
+    let (plain, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let (mut sh, _) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let pin = sh.off_node(1);
+    sh.project_rows(2, 0, pin, multishoot::periodic::Parity::Odd, 3)
+        .unwrap();
+    let z = perturbed(&zs, 1e-2);
+    let m0 = plain.mode_matrix(&parts(&z), hash_rate(), true).unwrap();
+    let m1 = sh.mode_matrix(&parts(&z), hash_rate(), true).unwrap();
+    let p = &sh.projected[0];
+    let (m, r0) = (8 * PB, sh.row_block(2));
+    let mut differ = 0;
+    for j in 0..m0.n {
+        let col: Vec<(DD, DD)> = (0..m).map(|i| m0.at(r0 + i, j)).collect();
+        let re: Vec<DD> = col.iter().map(|c| c.0).collect();
+        let im: Vec<DD> = col.iter().map(|c| c.1).collect();
+        let mut pre = p.apply::<multishoot::Double>(&re, None, false);
+        let pim = if real_only {
+            im.clone()
+        } else {
+            p.apply::<multishoot::Double>(&im, None, false)
+        };
+        if (pin..pin + m).contains(&j) {
+            for (i, v) in pre.iter_mut().enumerate() {
+                *v = *v + p.entry::<multishoot::Double>(false, i, j - pin, false);
+            }
+        }
+        for i in 0..m {
+            let (a, b) = m1.at(r0 + i, j);
+            if a != pre[i] || b != pim[i] {
+                differ += 1;
+            }
+        }
+    }
+    differ
+}
+
+/// The projection at a complex rate reaches both parts: pass, the projected mode matrix's block 2 u rows equal the
+/// unprojected matrix's projected by hand (`ProjectedRows::apply`) in every entry.
+#[test]
+fn complex_rate_projects_both_parts() {
+    let d = complex_projection_differs(false);
+    println!("complex rate, projected rows against the hand projection: {d} entries differ");
+    assert_eq!(d, 0);
+}
+
+/// The control of `complex_rate_projects_both_parts`: the hand projection without the imaginary part must differ.
+#[test]
+fn complex_rate_projection_control_real_only_differs() {
+    let d = complex_projection_differs(true);
+    println!("control, real part only: {d} entries differ");
+    assert!(d > 0, "control did not fire");
+}
+
 /// `block_comparison` for the planted problem at rate zero: the layout changed by `both` for the Jacobian and the
 /// mode matrix, then by `set` for the mode matrix alone (a control)
 fn planted_block_comparison(
