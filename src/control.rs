@@ -23,4 +23,8 @@ pub enum Control {
     RateNotPrepared,
     /// the projected rows' projectors read in double-double (their first two parts) in every precision
     ProjectorDD,
+    /// the staircase LU with one pivot of its middle step scaled by 1 + 1e-6 (multidouble's `StaircaseControl::Pivot`)
+    StaircasePivot,
+    /// the staircase LU with the copies of the global untied from it (`StaircaseControl::Link`)
+    StaircaseLink,
 }

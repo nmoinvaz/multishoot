@@ -7,7 +7,7 @@
 //! exact derivatives or series.
 pub use multidouble::dual::{Lane as BaseLane, Param};
 pub use multidouble::field::MatLane;
-pub use multidouble::native::{DMat, Dc, Du, Jet, OJet, Ou, QJet, Qu, DV, OV, QV};
+pub use multidouble::native::{DMat, Dc, Dtn, Du, Fu, Fun, Jet, OJet, Ou, QJet, Qu, DV, OV, QV};
 use multidouble::simd::Native;
 
 /// multidouble's lanes on the compile-time backend, with the product by a constant double-double matrix

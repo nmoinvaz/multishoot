@@ -31,6 +31,7 @@
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
 //! * [`newton`]: the Newton step and the damped Newton loop;
+//! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
 //! * [`prec`]: helpers for states held as part arrays in any of multidouble's precisions ([`Precision`]:
@@ -42,6 +43,7 @@
 #[cfg(feature = "mutate")]
 pub mod control;
 pub mod equations;
+pub mod fast;
 pub mod jacobian;
 pub mod jet;
 pub mod jvp;
@@ -56,6 +58,7 @@ pub mod shooting;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
+pub use fast::{MixedLu, Storage};
 pub use mode::{ModeMatrix, Rate};
 pub use multidouble;
 pub use multidouble::dd::DD;
