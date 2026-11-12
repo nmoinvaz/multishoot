@@ -15,6 +15,9 @@ pub enum Control {
     /// the state read in the first half of its parts only (a quad-double state in double-double, an octo-double one
     /// in quad-double), by the residual and the Jacobian
     HalfParts,
+    /// the unknowns outside the fields (extra rows, globals, pinned unknowns) renormalized by `P::new` when read,
+    /// where the fields read their parts as they are
+    RenormScalar,
     /// the mode matrix with the growth rate's real part only, in the Taylor steps and the preparation
     RateReal,
     /// the mode matrix with the Taylor steps at rate zero (`Work::rate` not set)
