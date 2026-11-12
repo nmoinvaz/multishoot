@@ -114,11 +114,15 @@ impl ProjectedRows {
             x.len() == m && y.is_none_or(|y| y.len() == m),
             "ProjectedRows::apply: values for {m} points"
         );
+        // an entry depends on |i - j| only: each of the m values of Pi (and of I - Pi) is converted to P once
+        let conv = |low: bool| -> Vec<P::Scalar> { (0..m).map(|d| self.entry::<P>(low, d, 0, dd)).collect() };
+        let pl = conv(true);
+        let ph = if y.is_some() { conv(false) } else { Vec::new() };
         (0..m)
             .map(|i| {
-                let lo = (0..m).map(|j| (self.entry::<P>(true, i, j, dd), x[j]));
+                let lo = (0..m).map(|j| (pl[i.abs_diff(j)], x[j]));
                 match y {
-                    Some(y) => P::dot(lo.chain((0..m).map(|j| (self.entry::<P>(false, i, j, dd), y[j])))),
+                    Some(y) => P::dot(lo.chain((0..m).map(|j| (ph[i.abs_diff(j)], y[j])))),
                     None => P::dot(lo),
                 }
             })
