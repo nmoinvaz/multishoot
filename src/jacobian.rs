@@ -115,7 +115,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let ld = ld_for(l);
         let g = self.globals::<P>(z);
         let tasks = self.jac_tasks();
-        let prep = self.eq.prepare(z[0], z[1]);
+        let prep = self.prep(z)?;
         let column = |t: &(usize, Seed)| self.jac_column::<P>(z, &g, &prep, *t);
         let cols: Vec<Vec<P::Scalar>> = if par {
             tasks.par_iter().map(column).collect()

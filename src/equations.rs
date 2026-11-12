@@ -68,7 +68,8 @@ pub trait Equations<const B: usize>: Sync {
     const POINTWISE: bool = false;
 
     /// What the endpoint maps need once per evaluation (of the residual, the Jacobian or the jet) rather than once
-    /// per block or column: a series' coefficient table, the factors of a periodic solve. `()` when nothing.
+    /// per block or column: a series' coefficient table, the factors of a periodic solve. `()` when nothing. A
+    /// preparation that can fail is formed by `try_prepare`.
     type Prep: Sync + Default;
 
     /// The preparation for one evaluation at the state z, given by its double-double parts (the first two of any
@@ -85,6 +86,22 @@ pub trait Equations<const B: usize>: Sync {
     /// `rate.shift`.
     fn prepare_rate(&self, zh: &[f64], zl: &[f64], _rate: Rate) -> Self::Prep {
         self.prepare(zh, zl)
+    }
+
+    /// The preparation of `prepare`, or the reason it could not be formed (a factorization with a zero pivot, a
+    /// value that is not finite). The engine forms every evaluation's preparation through this method, and its
+    /// entry points return the error as theirs. By default `prepare`'s, which cannot fail.
+    ///
+    /// Equations that override it and are evaluated by the mode matrix override `try_prepare_rate` as well: its
+    /// default is `prepare_rate`'s, which does not call this method.
+    fn try_prepare(&self, zh: &[f64], zl: &[f64]) -> Result<Self::Prep, String> {
+        Ok(self.prepare(zh, zl))
+    }
+
+    /// The preparation of `prepare_rate`, or the reason it could not be formed, as `try_prepare`: the mode matrix
+    /// forms its preparation through this method. By default `prepare_rate`'s, which cannot fail.
+    fn try_prepare_rate(&self, zh: &[f64], zl: &[f64], rate: Rate) -> Result<Self::Prep, String> {
+        Ok(self.prepare_rate(zh, zl, rate))
     }
 
     /// Taylor coefficients 1..=w.kt of every field about x0, from order 0 in `w.c[f][0]`; g holds the globals.

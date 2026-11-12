@@ -155,17 +155,22 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             .collect()
     }
 
-    /// the f64 columns of the groups, in parallel with `par`, flattened in task order
-    fn f64_columns<T: Lane>(&self, z: &[&[f64]], groups: &[Vec<(usize, Seed)>], par: bool) -> Vec<Vec<f64>> {
+    /// the f64 columns of the groups, in parallel with `par`, flattened in task order, or the preparation's error
+    fn f64_columns<T: Lane>(
+        &self,
+        z: &[&[f64]],
+        groups: &[Vec<(usize, Seed)>],
+        par: bool,
+    ) -> Result<Vec<Vec<f64>>, String> {
         let g = self.globals::<Double>(z);
-        let prep = self.eq.prepare(z[0], z[1]);
+        let prep = self.prep(z)?;
         let one = |gr: &Vec<(usize, Seed)>| self.jac_columns_f64::<T>(z, &g, &prep, gr);
         let cols: Vec<Vec<Vec<f64>>> = if par {
             groups.par_iter().map(one).collect()
         } else {
             groups.iter().map(one).collect()
         };
-        cols.into_iter().flatten().collect()
+        Ok(cols.into_iter().flatten().collect())
     }
 
     /// The rows (within its block) of a task's column jj: point jj of every output field for a pointwise task, every
@@ -203,7 +208,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let (l, m) = (self.len(), Self::M);
         let ld = ld_for(l);
         let groups = self.f64_groups::<T>();
-        let cols = self.f64_columns::<T>(z, &groups, par);
+        let cols = self.f64_columns::<T>(z, &groups, par)?;
         let mut c = vec![0.0; ld * l];
         for (&(b, seed), col) in groups.iter().flatten().zip(&cols) {
             let r0 = self.row_block(b);
@@ -312,7 +317,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         // every block's columns before the factorization, which asks for the blocks in turn, so the evaluations of all
         // blocks run in parallel as the dense Jacobian's do
         let groups = self.f64_groups::<T>();
-        let cols = self.f64_columns::<T>(z, &groups, par);
+        let cols = self.f64_columns::<T>(z, &groups, par)?;
         let tasks: Vec<(usize, Seed)> = groups.into_iter().flatten().collect();
         // each block's task indices, in task order (jac_tasks emits the blocks in turn)
         let mut by_block: Vec<Vec<usize>> = vec![Vec::new(); self.k() + 1];

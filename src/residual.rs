@@ -62,20 +62,32 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         (0..E::NG).map(|i| self.scalar::<P>(z, self.off_global() + i)).collect()
     }
 
-    /// The states of every block at z, in value lanes
-    pub fn block_states<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Vec<State<P::V, B>> {
+    /// The states of every block at z, in value lanes, or the error of z's check or of its preparation
+    /// (`Equations::try_prepare`)
+    pub fn try_block_states<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        par: bool,
+    ) -> Result<Vec<State<P::V, B>>, String> {
+        self.check_z::<P>(z)?;
         let g: Vec<P::V> = self.globals::<P>(z).into_iter().map(P::splat).collect();
-        let prep = self.eq.prepare(z[0], z[1]);
+        let prep = self.prep(z)?;
         let one = |b: usize| -> State<P::V, B> {
             let inp: Vec<Fl<P::V, B>> = self.block_inputs(b).iter().map(|&o| self.load::<P>(z, o)).collect();
             self.block_state::<P::V>(b, &inp, &g, &prep)
         };
         let nb = self.k() + 1;
-        if par {
+        Ok(if par {
             (0..nb).into_par_iter().map(one).collect()
         } else {
             (0..nb).map(one).collect()
-        }
+        })
+    }
+
+    /// The states of every block at z, in value lanes (`try_block_states`). Panics when the preparation fails.
+    pub fn block_states<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Vec<State<P::V, B>> {
+        self.try_block_states::<P>(z, par)
+            .unwrap_or_else(|e| panic!("block_states: {e}"))
     }
 
     /// Extra row r at z: `sum_i w_i z_(idx_i) - rhs`
@@ -93,7 +105,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     pub fn residual<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
         self.check_z::<P>(z)?;
         let m = Self::M;
-        let states = self.block_states::<P>(z, par);
+        let states = self.try_block_states::<P>(z, par)?;
         let mut f = vec![P::ZERO; self.rows()];
         for (b, s) in states.iter().enumerate() {
             let t = self.block_target(b);
