@@ -201,10 +201,20 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         self.project_columns::<P>(c, ld, self.len(), true);
     }
 
-    /// The projected rows of an f64 matrix (column-major, ld) on the given columns, whose rows rel..rel + NF M are
-    /// block b's: `project_columns` for every projection of block b, in double-double and rounded to f64. `pos` maps an
-    /// unknown to its column, None when it has none (an error for a pinned unknown).
-    pub(crate) fn project_f64_block(
+    /// The projected rows of block b in an f64 matrix, as [`Shooting::jacobian_f64`] and
+    /// [`Shooting::jacobian_staircase`] form them, for a caller that assembles the matrix from its own column
+    /// evaluations ([`Shooting::jac_column`], [`Shooting::jac_columns_f64`]). The matrix is column-major with leading
+    /// dimension ld, its rows rel..rel + NF M are block b's and it has `cols` columns; `pos` maps an unknown to its
+    /// column, None when it has none (an error for a pinned unknown, as is a column two pinned unknowns share). For
+    /// every projection of block b, each column's rows of the projected field become Pi times them, formed in
+    /// double-double and rounded to f64, and the pinned unknowns' columns gain Pi'.
+    ///
+    /// `dd_column(j)` gives column j's NF M entries in block b's rows in double-double, when the caller formed them so
+    /// (`jac_column`): Pi then acts on those values in place of the matrix's entries, and the result is rounded only
+    /// after Pi' is added when the column is a pinned unknown's, so the rows are the double-double Jacobian's rounded
+    /// to f64. None reads the matrix's f64 entries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn project_f64_block<'a>(
         &self,
         b: usize,
         w: &mut [f64],
@@ -212,30 +222,83 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         rel: usize,
         cols: usize,
         pos: impl Fn(usize) -> Option<usize>,
+        dd_column: impl Fn(usize) -> Option<&'a [DD]>,
     ) -> Result<(), String> {
         let m = Self::M;
+        let nr = E::NF * m;
+        if b > self.k() {
+            return Err(format!("project_f64_block: no block {b}"));
+        }
+        let end = rel.checked_add(nr);
+        if end.is_none_or(|e| e > ld) || cols.checked_mul(ld).is_none_or(|n| w.len() < n) {
+            return Err(format!(
+                "project_f64_block: {nr} rows from {rel} and {cols} columns of leading dimension {ld} in {} entries",
+                w.len()
+            ));
+        }
         let dd = self.projector_dd();
         for p in self.projected.iter().filter(|p| p.block == b) {
             let r0 = rel + p.field * m;
+            // the projected rows of the columns given in double-double, kept to add the pinned unknowns' Pi'
+            let mut kept: Vec<Option<Vec<DD>>> = vec![None; cols];
             for j in 0..cols {
-                if (0..m).all(|i| w[j * ld + r0 + i] == 0.0) {
-                    continue;
-                }
-                let x: Vec<DD> = (0..m).map(|i| DD::from_f64(w[j * ld + r0 + i])).collect();
-                for (i, v) in p.apply::<Double>(&x, None, dd).into_iter().enumerate() {
+                // only the block's own columns and its target's have entries in these rows
+                let given = dd_column(j);
+                let x: Vec<DD> = match given {
+                    Some(col) if col.len() == nr => {
+                        let x = &col[p.field * m..(p.field + 1) * m];
+                        if x.iter().all(|v| v.hi == 0.0 && v.lo == 0.0) {
+                            // a zero column, stored as given in place of the matrix's entries
+                            for (i, v) in x.iter().enumerate() {
+                                w[j * ld + r0 + i] = v.hi;
+                            }
+                            continue;
+                        }
+                        x.to_vec()
+                    }
+                    Some(col) => {
+                        return Err(format!(
+                            "project_f64_block: column {j} of block {b} has {} double-double entries, not {nr}",
+                            col.len()
+                        ))
+                    }
+                    None => {
+                        if (0..m).all(|i| w[j * ld + r0 + i] == 0.0) {
+                            continue;
+                        }
+                        (0..m).map(|i| DD::from_f64(w[j * ld + r0 + i])).collect()
+                    }
+                };
+                let rows = p.apply::<Double>(&x, None, dd);
+                for (i, v) in rows.iter().enumerate() {
                     w[j * ld + r0 + i] = v.hi;
                 }
+                if given.is_some() {
+                    kept[j] = Some(rows);
+                }
             }
+            // each pinned unknown's own column, as the double-double Jacobian has
+            let mut pinned: Vec<usize> = Vec::with_capacity(m);
             for jj in 0..m {
-                let c = pos(p.pin + jj).ok_or_else(|| {
+                let c = pos(p.pin + jj).filter(|&c| c < cols).ok_or_else(|| {
                     format!(
                         "projected rows of block {b}: the pinned unknown {} has no column here",
                         p.pin + jj
                     )
                 })?;
+                if pinned.contains(&c) {
+                    return Err(format!(
+                        "projected rows of block {b}: the pinned unknown {} shares column {c}",
+                        p.pin + jj
+                    ));
+                }
+                pinned.push(c);
+            }
+            for (jj, &c) in pinned.iter().enumerate() {
                 for i in 0..m {
                     let k = c * ld + r0 + i;
-                    w[k] = (DD::from_f64(w[k]) + p.entry::<Double>(false, i, jj, dd)).hi;
+                    let v = kept[c].as_ref().map_or_else(|| DD::from_f64(w[k]), |rows| rows[i]);
+                    w[k] = (v + p.entry::<Double>(false, i, jj, dd)).hi;
                 }
             }
         }

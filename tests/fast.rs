@@ -5,7 +5,8 @@ mod common;
 use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::lane::{Dtn, Fu, Fun, Lane};
 use multishoot::prec::{max_abs, nan_max, parts, widen};
-use multishoot::{Double, ExtraRow, MixedLu, NewtonOpts, Quad, Shooting, Storage, DD};
+use multishoot::{Double, Equations, ExtraRow, MixedLu, NewtonOpts, Quad, Shooting, Storage, DD};
+use std::collections::HashMap;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
@@ -264,6 +265,305 @@ fn f64_projection_control_unprojected_fails() {
         println!("control, unprojected f64 Jacobian: largest difference {e:.3e}");
         assert!(e >= 1e-11, "control did not fire");
     }
+}
+
+/// The f64 Jacobian at z (leading dimension ld) assembled outside the engine from its column evaluations, as a caller
+/// that chooses the lanes of each block would: block `dd_block`'s tasks by `jac_column` (double-double, rounded when
+/// stored, and with `store` false left out of the matrix), every other task by `jac_columns_f64::<Dtn<4>>` in the
+/// engine's groups, then the targets' -1, with `project` the projected rows by `project_f64_block` (given the
+/// double-double columns when `dd`), and the extra row's weights.
+fn assembled(
+    sh: &Shooting<Planted<B>, B>,
+    z: &[Vec<f64>],
+    ld: usize,
+    dd_block: Option<usize>,
+    dd: bool,
+    project: bool,
+    store: bool,
+) -> Vec<f64> {
+    let zp = parts(z);
+    let (l, nr) = (sh.len(), 2 * Shooting::<Planted<B>, B>::M);
+    let g = sh.globals::<Double>(&zp);
+    // the planted problem's preparation is (); a caller forms it as for any problem
+    #[allow(clippy::let_unit_value)]
+    let prep = sh.eq.try_prepare(&z[0], &z[1]).unwrap();
+    let mut w = vec![0.0; ld * l];
+    // the double-double columns of block dd_block's tasks, by unknown
+    let mut dd_cols: HashMap<usize, Vec<DD>> = HashMap::new();
+    for gr in sh.f64_groups::<Dtn<4>>() {
+        let (b, r0) = (gr[0].0, sh.row_block(gr[0].0));
+        if Some(b) == dd_block {
+            for &t in &gr {
+                let col = sh.jac_column::<Double>(&zp, &g, &prep, t);
+                let c = sh.seed_columns(b, t.1)[0];
+                for (r, v) in col.iter().enumerate().filter(|_| store) {
+                    w[c * ld + r0 + r] = v.hi;
+                }
+                dd_cols.insert(c, col);
+            }
+            continue;
+        }
+        for (t, col) in gr.iter().zip(sh.jac_columns_f64::<Dtn<4>>(&zp, &g, &prep, &gr)) {
+            let c = sh.seed_columns(b, t.1)[0];
+            w[c * ld + r0..c * ld + r0 + nr].copy_from_slice(&col);
+        }
+    }
+    for b in 0..=sh.k() {
+        let (t, r0) = (sh.block_target(b), sh.row_block(b));
+        for r in 0..nr {
+            w[(t + r) * ld + r0 + r] -= 1.0;
+        }
+        if project {
+            let dd_column = |j: usize| {
+                if dd && Some(b) == dd_block {
+                    dd_cols.get(&j).map(|c| c.as_slice())
+                } else {
+                    None
+                }
+            };
+            sh.project_f64_block(b, &mut w, ld, r0, l, Some, dd_column).unwrap();
+        }
+    }
+    let re = sh.row_extra();
+    for (r, row) in sh.extra.iter().enumerate() {
+        for &(i, wt) in &row.terms {
+            w[i * ld + re + r] += wt.hi;
+        }
+    }
+    w
+}
+
+/// entries of a and b (column-major, leading dimension ld, n columns) in the rows `rows` whose bits differ
+fn bits_differ(a: &[f64], b: &[f64], ld: usize, n: usize, rows: std::ops::Range<usize>) -> usize {
+    (0..n)
+        .flat_map(|j| rows.clone().map(move |i| j * ld + i))
+        .filter(|&k| a[k].to_bits() != b[k].to_bits())
+        .count()
+}
+
+/// The public projection serves a caller that assembles the f64 Jacobian itself: pass, the matrix assembled from the
+/// engine's column evaluations with `project_f64_block` equals `jacobian_f64`'s in every bit, on both projected
+/// layouts.
+#[test]
+fn assembled_f64_jacobian_is_the_engines() {
+    for right in [false, true] {
+        let (sh, zs) = projected(right);
+        let z = perturbed(&zs, 1e-2);
+        let (f, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+        let a = assembled(&sh, &z, ld, None, false, true, true);
+        let n = bits_differ(&a, &f, ld, sh.len(), 0..sh.len());
+        println!("projected ({right}): {n} entries of the assembled f64 Jacobian differ from the engine's");
+        assert_eq!(n, 0);
+    }
+}
+
+/// The control of `assembled_f64_jacobian_is_the_engines`: without the projection the assembled matrix must differ.
+#[test]
+fn assembled_f64_jacobian_control_unprojected_differs() {
+    for right in [false, true] {
+        let (sh, zs) = projected(right);
+        let z = perturbed(&zs, 1e-2);
+        let (f, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+        let a = assembled(&sh, &z, ld, None, false, false, true);
+        assert!(
+            bits_differ(&a, &f, ld, sh.len(), 0..sh.len()) > 0,
+            "control did not fire"
+        );
+    }
+}
+
+/// The planted problem with block 2's u rows projected onto the odd harmonics k <= 3 and node `pin`'s u pinned: node
+/// 3, outside the block's columns (node 1, the global and node 2), or node 1, its input
+fn block2_projected(pin: usize) -> (Shooting<Planted<B>, B>, Vec<Vec<f64>>) {
+    let (mut sh, zs) = planted();
+    let off = sh.off_node(pin);
+    sh.project_rows(2, 0, off, multishoot::periodic::Parity::Odd, 3)
+        .unwrap();
+    (sh, zs)
+}
+
+/// (entries of block 2's rows that differ from the double-double Jacobian's hi parts, entries of the other rows that
+/// differ from `jacobian_f64`'s) for the f64 Jacobian assembled with block 2's columns in double-double, given to the
+/// projection when `dd`, with node `pin`'s u pinned (`block2_projected`)
+fn dd_block_rows(dd: bool, pin: usize) -> (usize, usize) {
+    let (sh, zs) = block2_projected(pin);
+    let z = perturbed(&zs, 1e-2);
+    let (c, ld) = sh.jacobian::<Double>(&parts(&z), true).unwrap();
+    let (f, ldf) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    assert_eq!(ld, ldf);
+    let a = assembled(&sh, &z, ld, Some(2), dd, true, true);
+    let (n, blk) = (sh.len(), sh.row_block(2)..sh.row_block(3));
+    let inside = bits_differ(&a, &c[0], ld, n, blk.clone());
+    let outside = bits_differ(&a, &f, ld, n, 0..blk.start) + bits_differ(&a, &f, ld, n, blk.end..n);
+    (inside, outside)
+}
+
+/// Double-double columns given to the projection: pass, block 2's rows of the assembled f64 Jacobian equal the
+/// double-double Jacobian's hi parts in every bit, its projected rows included, and every other row equals
+/// `jacobian_f64`'s, with the pinned unknowns outside the block's columns and among them.
+#[test]
+fn dd_columns_project_to_the_dd_jacobians_rows() {
+    for pin in [3, 1] {
+        let (inside, outside) = dd_block_rows(true, pin);
+        println!(
+            "double-double columns, node {pin} pinned: {inside} entries of block 2's rows differ from the dd \
+             Jacobian's, {outside} of the others from jacobian_f64's"
+        );
+        assert!(inside == 0 && outside == 0, "node {pin}: {inside} {outside}");
+    }
+}
+
+/// The control of `dd_columns_project_to_the_dd_jacobians_rows`: projecting the columns' f64 roundings instead must
+/// leave some entry of block 2's rows off the double-double Jacobian's.
+#[test]
+fn dd_columns_control_rounded_columns_differ() {
+    for pin in [3, 1] {
+        let (inside, _) = dd_block_rows(false, pin);
+        println!("control, rounded columns, node {pin} pinned: {inside} entries of block 2's rows differ");
+        assert!(inside > 0, "control did not fire");
+    }
+}
+
+/// The double-double columns are what the projection reads: pass, block 2's projected rows are the same in every bit
+/// when the matrix holds the columns' roundings and when it holds zeros there.
+#[test]
+fn dd_columns_are_read_where_the_matrix_is_zero() {
+    let (sh, zs) = block2_projected(3);
+    let z = perturbed(&zs, 1e-2);
+    let (_, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    let a = assembled(&sh, &z, ld, Some(2), true, true, true);
+    let b = assembled(&sh, &z, ld, Some(2), true, true, false);
+    let r0 = sh.row_block(2);
+    let n = bits_differ(&a, &b, ld, sh.len(), r0..r0 + Shooting::<Planted<B>, B>::M);
+    println!("block 2's projected rows: {n} entries differ with the double-double columns left out of the matrix");
+    assert_eq!(n, 0);
+}
+
+/// The control of `dd_columns_are_read_where_the_matrix_is_zero`: with the columns left out of the matrix and not
+/// given to the projection either, block 2's projected rows must differ.
+#[test]
+fn dd_columns_control_not_given_differ() {
+    let (sh, zs) = block2_projected(3);
+    let z = perturbed(&zs, 1e-2);
+    let (_, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    let a = assembled(&sh, &z, ld, Some(2), true, true, true);
+    let b = assembled(&sh, &z, ld, Some(2), false, true, false);
+    let r0 = sh.row_block(2);
+    let n = bits_differ(&a, &b, ld, sh.len(), r0..r0 + Shooting::<Planted<B>, B>::M);
+    println!("control, columns neither stored nor given: {n} entries of block 2's projected rows differ");
+    assert!(n > 0, "control did not fire");
+}
+
+/// The public projection's checks. Pass: it refuses a block past the last, a matrix too short for its columns, a
+/// block's rows past the leading dimension, sizes whose products overflow, a double-double column of the wrong length,
+/// a pinned unknown without a column and two pinned unknowns on one column, which
+/// `assembled_f64_jacobian_is_the_engines` shows it accepts when they are right.
+#[test]
+fn project_f64_block_refuses_bad_inputs() {
+    let (sh, zs) = projected(false);
+    let z = perturbed(&zs, 1e-2);
+    let (f, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    let l = sh.len();
+    let r0 = sh.row_block(2);
+    let short = sh.project_f64_block(2, &mut f.clone()[..ld * l - 1], ld, r0, l, Some, |_| None);
+    let past = sh.project_f64_block(2, &mut f.clone(), ld, ld - 1, l, Some, |_| None);
+    let rows_overflow = sh.project_f64_block(2, &mut f.clone(), ld, usize::MAX, l, Some, |_| None);
+    let cols_overflow = sh.project_f64_block(2, &mut f.clone(), usize::MAX, r0, l, Some, |_| None);
+    let col = vec![DD::ONE; 3];
+    let wrong = sh.project_f64_block(2, &mut f.clone(), ld, r0, l, Some, |_| Some(col.as_slice()));
+    let unpinned = sh.project_f64_block(2, &mut f.clone(), ld, r0, l, |_| None, |_| None);
+    let pin = sh.off_node(1);
+    let shared = sh.project_f64_block(2, &mut f.clone(), ld, r0, l, |u| Some(u.min(pin + 1)), |_| None);
+    let no_block = sh.project_f64_block(sh.k() + 1, &mut f.clone(), ld, r0, l, Some, |_| None);
+    let all = [
+        short,
+        past,
+        rows_overflow,
+        cols_overflow,
+        wrong,
+        unpinned,
+        shared,
+        no_block,
+    ];
+    println!("refusals: {all:?}");
+    assert!(all.iter().all(|r| r.is_err()));
+}
+
+/// A double-double column given as zero replaces the matrix's entries: pass, block 2's projected rows of one of its
+/// input columns, nonzero in the matrix, are zero after the projection is given zeros for that column, and the other
+/// columns' rows are unchanged from the projection given no column. Its control: given no column, the projection must
+/// leave nonzero entries in those rows.
+#[test]
+fn zero_dd_column_replaces_the_matrix_entries() {
+    let (sh, zs) = block2_projected(3);
+    let z = perturbed(&zs, 1e-2);
+    let (f, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    let (l, m, r0) = (sh.len(), Shooting::<Planted<B>, B>::M, sh.row_block(2));
+    let jc = sh.off_node(1) + 2;
+    assert!((0..m).any(|i| f[jc * ld + r0 + i] != 0.0));
+    let zeros = vec![DD::ZERO; 2 * m];
+    let (mut a, mut b) = (f.clone(), f.clone());
+    sh.project_f64_block(2, &mut a, ld, r0, l, Some, |j| (j == jc).then_some(zeros.as_slice()))
+        .unwrap();
+    sh.project_f64_block(2, &mut b, ld, r0, l, Some, |_| None).unwrap();
+    let nonzero = |w: &[f64]| (0..m).filter(|&i| w[jc * ld + r0 + i] != 0.0).count();
+    let (left, control) = (nonzero(&a), nonzero(&b));
+    let other = (0..l)
+        .filter(|&j| j != jc)
+        .flat_map(|j| (0..m).map(move |i| j * ld + r0 + i))
+        .filter(|&k| a[k].to_bits() != b[k].to_bits())
+        .count();
+    println!(
+        "zero column: {left} nonzero entries left in its projected rows ({control} given no column), {other} \
+         entries of other columns differ"
+    );
+    assert!(control > 0, "control did not fire");
+    assert!(left == 0 && other == 0, "{left} {other}");
+}
+
+/// The hashes of the f64 Jacobians assembled with `project_f64_block` at z* perturbed by 1e-2, with block 2's u rows
+/// projected and node 1's u, its input, pinned: from f64 columns only, and with block 2's columns in double-double
+/// given to the projection; `ulp` changes the last bit of unknown 37
+fn assembled_hashes(ulp: bool) -> [u64; 2] {
+    let (sh, zs) = block2_projected(1);
+    let mut z = perturbed(&zs, 1e-2);
+    if ulp {
+        z[0][37] = f64::from_bits(z[0][37].to_bits() + 1);
+    }
+    let (_, ld) = sh.jacobian_f64::<Dtn<4>>(&parts(&z), true).unwrap();
+    let h = |w: Vec<f64>| {
+        let mut f = Fnv::new();
+        w.into_iter().for_each(|x| f.f64(x));
+        f.0
+    };
+    [
+        h(assembled(&sh, &z, ld, None, false, true, true)),
+        h(assembled(&sh, &z, ld, Some(2), true, true, true)),
+    ]
+}
+
+/// the reference hashes of `assembled_hashes`, recorded on aarch64 (NEON) and on the portable backend
+const ASSEMBLED_REFERENCE: [u64; 2] = [0xa9594acbd32b96ae, 0x86a3a742b8ac736a];
+
+/// The public projection's bytes. Pass: the hashes equal the reference on every SIMD backend of the CI matrix.
+#[test]
+fn assembled_bytes_match_reference() {
+    let h = assembled_hashes(false);
+    println!(
+        "assembled hashes [{}]",
+        h.iter().map(|x| format!("{x:#018x}")).collect::<Vec<_>>().join(", ")
+    );
+    assert_eq!(
+        h, ASSEMBLED_REFERENCE,
+        "the assembled f64 Jacobians' bytes differ from the reference"
+    );
+}
+
+/// The control of `assembled_bytes_match_reference`: one ulp of one unknown must change both hashes.
+#[test]
+fn assembled_bytes_control_one_ulp_differs() {
+    let (a, b) = (assembled_hashes(false), assembled_hashes(true));
+    assert!(a[0] != b[0] && a[1] != b[1], "control did not fire");
 }
 
 /// The layout checks of the fast path. Pass: the staircase storage refuses a second extra row, an extra row on node
