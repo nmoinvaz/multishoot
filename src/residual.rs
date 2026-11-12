@@ -50,6 +50,10 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     pub fn scalar<P: Precision<Native>>(&self, z: &[&[f64]], i: usize) -> P::Scalar {
         let keep = self.kept(z.len()).min(z.len());
         let parts: Vec<f64> = (0..P::PARTS).map(|q| if q < keep { z[q][i] } else { 0.0 }).collect();
+        #[cfg(feature = "mutate")]
+        if self.control == crate::control::Control::RenormScalar {
+            return P::new(&parts);
+        }
         P::from_raw(&parts)
     }
 

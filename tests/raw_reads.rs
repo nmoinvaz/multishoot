@@ -1,17 +1,18 @@
 //! The extra rows read their unknowns as the blocks read fields, with the parts as they are (`Shooting::scalar`).
 //!
-//! On the planted problem with a second extra row, a weighted sum over the left data (as a phase condition is), at a
-//! state whose parts are not normalized (a state in the precision's parts divided by 1000 part by part, its second and
-//! last parts overlapping the first), the extra row of the residual, of each coefficient of the residual's jet and of
-//! the Jacobian-vector product must equal the weighted sum of the unknowns as `load` reads them (`P::field_get` of the
-//! loaded field), bit for bit, in double-, quad- and octo-double.
+//! On the planted problem with a second extra row, a weighted sum over the left data (as a phase condition is), at two
+//! states whose parts are not normalized (states in the precision's parts divided by 1000 part by part, their second
+//! and last parts overlapping the first), four comparisons are made bit for bit in double-, quad- and octo-double: the
+//! extra row of the residual at the first state, of the jet's orders 0 and 1 at the two states, and of the
+//! Jacobian-vector product along the second, each against the weighted sum of the unknowns as `load` reads them
+//! (`P::field_get` of the loaded field).
 //!
-//! The check can only fail if renormalizing changes the state: the test asserts that `P::new` of the parts differs
-//! from the parts as they are on at least one of the row's unknowns. With `scalar` renormalizing (`P::new`), the
-//! comparisons fail.
+//! Controls: the same comparisons against the sum of the unknowns renormalized by `P::new`, the read `scalar` had
+//! before, must all fail; and with the feature `mutate`, `Control::RenormScalar` puts that read back in the engine,
+//! and the comparisons against the fields' read must all fail.
 mod common;
 
-use common::{wave, Planted};
+use common::{perturbed, wave, Planted};
 use multishoot::prec::{parts, widen};
 use multishoot::{Double, ExtraRow, Native, Octo, Precision, Quad, Shooting, DD};
 
@@ -52,57 +53,126 @@ fn bits<P: Precision<Native>>(x: P::Scalar) -> Vec<u64> {
     (0..P::PARTS).map(|q| P::part(x, q).to_bits()).collect()
 }
 
-/// the row's sum over the unknowns as `load` reads them
-fn field_read<P: Precision<Native>>(sh: &Shooting<Planted<B>, B>, z: &[&[f64]], row: &ExtraRow) -> P::Scalar {
-    P::dot(
-        row.terms
-            .iter()
-            .map(|&(i, w)| (P::from_dd(w), P::field_get(&sh.load::<P>(z, i - i % M), i % M))),
-    )
+/// How the expected row reads its unknowns
+#[derive(Clone, Copy)]
+enum Read {
+    /// as `load` reads a field, the parts as they are
+    AsLoaded,
+    /// renormalized by `P::new`, the control's wrong result
+    Renormalized,
 }
 
-fn check<P: Precision<Native>>() {
-    let (sh, z) = problem();
+/// the bits of the row's sum over its unknowns, read as `read` says
+fn expected<P: Precision<Native>>(sh: &Shooting<Planted<B>, B>, z: &[&[f64]], row: &ExtraRow, read: Read) -> Vec<u64> {
+    bits::<P>(P::dot(row.terms.iter().map(|&(i, w)| {
+        let x = match read {
+            Read::AsLoaded => P::field_get(&sh.load::<P>(z, i - i % M), i % M),
+            Read::Renormalized => P::new(&z.iter().map(|p| p[i]).collect::<Vec<f64>>()),
+        };
+        (P::from_dd(w), x)
+    })))
+}
+
+/// Whether the residual's extra row at zu, the jet's orders 0 and 1 at (zu, zv) and the Jacobian-vector product along
+/// zv equal the row's sum over their unknowns read as `read` says, bit for bit: one verdict per comparison.
+fn comparisons<P: Precision<Native>>(sh: &Shooting<Planted<B>, B>, z: &[Vec<f64>], read: Read) -> [bool; 4] {
     let row = sh.extra[1].clone();
     let r = sh.row_extra() + 1;
-    let z0 = widen(&z, P::PARTS);
-    let zu = unnormalized::<P>(&z);
-    let changed = row.terms.iter().any(|&(i, _)| {
-        let p: Vec<f64> = zu.iter().map(|q| q[i]).collect();
-        bits::<P>(P::new(&p)) != bits::<P>(P::from_raw(&p))
-    });
-    assert!(
-        changed,
-        "{} parts: renormalizing leaves the state unchanged, so the check cannot fail",
+    let (zu, zv) = (unnormalized::<P>(z), unnormalized::<P>(&perturbed(z, 1e-1)));
+    let (u, v) = (parts(&zu), parts(&zv));
+    let (wu, wv) = (expected::<P>(sh, &u, &row, read), expected::<P>(sh, &v, &row, read));
+    let f = sh.residual::<P>(&u, false).unwrap();
+    let jet = sh.residual_jet::<P, 4>(&[u.clone(), v.clone()], false, 2).unwrap();
+    let (jv, _) = sh.jvp::<P>(&u, &v, false).unwrap();
+    [
+        bits::<P>(f[r]) == wu,
+        bits::<P>(jet[0][r]) == wu,
+        bits::<P>(jet[1][r]) == wv,
+        bits::<P>(jv[r]) == wv,
+    ]
+}
+
+/// Pass: all four equal the sum of the unknowns as the fields read them.
+fn pass<P: Precision<Native>>() {
+    let (sh, z) = problem();
+    assert_eq!(
+        comparisons::<P>(&sh, &z, Read::AsLoaded),
+        [true; 4],
+        "{} parts",
         P::PARTS
     );
-    let want_u = bits::<P>(field_read::<P>(&sh, &parts(&zu), &row));
-    let want_0 = bits::<P>(field_read::<P>(&sh, &parts(&z0), &row));
-    let f = sh.residual::<P>(&parts(&zu), false).unwrap();
-    assert_eq!(bits::<P>(f[r]), want_u, "{} parts: the residual's extra row", P::PARTS);
-    let jet = sh.residual_jet::<P, 4>(&[parts(&z0), parts(&zu)], false, 2).unwrap();
-    assert_eq!(bits::<P>(jet[0][r]), want_0, "{} parts: the jet's order 0", P::PARTS);
-    assert_eq!(bits::<P>(jet[1][r]), want_u, "{} parts: the jet's order 1", P::PARTS);
-    let (jv, _) = sh.jvp::<P>(&parts(&z0), &parts(&zu), false).unwrap();
+}
+
+/// The control of the comparisons: against the renormalized sum, each of the four must fail.
+fn control<P: Precision<Native>>() {
+    let (sh, z) = problem();
     assert_eq!(
-        bits::<P>(jv[r]),
-        want_u,
-        "{} parts: the Jacobian-vector product",
+        comparisons::<P>(&sh, &z, Read::Renormalized),
+        [false; 4],
+        "{} parts",
         P::PARTS
     );
 }
 
 #[test]
 fn extra_rows_read_parts_as_they_are_dd() {
-    check::<Double>();
+    pass::<Double>();
 }
 
 #[test]
 fn extra_rows_read_parts_as_they_are_qd() {
-    check::<Quad>();
+    pass::<Quad>();
 }
 
 #[test]
 fn extra_rows_read_parts_as_they_are_od() {
-    check::<Octo>();
+    pass::<Octo>();
+}
+
+#[test]
+fn extra_rows_control_renormalized_sum_fails_dd() {
+    control::<Double>();
+}
+
+#[test]
+fn extra_rows_control_renormalized_sum_fails_qd() {
+    control::<Quad>();
+}
+
+#[test]
+fn extra_rows_control_renormalized_sum_fails_od() {
+    control::<Octo>();
+}
+
+#[cfg(feature = "mutate")]
+mod mutate {
+    use super::*;
+    use multishoot::control::Control;
+
+    /// The engine's control: with `scalar` renormalizing, each of the four must fail against the fields' read.
+    fn renorm_scalar<P: Precision<Native>>() {
+        let (mut sh, z) = problem();
+        sh.set_control(Control::RenormScalar);
+        assert_eq!(
+            comparisons::<P>(&sh, &z, Read::AsLoaded),
+            [false; 4],
+            "{} parts",
+            P::PARTS
+        );
+    }
+
+    #[test]
+    fn extra_rows_control_renorm_scalar_fails_dd() {
+        renorm_scalar::<Double>();
+    }
+
+    #[test]
+    fn extra_rows_control_renorm_scalar_fails_qd() {
+        renorm_scalar::<Quad>();
+    }
+
+    #[test]
+    fn extra_rows_control_renorm_scalar_fails_od() {
+        renorm_scalar::<Octo>();
+    }
 }
