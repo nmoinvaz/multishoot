@@ -45,11 +45,12 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         P::load_field(&parts)
     }
 
-    /// Unknown i of z, renormalized from its parts
+    /// Unknown i of z, its parts as they are and zero past the kept ones, as `load` reads a field: the extra rows, the
+    /// globals and the pinned unknowns see the same value of an unknown as the blocks do, normalized or not
     pub fn scalar<P: Precision<Native>>(&self, z: &[&[f64]], i: usize) -> P::Scalar {
-        let keep = self.kept(z.len());
-        let parts: Vec<f64> = z.iter().take(keep).map(|p| p[i]).collect();
-        P::new(&parts)
+        let keep = self.kept(z.len()).min(z.len());
+        let parts: Vec<f64> = (0..P::PARTS).map(|q| if q < keep { z[q][i] } else { 0.0 }).collect();
+        P::from_raw(&parts)
     }
 
     /// The globals of z
