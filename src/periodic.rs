@@ -206,6 +206,11 @@ fn d_full(d: i64, n: i64) -> DD {
 pub fn dmat<const B: usize>(parity: Parity) -> DMat<B> {
     let m = 8 * B;
     let n = period_points(parity, m);
+    // an entry depends on i - jj only, which runs over -(2m - 1)..m: one d_full per offset (none at 0)
+    let off = 2 * m as i64 - 1;
+    let tab: Vec<DD> = (-off..m as i64)
+        .map(|d| if d == 0 { DD::ZERO } else { d_full(d, n) })
+        .collect();
     let mut hi = vec![0.0; m * m];
     let mut lo = vec![0.0; m * m];
     for i in 0..m {
@@ -218,7 +223,7 @@ pub fn dmat<const B: usize>(parity: Parity) -> DMat<B> {
             };
             for &(jj, sgn) in images {
                 if jj != i {
-                    v = v + d_full(i as i64 - jj as i64, n).mul_f(sgn);
+                    v = v + tab[(i as i64 - jj as i64 + off) as usize].mul_f(sgn);
                 }
             }
             hi[i * m + j] = v.hi;
@@ -496,5 +501,60 @@ mod tests {
             .map(|j| (dc.get(j) + s[j].mul_f(2.0)).hi.abs())
             .fold(0.0, nan_max);
         assert!(err > 1e-3, "{err:e}");
+    }
+
+    /// entry (i, j) of the folded matrix as the direct sum of d_full over its images, j's and j + M's
+    fn direct(parity: Parity, m: usize, i: usize, j: usize) -> DD {
+        let n = period_points(parity, m);
+        let images: &[(usize, f64)] = match parity {
+            Parity::Full => &[(j, 1.0)],
+            Parity::Odd => &[(j, 1.0), (j + m, -1.0)],
+            Parity::Even => &[(j, 1.0), (j + m, 1.0)],
+        };
+        images
+            .iter()
+            .filter(|&&(jj, _)| jj != i)
+            .fold(DD::ZERO, |v, &(jj, sgn)| v + d_full(i as i64 - jj as i64, n).mul_f(sgn))
+    }
+
+    /// the number of entries of dmat::<B> whose hi or lo bits differ from `direct` at (i, j), or at (j, i) when
+    /// `transposed`, over the three grids
+    fn differing<const B: usize>(transposed: bool) -> usize {
+        let m = 8 * B;
+        let mut n = 0;
+        for parity in [Parity::Odd, Parity::Even, Parity::Full] {
+            let d = dmat::<B>(parity);
+            for i in 0..m {
+                for j in 0..m {
+                    let (a, b) = (
+                        d.cols[j].get(i),
+                        if transposed {
+                            direct(parity, m, j, i)
+                        } else {
+                            direct(parity, m, i, j)
+                        },
+                    );
+                    n += usize::from(a.hi.to_bits() != b.hi.to_bits() || a.lo.to_bits() != b.lo.to_bits());
+                }
+            }
+        }
+        n
+    }
+
+    /// dmat forms each offset's d_full once; pass: every entry equals the direct sum over its images, hi and lo bits,
+    /// on the three grids at M = 8, 16 and 32
+    #[test]
+    fn dmat_equals_direct_sums() {
+        assert_eq!(
+            (differing::<1>(false), differing::<2>(false), differing::<4>(false)),
+            (0, 0, 0)
+        );
+    }
+
+    /// The control of `dmat_equals_direct_sums`: against the direct sums of the transposed matrix the entries must
+    /// differ at every M.
+    #[test]
+    fn dmat_control_transposed_differs() {
+        assert!(differing::<1>(true) > 0 && differing::<2>(true) > 0 && differing::<4>(true) > 0);
     }
 }
