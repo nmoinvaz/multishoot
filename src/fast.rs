@@ -226,7 +226,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             for r in 0..E::NF * m {
                 c[(t + r) * ld + r0 + r] -= 1.0;
             }
-            self.project_f64_block(b, &mut c, ld, r0, l, Some)?;
+            self.project_f64_block(b, &mut c, ld, r0, l, Some, |_| None)?;
         }
         let re = self.row_extra();
         for (r, row) in self.extra.iter().enumerate() {
@@ -360,7 +360,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 w[pos(t + r)? * ld + r0 + r] -= 1.0;
             }
             // projected rows: their pinned unknowns must lie in the block's two groups
-            self.project_f64_block(b, w, ld, r0, np + q.len(), |zi| pos(zi).ok())?;
+            self.project_f64_block(b, w, ld, r0, np + q.len(), |zi| pos(zi).ok(), |_| None)?;
             for r in 0..E::NF * m {
                 let s = scale(rb + r);
                 if s != 1.0 {
