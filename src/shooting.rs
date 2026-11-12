@@ -182,9 +182,29 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         }
     }
 
+    /// The preparation of an evaluation at z (`Equations::try_prepare` at its double-double parts), or `prepare`'s
+    /// under `Control::InfalliblePrepare`
+    pub(crate) fn prep(&self, z: &[&[f64]]) -> Result<E::Prep, String> {
+        #[cfg(feature = "mutate")]
+        if self.control == crate::control::Control::InfalliblePrepare {
+            return Ok(self.eq.prepare(z[0], z[1]));
+        }
+        self.eq.try_prepare(z[0], z[1])
+    }
+
+    /// The preparation of a mode-matrix evaluation at z and the rate (`Equations::try_prepare_rate`), or
+    /// `prepare_rate`'s under `Control::InfalliblePrepare`
+    pub(crate) fn prep_rate(&self, z: &[&[f64]], rate: Rate) -> Result<E::Prep, String> {
+        #[cfg(feature = "mutate")]
+        if self.control == crate::control::Control::InfalliblePrepare {
+            return Ok(self.eq.prepare_rate(z[0], z[1], rate));
+        }
+        self.eq.try_prepare_rate(z[0], z[1], rate)
+    }
+
     /// The state block b produces from its inputs (fields in the order of `block_inputs`), the globals and the
-    /// evaluation's preparation (`Equations::prepare`): the left endpoint's state at node 0, segment b's Taylor path,
-    /// or the right endpoint's state at node K-1.
+    /// evaluation's preparation (`Equations::try_prepare`): the left endpoint's state at node 0, segment b's Taylor
+    /// path, or the right endpoint's state at node K-1.
     pub fn block_state<T: Lane>(&self, b: usize, inp: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
         self.block_state_at(b, inp, g, prep, Rate::ZERO)
     }

@@ -22,8 +22,11 @@ pub enum Control {
     RateReal,
     /// the mode matrix with the Taylor steps at rate zero (`Work::rate` not set)
     RateNotInSteps,
-    /// the mode matrix with the preparation of `Equations::prepare`, without the rate
+    /// the mode matrix with the preparation of `Equations::try_prepare`, without the rate
     RateNotPrepared,
+    /// every evaluation prepared by the infallible `Equations::prepare` and `prepare_rate` in place of `try_prepare`
+    /// and `try_prepare_rate`: a failed preparation goes unseen, and the entry points use `prepare`'s values
+    InfalliblePrepare,
     /// the projected rows' projectors read in double-double (their first two parts) in every precision
     ProjectorDD,
     /// the staircase LU with one pivot of its middle step scaled by 1 + 1e-6 (multidouble's `StaircaseControl::Pivot`)

@@ -57,7 +57,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 gi
             })
             .collect();
-        let prep = self.eq.prepare(zs[0][0], zs[0][1]);
+        let prep = self.prep(&zs[0])?;
         let one = |b: usize| -> State<P::J<N>, B> {
             let inp: Vec<Fl<P::J<N>, B>> = self.block_inputs(b).iter().map(|&o| fld_jet(o)).collect();
             self.block_state::<P::J<N>>(b, &inp, &g, &prep)
