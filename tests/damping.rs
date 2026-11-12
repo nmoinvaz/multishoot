@@ -2,11 +2,12 @@
 //! a copy whose rows of block 3 are scaled by 2^100 (about 1.27e30; a power of two, so the scaling is exact).
 mod common;
 
-use common::{wave, Planted};
+use common::{as_counted, wave, Planted};
 use multishoot::lane::DV;
 use multishoot::newton::Damping;
 use multishoot::prec::{max_abs, nan_max, parts};
 use multishoot::{Double, NewtonOpts, NewtonReport, Shooting, DD};
+use std::sync::atomic::Ordering;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
@@ -123,4 +124,35 @@ fn correction_rule_is_affine_covariant() {
 fn affine_covariance_control_residual_rule_differs() {
     let (a, b) = (run(false, Damping::Residual), run(true, Damping::Residual));
     assert!(!same_steps(&a, &b), "control did not fire");
+}
+
+/// The max |F| rule evaluates the residual once at the start and once per trial, and the Jacobian once per step, as
+/// the accepted trial's residual is the next step's. Pass: on the scaled copy from `start`, at least two steps with
+/// one of them halved, and `prepare` run 1 + sum over the steps of (1 + trials) times, a step's trials one more
+/// than its halvings (its scale 2^-h).
+#[test]
+fn residual_rule_evaluates_once_per_trial() {
+    let (sh, zs) = planted(true);
+    let mut z = start(&sh, &zs);
+    let sh = as_counted(sh);
+    let opts = NewtonOpts {
+        tol: 1e-28,
+        max_iter: 12,
+        damping: Damping::Residual,
+        ..Default::default()
+    };
+    let rep = sh.newton::<Double>(&mut z, &opts).unwrap();
+    let calls = sh.eq.prepared.load(Ordering::Relaxed);
+    let halvings = |mut s: f64| {
+        let mut h = 0;
+        while s < 1.0 {
+            s *= 2.0;
+            h += 1;
+        }
+        h
+    };
+    let expect = 1 + rep.scale.iter().map(|&s| 2 + halvings(s)).sum::<usize>();
+    println!("max |F| rule: scales {:?}, {calls} prepare calls", rep.scale);
+    assert!(rep.scale.len() >= 2 && rep.scale.iter().any(|&s| s < 1.0));
+    assert_eq!(calls, expect);
 }

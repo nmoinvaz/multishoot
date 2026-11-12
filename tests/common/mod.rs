@@ -731,6 +731,57 @@ impl Equations<1> for Bessel {
 /// A problem declared not pointwise, the methods of E unchanged: its Jacobian column by column
 pub struct PerColumn<E>(pub E);
 
+/// A problem whose preparations are counted, the methods of E unchanged: one `prepare` per residual, Jacobian or jet,
+/// so the counter tells how many of them a method formed
+pub struct Counted<E> {
+    pub eq: E,
+    pub prepared: std::sync::atomic::AtomicUsize,
+}
+
+impl<E: Equations<B>, const B: usize> Equations<B> for Counted<E> {
+    const NF: usize = E::NF;
+    const NL: usize = E::NL;
+    const NR: usize = E::NR;
+    const NG: usize = E::NG;
+    const NAUX: usize = E::NAUX;
+    const POINTWISE: bool = E::POINTWISE;
+    type Prep = E::Prep;
+
+    fn prepare(&self, zh: &[f64], zl: &[f64]) -> E::Prep {
+        self.prepared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.eq.prepare(zh, zl)
+    }
+    fn prepare_rate(&self, zh: &[f64], zl: &[f64], rate: multishoot::Rate) -> E::Prep {
+        self.prepared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.eq.prepare_rate(zh, zl, rate)
+    }
+    fn taylor_coeffs<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>) {
+        self.eq.taylor_coeffs(x0, g, w)
+    }
+    fn left_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.eq.left_state(x, data, g, prep)
+    }
+    fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &E::Prep) -> State<T, B> {
+        self.eq.right_state(x, data, g, prep)
+    }
+}
+
+/// The same problem with its preparations counted from zero, with the layout (segments, extra rows, row scales) of sh
+pub fn as_counted<E: Equations<B>, const B: usize>(
+    sh: multishoot::Shooting<E, B>,
+) -> multishoot::Shooting<Counted<E>, B> {
+    let eq = Counted {
+        eq: sh.eq,
+        prepared: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let mut c = multishoot::Shooting::new(eq, sh.nodes, sh.kt);
+    c.segs = sh.segs;
+    c.extra = sh.extra;
+    c.match_node = sh.match_node;
+    c.row_scale = sh.row_scale;
+    c
+}
+
 impl<E: Equations<B>, const B: usize> Equations<B> for PerColumn<E> {
     const NF: usize = E::NF;
     const NL: usize = E::NL;

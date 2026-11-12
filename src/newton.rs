@@ -291,7 +291,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         factor: impl Fn(&[&[f64]]) -> Result<F, String>,
     ) -> Result<NewtonReport, String> {
         let mut rep = NewtonReport::new();
-        let mut fn0 = max_abs::<P>(&self.residual::<P>(&parts(z), opts.par)?);
+        // the residual at z, kept from the trial that reached z
+        let mut f = self.residual::<P>(&parts(z), opts.par)?;
+        let mut fn0 = max_abs::<P>(&f);
         for _ in 0..opts.max_iter {
             rep.fnorm.push(fn0);
             if !fn0.is_finite() {
@@ -301,14 +303,14 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 rep.converged = true;
                 return Ok(rep);
             }
-            let f = self.residual::<P>(&parts(z), opts.par)?;
             let dz = factor(&parts(z))?.solve_neg(&f);
             let mut s = 1.0;
-            let (mut zn, mut fnn);
+            let (mut zn, mut ft, mut fnn);
             let mut h = 0;
             loop {
                 zn = axpy::<P>(&parts(z), &dz, s);
-                fnn = max_abs::<P>(&self.residual::<P>(&parts(&zn), opts.par)?);
+                ft = self.residual::<P>(&parts(&zn), opts.par)?;
+                fnn = max_abs::<P>(&ft);
                 if fnn < fn0 || h == opts.max_halvings {
                     break;
                 }
@@ -321,6 +323,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             }
             rep.scale.push(s);
             *z = zn;
+            f = ft;
             fn0 = fnn;
         }
         rep.fnorm.push(fn0);
