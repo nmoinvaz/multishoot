@@ -581,9 +581,9 @@ fn logdet_bits(v: &[(f64, f64)]) -> Vec<(u64, u64)> {
 }
 
 /// The contour's determinants side by side. Pass: `mode_logdets` with `par`, in pools of 1 and 6 threads, with 8
-/// rates (each rate serial) and 2 (each rate in parallel on 6 threads), and without `par` in a pool of 3, gives the
-/// bits of a loop of `mode_logdet` with and without `par`, rate by rate in order. The control: the loop with two
-/// rates swapped differs.
+/// rates (on 6 threads 6 rates serial and 2 in parallel) and 2 (each in parallel on 6 threads), and without `par` in a
+/// pool of 3, gives the bits of a loop of `mode_logdet` with and without `par`, rate by rate in order. The control:
+/// the loop with two rates swapped differs.
 #[test]
 fn mode_logdets_are_each_rates_logdet() {
     let (sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
