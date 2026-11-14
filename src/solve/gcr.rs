@@ -3,13 +3,22 @@
 //! [`gcr`] solves A x = b with GMRES on A M^-1 (right preconditioning; Saad and Schultz, SIAM J. Sci. Stat. Comput. 7
 //! (1986) 856) in its GCR form (Eisenstat, Elman and Schultz, SIAM J. Numer. Anal. 20 (1983) 345), where the products
 //! A u are exact in the precision P and M is an approximation of A that is cheap to solve with, such as A's f64 LU.
-//! Each iteration takes the preconditioned residual u = M^-1 r as its direction, forms w = A u (one product),
-//! orthogonalizes w against the earlier w's twice, applying the same coefficients to u, and updates x += c u and
-//! r -= c w. The vectors are held in P and updated with the same coefficients, so r stays the residual b - A x to P's
-//! rounding without being recomputed. In exact arithmetic the iterates are GMRES's.
+//! Each iteration takes a direction u, forms w = A u (one product), orthogonalizes w against the earlier w's twice,
+//! applying the same coefficients to u, and updates x += c u and r -= c w. The vectors are held in P and updated with
+//! the same coefficients, so r stays the residual b - A x to P's rounding without being recomputed.
+//!
+//! The direction is the preconditioned residual u = M^-1 r while the last iteration reduced |r| by the factor `nu`,
+//! and otherwise u = M^-1 w for the last w, the next Krylov vector of A M^-1 (the adaptive choice of Jiranek and
+//! Rozloznik, Numer. Algorithms 53 (2010) 93). The residual alone breaks down where GMRES stagnates: there c = 0, r
+//! does not change, and its next direction's image lies in the span of the earlier w's. The Krylov vector extends the
+//! span there, so in exact arithmetic the iterates are GMRES's.
 //!
 //! The loop stops on the change of x, not on the residual, since an error along a weak direction of A barely shows in
-//! the residual: after `confirm` iterations in a row with |c u| <= step_tol |x|, or after `max_products` products.
+//! the residual: after `confirm` iterations in a row with |c u| <= step_tol |x|, each of which reduced |r| by the
+//! factor `nu` or left it at most max(step_tol, n u) |b|, u the unit roundoff of the coefficients (an iteration in which
+//! GMRES stagnates leaves x unchanged without having converged, while r at its rounding floor stops falling once x
+//! has). It also stops, converged, when r is exactly zero, and, not converged, after `max_products` products or when a
+//! direction's image vanishes.
 //!
 //! [`Refined`] is a Newton matrix whose solves are this loop on the exact Jacobian-vector products of a [`Jvp`]
 //! problem, preconditioned by an approximate factorization, and [`newton_refined`] runs the damped Newton loops with
@@ -47,6 +56,10 @@ pub struct GcrOpts {
     /// changes in a row below step_tol that end the loop
     pub confirm: usize,
     pub coef: Coef,
+    /// the residual's direction is taken after an iteration that reduced |r| to at most nu times its norm before, the
+    /// Krylov vector after one that did not (f64::INFINITY gives GCR's residual directions only, which break down
+    /// where GMRES stagnates)
+    pub nu: f64,
 }
 
 impl Default for GcrOpts {
@@ -56,11 +69,13 @@ impl Default for GcrOpts {
             step_tol: 1e-28,
             confirm: 1,
             coef: Coef::Full,
+            nu: 0.9,
         }
     }
 }
 
 /// What [`gcr`] did: the products formed, the relative change |c u| / |x| of each iteration, and whether it converged
+/// (r exactly zero, or `confirm` small changes in a row)
 #[derive(Clone, Debug, Default)]
 pub struct GcrInfo {
     pub products: usize,
@@ -118,8 +133,28 @@ pub fn gcr<P: Precision<Native>>(
     let mut dirs: Vec<Dir<P>> = Vec::new();
     let mut info = GcrInfo::default();
     let mut run = 0;
-    while info.products < opts.max_products {
-        let mut u = precond(&r)?;
+    let mut rn = norm2::<P>(&r);
+    // the residual reached with step_tol, or at most the coefficients' rounding floor, n times their unit roundoff
+    let unit = match opts.coef {
+        Coef::Full => 0.5f64.powi(52 * P::PARTS as i32),
+        Coef::F64 => 0.5f64.powi(52),
+    };
+    let floor = rn * opts.step_tol.max(n as f64 * unit);
+    // whether the last iteration reduced |r| by the factor nu; the first takes the residual
+    let mut fell = true;
+    loop {
+        if rn == 0.0 {
+            info.converged = true;
+            break;
+        }
+        if rn.is_nan() || info.products >= opts.max_products {
+            break;
+        }
+        let src = match dirs.last() {
+            Some(d) if !fell => &d.w,
+            _ => &r,
+        };
+        let mut u = precond(src)?;
         let mut w = apply(&u)?;
         info.products += 1;
         for _ in 0..2 {
@@ -133,6 +168,7 @@ pub fn gcr<P: Precision<Native>>(
             }
         }
         let nw = norm2::<P>(&w);
+        // a vanished image with r nonzero: not converged
         if nw.is_nan() || nw <= 0.0 {
             break;
         }
@@ -148,10 +184,15 @@ pub fn gcr<P: Precision<Native>>(
         };
         axpy::<P>(c, &u, &mut x);
         axpy::<P>(-c, &w, &mut r);
+        let rn1 = norm2::<P>(&r);
+        fell = rn1 <= opts.nu * rn;
+        // at its rounding floor r stops falling without stagnating
+        let counts = fell || rn1 <= floor;
+        rn = rn1;
         let ch = P::to_dd(c).hi.abs() * norm2::<P>(&u) / norm2::<P>(&x).max(1e-300);
         info.changes.push(ch);
         dirs.push(Dir { u, w, inv });
-        run = if dirs.len() > 1 && ch <= opts.step_tol {
+        run = if dirs.len() > 1 && counts && ch <= opts.step_tol {
             run + 1
         } else {
             0
