@@ -30,7 +30,8 @@
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
-//! * [`newton`]: the Newton step and the damped Newton loop;
+//! * [`solve`]: solvers of F(z) = 0 over any [`Problem`], which [`Shooting`] is one of: [`newton`], the Newton step
+//!   and the damped Newton loop;
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
@@ -49,12 +50,12 @@ pub mod jet;
 pub mod jvp;
 pub mod lane;
 pub mod mode;
-pub mod newton;
 pub mod periodic;
 pub mod prec;
 pub mod projected;
 pub mod residual;
 pub mod shooting;
+pub mod solve;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
@@ -65,7 +66,9 @@ pub use multidouble::dd::DD;
 pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
 pub use multidouble::precision::{Double, Octo, Precision, Quad};
 pub use multidouble::simd::Native;
-pub use newton::{NewtonOpts, NewtonReport};
 pub use projected::ProjectedRows;
 pub use shooting::{ExtraRow, Shooting};
+pub use solve::newton;
+pub use solve::newton::{NewtonOpts, NewtonReport};
+pub use solve::Problem;
 pub use taylor::Plan;

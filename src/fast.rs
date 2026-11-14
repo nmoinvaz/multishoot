@@ -16,7 +16,7 @@
 use crate::equations::Equations;
 use crate::jacobian::Seed;
 use crate::lane::{Lane, DV};
-use crate::newton::{Factored, NewtonOpts, NewtonReport};
+use crate::newton::{newton_with, Factored, NewtonOpts, NewtonReport};
 use crate::shooting::Shooting;
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -418,7 +418,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         opts: &NewtonOpts,
         storage: Storage,
     ) -> Result<NewtonReport, String> {
-        self.newton_with::<P, MixedLu>(z, opts, |z| self.mixed_lu::<T>(z, storage, opts.par))
+        newton_with::<P, Self, MixedLu>(self, z, opts, |z| self.mixed_lu::<T>(z, storage, opts.par))
     }
 
     /// The f64 Jacobian of lanes T at z (its double-double parts), factored in the given storage
