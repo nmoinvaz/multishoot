@@ -446,3 +446,22 @@ fn taylor_check_estimates_the_paths_error() {
     println!("control, the order-30 paths' errors {}", show(&tf));
     assert!(!close(&est, &tf), "control did not fire");
 }
+
+/// Pass, written before the first run: a segment with a step of one ulp (0.75 to the next f64), which has no midpoint
+/// in f64, makes `taylor_check` return an error rather than a zero estimate, and leaves `segs` as it was. The control:
+/// the planned segments give estimates.
+#[test]
+fn taylor_check_refuses_a_step_it_cannot_halve() {
+    let (mut sh, zs) = common::Planted::<B>::shooting(&NODES, 8, 1e-10);
+    let z = multishoot::prec::parts(&zs);
+    assert!(
+        sh.taylor_check::<multishoot::Double>(&z, false).is_ok(),
+        "control did not fire"
+    );
+    let next = f64::from_bits(0.75f64.to_bits() + 1);
+    sh.segs[1] = vec![0.5, 0.75, next, 1.0];
+    let before = sh.segs.clone();
+    let r = sh.taylor_check::<multishoot::Double>(&z, false);
+    println!("one-ulp step: {:?}", r.as_ref().map(|_| ()).map_err(|e| e.clone()));
+    assert!(r.is_err() && sh.segs == before);
+}

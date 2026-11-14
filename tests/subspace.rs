@@ -323,7 +323,8 @@ fn deflated_newton_never_moves_along_the_subspace() {
 /// Pass, written before the first run: on the planted matrix, whose smallest singular value is 2^-40, ||A||_1 from
 /// the factors equals the largest column sum of |A| to 1e-15, and the estimate of ||A^-1||_1 lies between a third of
 /// its exact value (the largest column sum of |A^-1|, from the solves of the unit vectors) and that value times
-/// 1 + 1e-12. The controls: estimates four times too large and four times too small fail the check.
+/// 1 + 1e-12. The controls: estimates four times too large and four times too small fail the check, and twice ||A||_1
+/// fails the norm's.
 #[test]
 fn condition_estimate_of_the_planted_matrix() {
     let (pr, zs) = lin();
@@ -340,12 +341,57 @@ fn condition_estimate_of_the_planted_matrix() {
         .fold(0.0, nan_max);
     let est = f.inv_norm1();
     let ok = |e: f64| e >= exact / 3.0 && e <= exact * (1.0 + 1e-12);
+    let norm_ok = |x: f64| (x / norm1 - 1.0).abs() <= 1e-15;
     println!(
         "||A||_1 {:.6e} (factors {:.6e}); ||A^-1||_1 {exact:.6e}, estimate {est:.6e}; cond1 {:.3e}",
         norm1,
         f.norm1,
         f.cond1()
     );
-    assert!((f.norm1 / norm1 - 1.0).abs() <= 1e-15 && ok(est));
+    assert!(norm_ok(f.norm1) && ok(est));
     assert!(!ok(4.0 * est) && !ok(est / 4.0), "control did not fire");
+    assert!(!norm_ok(2.0 * f.norm1), "norm control did not fire");
+}
+
+/// F(z) = d (z - 1) in n unknowns: the Jacobian d I
+struct Diag {
+    d: f64,
+    n: usize,
+}
+
+impl Problem<Double> for Diag {
+    fn len(&self) -> usize {
+        self.n
+    }
+    fn residual(&self, z: &[&[f64]], _par: bool) -> Result<Vec<DD>, String> {
+        Ok((0..self.n)
+            .map(|i| DD::from_f64(self.d) * (DD::new(z[0][i], z[1][i]) - DD::ONE))
+            .collect())
+    }
+    fn jacobian(&self, _z: &[&[f64]], _par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
+        let ld = ld_for(self.n);
+        let mut c = vec![vec![0.0; ld * self.n]; 2];
+        for i in 0..self.n {
+            c[0][i * ld + i] = self.d;
+        }
+        Ok((c, ld))
+    }
+}
+
+/// Pass, written before the first run: for J = 2^-1018 I in 32 unknowns, where ||J^-1||_1 = 2^1018 is finite but
+/// twice the alternating vector's solve would overflow, the estimate is 2^1018 and the condition number 1, both to
+/// 1e-15 relative. The control: an infinite estimate, what the unscaled fallback gave, fails the check.
+#[test]
+fn condition_estimate_near_overflow() {
+    let pr = Diag {
+        d: 2f64.powi(-1018),
+        n: 32,
+    };
+    let z = vec![vec![1.0; 32], vec![0.0; 32]];
+    let f = Factors::<Double>::new(&pr, &parts(&z), false).unwrap();
+    let ok = |inv: f64, cond: f64| (inv / 2f64.powi(1018) - 1.0).abs() <= 1e-15 && (cond - 1.0).abs() <= 1e-15;
+    let (inv, cond) = (f.inv_norm1(), f.cond1());
+    println!("2^-1018 I: ||J^-1||_1 {inv:e}, cond1 {cond}");
+    assert!(ok(inv, cond));
+    assert!(!ok(f64::INFINITY, f64::INFINITY), "control did not fire");
 }
