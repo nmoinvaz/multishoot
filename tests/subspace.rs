@@ -214,8 +214,21 @@ fn weak_subspace_at_extreme_scales() {
     }
 }
 
-/// |A^T y - e_k| / (|A| |y|) for y the sensitivity of unknown k, or (control) J^-1 e_k in its place
-fn sensitivity_residual(k: usize, transpose: bool) -> f64 {
+/// |A^T y - e_k| / (|A| |y|), NaN where any entry is
+fn transpose_residual(a: &[Vec<DD>], y: &[DD], k: usize) -> f64 {
+    let amax = a.iter().flatten().map(|v| v.hi.abs()).fold(0.0, nan_max);
+    let ymax = y.iter().map(|v| v.hi.abs()).fold(0.0, nan_max);
+    (0..N)
+        .map(|j| {
+            let aty = (0..N).fold(DD::ZERO, |t, i| t + a[i][j] * y[i]);
+            (aty - if j == k { DD::ONE } else { DD::ZERO }).hi.abs()
+        })
+        .fold(0.0, nan_max)
+        / (amax * ymax)
+}
+
+/// y = the sensitivity of unknown k, or (control) J^-1 e_k in its place
+fn sensitivity(k: usize, transpose: bool) -> (Lin, Vec<DD>) {
     let (pr, zs) = lin();
     let f = Factors::<Double>::new(&pr, &parts(&zs), false).unwrap();
     let y = if transpose {
@@ -225,27 +238,31 @@ fn sensitivity_residual(k: usize, transpose: bool) -> f64 {
         e[k] = DD::ONE;
         f.solve(&e)
     };
-    let amax = pr.a.iter().flatten().map(|v| v.hi.abs()).fold(0.0, f64::max);
-    let ymax = y.iter().map(|v| v.hi.abs()).fold(0.0, f64::max);
-    (0..N)
-        .map(|j| {
-            let aty = (0..N).fold(DD::ZERO, |t, i| t + pr.a[i][j] * y[i]);
-            (aty - if j == k { DD::ONE } else { DD::ZERO }).hi.abs()
-        })
-        .fold(0.0, f64::max)
-        / (amax * ymax)
+    (pr, y)
 }
 
 /// Pass, written before the first run: the sensitivity y = J^-T e_k solves A^T y = e_k to 1e-30 relative to |A| |y|,
-/// for every k. The control: J^-1 e_k, the solve without the transpose, misses for this unsymmetric A by more than
-/// 1e-3.
+/// for every k. The controls: J^-1 e_k, the solve without the transpose, misses for this unsymmetric A by more than
+/// 1e-3, and a sensitivity with one entry NaN fails the check.
 #[test]
 fn sensitivity_solves_the_transpose() {
-    let e = (0..N).map(|k| sensitivity_residual(k, true)).fold(0.0, f64::max);
-    let c = sensitivity_residual(3, false);
+    let accurate = |e: f64| e <= 1e-30;
+    let e = (0..N)
+        .map(|k| {
+            let (pr, y) = sensitivity(k, true);
+            transpose_residual(&pr.a, &y, k)
+        })
+        .fold(0.0, nan_max);
+    let (pr, y) = sensitivity(3, false);
+    let c = transpose_residual(&pr.a, &y, 3);
     println!("sensitivity: residual {e:.3e}; control, J^-1 e_k {c:.3e}");
-    assert!(e <= 1e-30);
+    assert!(accurate(e));
     assert!(c > 1e-3, "control did not fire");
+    let (pr, mut y) = sensitivity(3, true);
+    y[5] = DD::from_f64(f64::NAN);
+    let n = transpose_residual(&pr.a, &y, 3);
+    println!("control, one entry NaN: {n:.3e}");
+    assert!(!accurate(n), "NaN control did not fire");
 }
 
 /// Pass, written before the first run: Newton from z* + delta with the planted weak span removed from its steps leaves
