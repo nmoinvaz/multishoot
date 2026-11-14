@@ -105,22 +105,29 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// recomputed with each step halved (twice the steps at the same order), and per residual block (0..=K, the
     /// endpoints' blocks first and last) the largest change of its rows, |F(z) - F_halved(z)| in hi parts. With an
     /// error of order h^(kt+1) per step the halved path's error is about 2^-kt of the original's, so the change
-    /// estimates the original path's error; the endpoint maps take no steps and show zero. `segs` is restored.
+    /// estimates the original path's error; the endpoint maps take no steps and show zero. `segs` is restored. A step
+    /// too short to halve in f64 (its midpoint rounds to an end) is an error, not a zero estimate.
     pub fn taylor_check<P: Precision<Native>>(&mut self, z: &[&[f64]], par: bool) -> Result<Vec<f64>, String> {
-        let f0 = self.residual::<P>(z, par)?;
-        let fine: Vec<Vec<f64>> = self
-            .segs
-            .iter()
-            .map(|s| {
-                let mut out = Vec::with_capacity(2 * s.len());
-                for w in s.windows(2) {
-                    out.push(w[0]);
-                    out.push(0.5 * (w[0] + w[1]));
+        let mut fine: Vec<Vec<f64>> = Vec::with_capacity(self.segs.len());
+        for (b, s) in self.segs.iter().enumerate() {
+            let mut out = Vec::with_capacity(2 * s.len());
+            for w in s.windows(2) {
+                let mid = 0.5 * (w[0] + w[1]);
+                if !(mid > w[0].min(w[1]) && mid < w[0].max(w[1])) {
+                    return Err(format!(
+                        "taylor_check: the step {} to {} of segment {} has no midpoint in f64",
+                        w[0],
+                        w[1],
+                        b + 1
+                    ));
                 }
-                out.extend(s.last());
-                out
-            })
-            .collect();
+                out.push(w[0]);
+                out.push(mid);
+            }
+            out.extend(s.last());
+            fine.push(out);
+        }
+        let f0 = self.residual::<P>(z, par)?;
         let saved = std::mem::replace(&mut self.segs, fine);
         let f1 = self.residual::<P>(z, par);
         self.segs = saved;
