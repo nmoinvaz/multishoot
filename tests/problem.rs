@@ -1,10 +1,11 @@
 //! Newton's method on a problem that is not multiple shooting: a cyclic cubic system written directly as a
 //! [`Problem`], with a manufactured root, in double-double and quad-double, and the chord and Shamanskii variants that
 //! reuse its factorization.
+use multishoot::gcr::{newton_refined, GcrOpts};
 use multishoot::multidouble::linalg::ld_for;
-use multishoot::newton::{newton, newton_chord, NewtonOpts, NewtonReport};
+use multishoot::newton::{exact, newton, newton_chord, NewtonOpts, NewtonReport};
 use multishoot::prec::{max_abs, nan_max, parts};
-use multishoot::{Double, Native, Precision, Problem, Quad, DD};
+use multishoot::{Double, Jvp, Native, Precision, Problem, Quad, DD};
 use std::cell::Cell;
 
 const N: usize = 12;
@@ -16,6 +17,8 @@ struct Cubic<P: Precision<Native>> {
     c: P::Scalar,
     b: Vec<P::Scalar>,
     diag_err: f64,
+    /// scales the diagonal in the products J v, 1 for the exact ones
+    jvp_err: f64,
     /// the Jacobians formed
     jacobians: Cell<usize>,
 }
@@ -30,6 +33,7 @@ impl<P: Precision<Native>> Cubic<P> {
             c,
             b: vec![P::ZERO; N],
             diag_err,
+            jvp_err: 1.0,
             jacobians: Cell::new(0),
         };
         pr.b = pr.terms(&zs);
@@ -81,6 +85,17 @@ impl<P: Precision<Native>> Problem<P> for Cubic<P> {
             }
         }
         Ok((c, ld))
+    }
+}
+
+impl<P: Precision<Native>> Jvp<P> for Cubic<P> {
+    fn jvp(&self, z: &[&[f64]], v: &[&[f64]], _par: bool) -> Result<Vec<P::Scalar>, String> {
+        let (z, v) = (scalars::<P>(z), scalars::<P>(v));
+        let three = P::from_dd(DD::from_f64(3.0));
+        let err = P::from_dd(DD::from_f64(self.jvp_err));
+        Ok((0..N)
+            .map(|i| (three * z[i] * z[i] + P::ONE) * err * v[i] + self.c * v[(i + 1) % N])
+            .collect())
     }
 }
 
@@ -225,4 +240,44 @@ fn chord_refuses_every_zero() {
     let (pr, zs) = Cubic::<Double>::new(1.0);
     let mut z = start(&zs);
     assert!(newton_chord::<Double, _>(&pr, &mut z, &NewtonOpts::default(), 0).is_err());
+}
+
+/// Newton in double-double with its steps refined by gcr on the products J v, preconditioned by the problem's
+/// Jacobian with its diagonal 10% off, the products' diagonal scaled by `jvp_err`: (converged, steps, max |F|,
+/// products)
+fn refined(jvp_err: f64) -> (bool, usize, f64, usize) {
+    let (mut pr, zs) = Cubic::<Double>::new(1.1);
+    pr.jvp_err = jvp_err;
+    let mut z = start(&zs);
+    let opts = NewtonOpts {
+        tol: 1e-28,
+        max_iter: 8,
+        ..Default::default()
+    };
+    let g = GcrOpts {
+        step_tol: 1e-10,
+        ..Default::default()
+    };
+    let (rep, products) =
+        newton_refined::<Double, _, _>(&pr, &mut z, &opts, &g, |z| exact::<Double, _>(&pr, z, false)).unwrap();
+    (rep.converged, rep.scale.len(), *rep.fnorm.last().unwrap(), products)
+}
+
+/// Pass, written before the first run: with the Jacobian's diagonal 10% off as the preconditioner, whose plain
+/// Newton does not converge in 8 steps (`newton_control_wrong_jacobian_does_not_converge`), the steps refined by gcr
+/// on the exact products converge to max |F| <= 1e-28 within the 8.
+#[test]
+fn refined_newton_converges_on_a_wrong_preconditioner() {
+    let (ok, steps, f, products) = refined(1.0);
+    println!("refined: converged {ok} in {steps} steps, max |F| {f:.3e}, {products} products");
+    assert!(ok && f <= 1e-28);
+}
+
+/// The control: products J v with the same wrong diagonal make gcr solve the wrong Jacobian's system exactly, so
+/// Newton again does not converge within 8 steps.
+#[test]
+fn refined_newton_control_wrong_products_do_not_converge() {
+    let (ok, steps, f, _) = refined(1.1);
+    println!("control, products 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}");
+    assert!(!ok, "control did not fire");
 }
