@@ -22,9 +22,13 @@
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use crate::mode::Rate;
+use crate::newton::{NewtonOpts, NewtonReport, Step};
+use crate::solve::Problem;
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
+use multidouble::precision::Precision;
+use multidouble::simd::Native;
 
 /// A linear condition on the unknowns, `sum_i w_i z_(idx_i) - rhs = 0`: a phase condition, a normalization, a pinned
 /// unknown
@@ -255,5 +259,34 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             .collect();
         self.segs = segs;
         self.kt = plan.kt;
+    }
+}
+
+/// The layout as a problem for the solvers of [`crate::solve`]: its residual and exact Jacobian in any precision
+impl<E: Equations<B>, const B: usize, P: Precision<Native>> Problem<P> for Shooting<E, B> {
+    fn len(&self) -> usize {
+        Shooting::len(self)
+    }
+    fn residual(&self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
+        Shooting::residual::<P>(self, z, par)
+    }
+    fn jacobian(&self, z: &[&[f64]], par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
+        Shooting::jacobian::<P>(self, z, par)
+    }
+}
+
+impl<E: Equations<B>, const B: usize> Shooting<E, B> {
+    /// The Newton step at z ([`crate::newton::newton_step`] on this problem)
+    pub fn newton_step<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Step<P>, String> {
+        crate::newton::newton_step::<P, Self>(self, z, par)
+    }
+
+    /// Newton's method from z, damped by `opts.damping` ([`crate::newton::newton`] on this problem)
+    pub fn newton<P: Precision<Native>>(
+        &self,
+        z: &mut Vec<Vec<f64>>,
+        opts: &NewtonOpts,
+    ) -> Result<NewtonReport, String> {
+        crate::newton::newton::<P, Self>(self, z, opts)
     }
 }
