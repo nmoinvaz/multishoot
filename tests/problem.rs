@@ -174,6 +174,7 @@ fn bits(rep: &NewtonReport, z: &[Vec<f64>]) -> Vec<u64> {
         .chain(&rep.theta)
         .chain(z.iter().flatten())
         .map(|v| v.to_bits())
+        .chain([rep.converged as u64])
         .collect()
 }
 
