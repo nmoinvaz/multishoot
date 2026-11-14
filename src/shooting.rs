@@ -23,7 +23,7 @@ use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use crate::mode::Rate;
 use crate::newton::{NewtonOpts, NewtonReport, Step};
-use crate::solve::{Jvp, Problem};
+use crate::solve::{Jvp, Problem, ResidualJet};
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -278,6 +278,22 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> Problem<P> for Shoot
 impl<E: Equations<B>, const B: usize, P: Precision<Native>> Jvp<P> for Shooting<E, B> {
     fn jvp(&self, z: &[&[f64]], v: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
         Ok(Shooting::jvp::<P>(self, z, v, par)?.0)
+    }
+}
+
+/// The residual's series in the equations' parameter ([`Shooting::residual_jet`]) on jet lanes of 8, 16 or 32
+/// coefficients, the smallest that holds the orders asked for and the coefficient vectors given: each size is one
+/// instance of the residual's code, and a jet's products cost about the square of its size.
+impl<E: Equations<B>, const B: usize, P: Precision<Native>> ResidualJet<P> for Shooting<E, B> {
+    fn residual_jet(&self, zs: &[Vec<&[f64]>], nout: usize, par: bool) -> Result<Vec<Vec<P::Scalar>>, String> {
+        match nout.max(zs.len()) {
+            0..=8 => Shooting::residual_jet::<P, 8>(self, zs, par, nout),
+            9..=16 => Shooting::residual_jet::<P, 16>(self, zs, par, nout),
+            17..=32 => Shooting::residual_jet::<P, 32>(self, zs, par, nout),
+            n => Err(format!(
+                "residual_jet: at most 32 orders and coefficient vectors, not {n}"
+            )),
+        }
     }
 }
 
