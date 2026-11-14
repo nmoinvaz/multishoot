@@ -281,6 +281,49 @@ impl Resampler {
     }
 }
 
+/// The Fourier coefficients of a field on the grid of `f.len()` points of `parity`, in double-double: for each harmonic
+/// k the grid holds (k up to its Nyquist, of the parity's), (k, a_k, b_k) with the interpolant sum_k a_k cos k theta +
+/// b_k sin k theta. a_k = w_k (c / N) sum_j f_j cos k theta_j, b_k likewise for the sine, over the N points of the
+/// period (the half grids' other half by their symmetry, c = 2 there, else 1), w_k = 1 at k = 0 and the Nyquist
+/// harmonic, else 2.
+pub fn spectrum(parity: Parity, f: &[DD]) -> Vec<(i64, DD, DD)> {
+    let m = f.len();
+    let n = period_points(parity, m);
+    let fac = match parity {
+        Parity::Full => DD::ONE,
+        _ => DD::from_f64(2.0),
+    } / DD::from_f64(n as f64);
+    (0..=n / 2)
+        .filter(|&k| match parity {
+            Parity::Full => true,
+            Parity::Odd => k % 2 == 1,
+            Parity::Even => k % 2 == 0,
+        })
+        .map(|k| {
+            let (mut a, mut b) = (DD::ZERO, DD::ZERO);
+            for (j, &fj) in f.iter().enumerate() {
+                let (sn, cs) = sin_cos_grid(parity, m, j, k);
+                a = a + fj * cs;
+                b = b + fj * sn;
+            }
+            let w = if k == 0 || 2 * k == n { 1.0 } else { 2.0 };
+            (k, (a * fac).mul_f(w), (b * fac).mul_f(w))
+        })
+        .collect()
+}
+
+/// The resolution of a field on its grid: the largest amplitude hypot(a_k, b_k) of its `top` highest harmonics
+/// ([`spectrum`]) over its largest amplitude, in f64, NaN when any is
+pub fn tail(parity: Parity, f: &[DD], top: usize) -> f64 {
+    let amp: Vec<f64> = spectrum(parity, f).iter().map(|&(_, a, b)| a.hi.hypot(b.hi)).collect();
+    let big = amp.iter().copied().fold(0.0, crate::prec::nan_max);
+    let hi = amp[amp.len().saturating_sub(top)..]
+        .iter()
+        .copied()
+        .fold(0.0, crate::prec::nan_max);
+    hi / big
+}
+
 /// entry (i, j) of the N-point derivative matrix, i != j mod N: (-1)^(i-j) cot((i-j) pi / N) / 2
 fn d_full(d: i64, n: i64) -> DD {
     let (s, c) = sin_cos_pi(d, n);
