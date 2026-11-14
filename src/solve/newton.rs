@@ -109,7 +109,7 @@ fn axpy<P: Precision<Native>>(z: &[&[f64]], dz: &[P::Scalar], s: f64) -> Vec<Vec
 
 /// the Euclidean norm of the scalars, from the hi parts of their double-double roundings, scaled by their largest
 /// magnitude so that no square overflows; NaN when any is NaN
-fn norm2<P: Precision<Native>>(v: &[P::Scalar]) -> f64 {
+pub(crate) fn norm2<P: Precision<Native>>(v: &[P::Scalar]) -> f64 {
     let m = max_abs::<P>(v);
     if m == 0.0 || !m.is_finite() {
         return m;
@@ -128,11 +128,19 @@ fn solve_neg<P: Precision<Native>>(lu: &P::Lu, r: &[P::Scalar]) -> Vec<P::Scalar
 pub trait Factored<P: Precision<Native>> {
     /// -J^-1 r
     fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar>;
+    /// -J^-1 r, or the error of a solve that can fail, such as an iterative one that evaluates the problem
+    /// ([`crate::solve::gcr::Refined`]); the damped loops call this one
+    fn try_solve_neg(&self, r: &[P::Scalar]) -> Result<Vec<P::Scalar>, String> {
+        Ok(self.solve_neg(r))
+    }
 }
 
 impl<P: Precision<Native>, F: Factored<P>> Factored<P> for Rc<F> {
     fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar> {
         (**self).solve_neg(r)
+    }
+    fn try_solve_neg(&self, r: &[P::Scalar]) -> Result<Vec<P::Scalar>, String> {
+        (**self).try_solve_neg(r)
     }
 }
 
@@ -284,7 +292,7 @@ fn newton_correction<P: Precision<Native>, Pr: Problem<P> + ?Sized, F: Factored<
             return Ok(rep);
         }
         let lu = factor(&parts(z))?;
-        let dz = lu.solve_neg(&f);
+        let dz = lu.try_solve_neg(&f)?;
         let ndz = norm2::<P>(&dz);
         let mut lam = match &prev {
             None => opts.lambda0,
@@ -306,7 +314,7 @@ fn newton_correction<P: Precision<Native>, Pr: Problem<P> + ?Sized, F: Factored<
             }
             let zt = axpy::<P>(&parts(z), &dz, lam);
             let ft = pr.residual(&parts(&zt), opts.par)?;
-            let bar = lu.solve_neg(&ft);
+            let bar = lu.try_solve_neg(&ft)?;
             let nbar = norm2::<P>(&bar);
             let theta = nbar / ndz;
             let rest = P::from_dd(DD::from_f64(1.0 - lam));
@@ -361,7 +369,7 @@ fn newton_residual<P: Precision<Native>, Pr: Problem<P> + ?Sized, F: Factored<P>
             rep.converged = true;
             return Ok(rep);
         }
-        let dz = factor(&parts(z))?.solve_neg(&f);
+        let dz = factor(&parts(z))?.try_solve_neg(&f)?;
         let mut s = 1.0;
         let (mut zn, mut ft, mut fnn);
         let mut h = 0;
