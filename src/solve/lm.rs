@@ -3,8 +3,10 @@
 //! |F|^2 / 2 matched the real one (the gain ratio; Madsen, Nielsen and Tingleff, Methods for Non-Linear Least
 //! Squares Problems, DTU 2004, section 3.2, after Nielsen 1999). Small mu gives Newton's step, large mu a short step
 //! along the scaled gradient, so the method keeps going where the Jacobian is singular or Newton's step overshoots.
-//! Near the root it hands over to Newton's method, whose rate is quadratic. The gain ratio is formed in f64 from
-//! |F|^2, which underflows below about 1e-150, so a run asked for a smaller tolerance needs the handover.
+//! Near the root it hands over to Newton's method, whose rate is quadratic, with LM's tolerance. If Newton fails there
+//! (a singular Jacobian, or no convergence), LM goes on from its last accepted state and does not hand over again. The
+//! gain ratio is formed in f64 from |F|^2, which underflows below about 1e-150, so a run asked for a smaller tolerance
+//! needs the handover.
 //!
 //! D is floored at 2^-104 times its largest entry, since a zero column of J would leave G + mu D singular for every
 //! mu. A factorization that fails (a singular or non-finite pivot) counts as a refused step.
@@ -33,7 +35,7 @@ pub struct LmOpts {
     pub tau: f64,
     /// hand over to Newton's method once max |F| is below this (0: never)
     pub newton_after: f64,
-    /// the settings of that Newton run
+    /// the settings of that Newton run, except its tolerance, which is `tol`
     pub newton: NewtonOpts,
     pub par: bool,
 }
@@ -52,7 +54,8 @@ impl Default for LmOpts {
 }
 
 /// What [`levenberg_marquardt`] did: max |F| before each step and at the end, the mu of each step taken, the
-/// factorizations formed, whether it converged, and the report of the Newton run it handed over to
+/// factorizations formed, whether it converged, and the report of the Newton run it handed over to, if that run
+/// returned one
 #[derive(Clone, Debug, Default)]
 pub struct LmReport {
     pub fnorm: Vec<f64>,
@@ -154,6 +157,7 @@ pub fn levenberg_marquardt<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
     let mut f = pr.residual(&parts(z), opts.par)?;
     let mut mu = -1.0f64;
     let mut nu = 2.0f64;
+    let mut handover = opts.newton_after > 0.0;
     for _ in 0..opts.max_iter {
         let fmax = max_abs::<P>(&f);
         rep.fnorm.push(fmax);
@@ -164,11 +168,23 @@ pub fn levenberg_marquardt<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
             rep.converged = true;
             return Ok(rep);
         }
-        if opts.newton_after > 0.0 && fmax < opts.newton_after {
-            let nr = newton::<P, Pr>(pr, z, &opts.newton)?;
-            rep.converged = nr.converged;
-            rep.newton = Some(nr);
-            return Ok(rep);
+        if handover && fmax < opts.newton_after {
+            handover = false;
+            // Newton on a copy, to LM's tolerance; its last fnorm is max |F| at its final state
+            let mut zn = z.clone();
+            let nopts = NewtonOpts {
+                tol: opts.tol,
+                ..opts.newton
+            };
+            if let Ok(nr) = newton::<P, Pr>(pr, &mut zn, &nopts) {
+                let done = nr.converged && nr.fnorm.last().is_some_and(|&f| f <= opts.tol);
+                rep.newton = Some(nr);
+                if done {
+                    *z = zn;
+                    rep.converged = true;
+                    return Ok(rep);
+                }
+            }
         }
         let (c, ld) = pr.jacobian(&parts(z), opts.par)?;
         let nf: Vec<P::Scalar> = f.iter().map(|&v| -v).collect();
