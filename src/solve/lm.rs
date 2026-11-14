@@ -9,7 +9,8 @@
 //! needs the handover.
 //!
 //! D is floored at 2^-104 times its largest entry, since a zero column of J would leave G + mu D singular for every
-//! mu. A factorization that fails (a singular or non-finite pivot) counts as a refused step.
+//! mu. A factorization that fails (a singular or non-finite pivot) counts as a refused step. An error of the problem's
+//! residual at a trial state is returned, as Newton's method does.
 //!
 //! G is formed once per step in P, on the lanes of P (8 rows of a column per lane vector, the dot accumulator of the
 //! lane type), only its upper triangle and with its columns in parallel; each mu tried costs one factorization of
@@ -177,10 +178,12 @@ pub fn levenberg_marquardt<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
                 ..opts.newton
             };
             if let Ok(nr) = newton::<P, Pr>(pr, &mut zn, &nopts) {
-                let done = nr.converged && nr.fnorm.last().is_some_and(|&f| f <= opts.tol);
+                let last = nr.fnorm.last().copied();
+                let done = nr.converged && last.is_some_and(|f| f <= opts.tol);
                 rep.newton = Some(nr);
-                if done {
+                if let (true, Some(f)) = (done, last) {
                     *z = zn;
+                    rep.fnorm.push(f);
                     rep.converged = true;
                     return Ok(rep);
                 }
@@ -222,14 +225,7 @@ pub fn levenberg_marquardt<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
                 }
             }
             rep.factorizations += 1;
-            let step = P::lu_factor(n, ld, a, opts.par).and_then(|lu| {
-                let mut dz = jf.clone();
-                P::lu_solve(&lu, &mut dz);
-                let zt = add::<P>(&parts(z), &dz);
-                let ft = pr.residual(&parts(&zt), opts.par)?;
-                Ok((dz, zt, ft))
-            });
-            let Ok((dz, zt, ft)) = step else {
+            let Ok(lu) = P::lu_factor(n, ld, a, opts.par) else {
                 mu *= nu;
                 nu *= 2.0;
                 if !mu.is_finite() {
@@ -238,6 +234,10 @@ pub fn levenberg_marquardt<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
                 }
                 continue;
             };
+            let mut dz = jf.clone();
+            P::lu_solve(&lu, &mut dz);
+            let zt = add::<P>(&parts(z), &dz);
+            let ft = pr.residual(&parts(&zt), opts.par)?;
             // predicted decrease of |F|^2 / 2: dz . (mu D dz - J^T F) / 2, J^T F = -jf
             let pred: f64 = dz
                 .iter()
