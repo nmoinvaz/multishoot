@@ -709,3 +709,57 @@ mod controls {
         assert!(differ > 0, "control did not fire");
     }
 }
+
+/// the rectangle (x0, x1) x (y0, y1), counter-clockwise
+fn rect(x0: f64, x1: f64, y0: f64, y1: f64) -> Vec<(f64, f64)> {
+    vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+}
+
+/// Pass, written before the first run: `Shooting::mode_winding` counts the wave's modes, the zeros (pi / 2 + n pi) / L
+/// -+ i omega k of its det M, in boxes: 1 in (0.3, 1) x (0.2, 0.8) about pi / 2L + i omega, 0 about the origin, 2 in
+/// (0.3, 1) x (-0.8, 0.8), and 4 in (0.3, 2.2) x (-1, 1), each an integer to 1e-6 and resolved. The first box's
+/// moment locates its zero to 1e-2, and `mode_zero` refines it to 1e-10 of pi / 2L + i omega. The control: refined
+/// from the mirrored box's moment, it reaches the conjugate zero, more than 0.5 from pi / 2L + i omega.
+#[test]
+fn mode_winding_counts_and_locates_the_modes() {
+    use multishoot::winding::WindOpts;
+    let (sh, z) = wave_problem(None);
+    let opts = WindOpts::default();
+    let z0 = std::f64::consts::PI / (2.0 * X_END);
+    for (poly, want) in [
+        (rect(0.3, 1.0, 0.2, 0.8), 1),
+        (rect(-0.3, 0.3, -0.3, 0.3), 0),
+        (rect(0.3, 1.0, -0.8, 0.8), 2),
+        (rect(0.3, 2.2, -1.0, 1.0), 4),
+    ] {
+        let w = sh.mode_winding(&parts(&z), &poly, &opts, true).unwrap();
+        println!(
+            "box {poly:?}: winding {:.9}, {} evaluations, resolved {}",
+            w.turns, w.evals, w.resolved
+        );
+        assert!(
+            (w.turns - want as f64).abs() < 1e-6 && w.resolved,
+            "{poly:?}: {} (want {want})",
+            w.turns
+        );
+    }
+    let planted = (z0, OMEGA);
+    let dist = |a: (f64, f64)| (a.0 - planted.0).hypot(a.1 - planted.1);
+    let w = sh
+        .mode_winding(&parts(&z), &rect(0.3, 1.0, 0.2, 0.8), &opts, true)
+        .unwrap();
+    let m = w.moment();
+    let r = sh.mode_zero(&parts(&z), m, 1e-3, 1e-14, true).unwrap();
+    println!(
+        "zero: moment {m:?} ({:.1e} off), refined {r:?} ({:.1e} off)",
+        dist(m),
+        dist(r)
+    );
+    assert!(dist(m) <= 1e-2 && dist(r) <= 1e-10);
+    let wm = sh
+        .mode_winding(&parts(&z), &rect(0.3, 1.0, -0.8, -0.2), &opts, true)
+        .unwrap();
+    let rc = sh.mode_zero(&parts(&z), wm.moment(), 1e-3, 1e-14, true).unwrap();
+    println!("control, from the mirrored box: {rc:?} ({:.2} off)", dist(rc));
+    assert!(dist(rc) > 0.5, "control did not fire");
+}
