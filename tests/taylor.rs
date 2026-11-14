@@ -407,3 +407,42 @@ fn planner_reports_an_underflowing_tolerance() {
 fn planner_underflow_control_normal_tolerance_plans() {
     assert_eq!(plan_tiny(1e-10), vec![0.0, 1e-12]);
 }
+
+/// the largest |F| of each residual block (0..=K) of the planted problem at its manufactured solution: its paths'
+/// integration error, the solution being exact
+fn block_errors(sh: &Shooting<common::Planted<B>, B>, zs: &[Vec<f64>]) -> Vec<f64> {
+    let f = sh
+        .residual::<multishoot::Double>(&multishoot::prec::parts(zs), false)
+        .unwrap();
+    let rows = 2 * Shooting::<common::Planted<B>, B>::M;
+    (0..=sh.k())
+        .map(|b| {
+            f[sh.row_block(b)..sh.row_block(b) + rows]
+                .iter()
+                .map(|v| v.hi.abs())
+                .fold(0.0, nan_max)
+        })
+        .collect()
+}
+
+/// Pass, written before the first run: on the planted problem with paths of order 8 planned to 1e-10, whose error at
+/// the manufactured solution is each block's residual there, `taylor_check` estimates every interior block's error
+/// within 5%, and gives exactly zero for the endpoint blocks, which take no steps. The control: the same estimates
+/// against the errors of paths of order 30 planned to 1e-32 miss by far more than 5%.
+#[test]
+fn taylor_check_estimates_the_paths_error() {
+    let (mut sh, zs) = common::Planted::<B>::shooting(&NODES, 8, 1e-10);
+    let truth = block_errors(&sh, &zs);
+    let est = sh
+        .taylor_check::<multishoot::Double>(&multishoot::prec::parts(&zs), false)
+        .unwrap();
+    let show = |v: &[f64]| v.iter().map(|x| format!("{x:.3e}")).collect::<Vec<_>>().join(" ");
+    println!("block errors {}\nestimates    {}", show(&truth), show(&est));
+    let k = sh.k();
+    let close = |e: &[f64], t: &[f64]| (1..k).all(|b| (e[b] / t[b] - 1.0).abs() <= 0.05);
+    assert!(close(&est, &truth) && est[0] == 0.0 && est[k] == 0.0);
+    let (fine, zf) = common::Planted::<B>::shooting(&NODES, 30, 1e-32);
+    let tf = block_errors(&fine, &zf);
+    println!("control, the order-30 paths' errors {}", show(&tf));
+    assert!(!close(&est, &tf), "control did not fire");
+}
