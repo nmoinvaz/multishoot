@@ -190,6 +190,94 @@ pub fn sin_cos_grid(parity: Parity, m: usize, j: usize, k: i64) -> (DD, DD) {
     sin_cos_pi(2 * k * j as i64, period_points(parity, m))
 }
 
+/// Trigonometric interpolation of a field from the grid of m points to the grid of m2 points of the same parity, in
+/// double-double: the field's harmonics up to the old grid's Nyquist (A_k = (1/N) sum_j f_j cos k theta_j and B_k for
+/// sin, over the N points of the period, the half grids' other half by their symmetry), summed on the new grid. On a
+/// coarser grid the harmonics past its Nyquist are dropped, and at its Nyquist only the cosine part is kept, the sine
+/// vanishing on its points. A field whose harmonics both grids resolve is moved to rounding. The sines and cosines of
+/// both grids are formed once ([`sin_cos_grid`]), so one `Resampler` serves every field of its parity.
+pub struct Resampler {
+    m2: usize,
+    /// per harmonic used: k, the analysis factor, the synthesis weights of the cosine and sine parts
+    ks: Vec<(i64, f64, f64, f64)>,
+    /// analysis: (sin, cos) of k theta_j on the old grid, by harmonic then point
+    old: Vec<Vec<(DD, DD)>>,
+    /// synthesis: (sin, cos) of k theta_j on the new grid, by harmonic then point
+    new: Vec<Vec<(DD, DD)>>,
+}
+
+impl Resampler {
+    pub fn new(parity: Parity, m: usize, m2: usize) -> Self {
+        let (n, n2) = (period_points(parity, m), period_points(parity, m2));
+        let allowed = |k: i64| match parity {
+            Parity::Full => true,
+            Parity::Odd => k % 2 == 1,
+            Parity::Even => k % 2 == 0,
+        };
+        // the half grids hold M of the period's 2M points; the other half doubles the allowed harmonics' sums
+        let fac = match parity {
+            Parity::Full => 1.0 / n as f64,
+            _ => 2.0 / n as f64,
+        };
+        let kcut = n.min(n2) / 2;
+        let ks: Vec<(i64, f64, f64, f64)> = (0..=kcut)
+            .filter(|&k| allowed(k))
+            .map(|k| {
+                let (wc, ws) = if k == 0 {
+                    (1.0, 0.0)
+                } else if k < kcut {
+                    (2.0, 2.0)
+                } else if n2 >= n {
+                    // the old grid's Nyquist, its symmetric interpolant c cos(N theta / 2)
+                    (1.0, 0.0)
+                } else {
+                    // the new grid's Nyquist: its sine is zero on the new points
+                    (2.0, 0.0)
+                };
+                (k, fac, wc, ws)
+            })
+            .collect();
+        let old = ks
+            .iter()
+            .map(|&(k, ..)| (0..m).map(|j| sin_cos_grid(parity, m, j, k)).collect())
+            .collect();
+        let new = ks
+            .iter()
+            .map(|&(k, ..)| (0..m2).map(|j| sin_cos_grid(parity, m2, j, k)).collect())
+            .collect();
+        Resampler { m2, ks, old, new }
+    }
+
+    /// the field f (m values) on the new grid (m2 values)
+    pub fn apply(&self, f: &[DD]) -> Vec<DD> {
+        let coef: Vec<(DD, DD)> = self
+            .ks
+            .iter()
+            .zip(&self.old)
+            .map(|(&(_, fac, ..), sc)| {
+                let (mut a, mut b) = (DD::ZERO, DD::ZERO);
+                for (&fj, &(sn, cs)) in f.iter().zip(sc) {
+                    a = a + fj * cs;
+                    b = b + fj * sn;
+                }
+                (a.mul_f(fac), b.mul_f(fac))
+            })
+            .collect();
+        (0..self.m2)
+            .map(|j| {
+                self.ks
+                    .iter()
+                    .zip(&coef)
+                    .zip(&self.new)
+                    .fold(DD::ZERO, |t, ((&(_, _, wc, ws), &(a, b)), sc)| {
+                        let (sn, cs) = sc[j];
+                        t + (a * cs).mul_f(wc) + (b * sn).mul_f(ws)
+                    })
+            })
+            .collect()
+    }
+}
+
 /// entry (i, j) of the N-point derivative matrix, i != j mod N: (-1)^(i-j) cot((i-j) pi / N) / 2
 fn d_full(d: i64, n: i64) -> DD {
     let (s, c) = sin_cos_pi(d, n);
