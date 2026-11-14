@@ -8,6 +8,7 @@ use crate::shooting::Shooting;
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
+use rayon::prelude::*;
 
 /// The parity of each field ([`Parity`]): of the left endpoint's data (NL), of a node's state (NF) and of the right
 /// endpoint's data (NR), which fixes its grid and harmonics. The equations know these from their derivative matrices;
@@ -25,6 +26,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// old node and the right endpoint's beyond the last (meaningful where those maps are series valid there, as at a
     /// singular end), and otherwise the Taylor path from the nearest old node below, its steps planned by `plan`.
     /// The endpoints' data and the globals are kept. The new layout is `Shooting::new` on these nodes, planned again.
+    /// The new nodes' states are formed on rayon tasks; the result does not depend on it.
     pub fn renode(&self, zh: &[f64], zl: &[f64], nodes: &[f64], plan: &Plan) -> Result<(Vec<f64>, Vec<f64>), String> {
         if zh.len() != self.len() || zl.len() != self.len() {
             return Err(format!("renode: z of length {}, not {}", zh.len(), self.len()));
@@ -47,20 +49,26 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let tail = nl + nodes.len() * E::NF * m;
         oh[tail..].copy_from_slice(&zh[self.off_right()..]);
         ol[tail..].copy_from_slice(&zl[self.off_right()..]);
-        for (ix, &x) in nodes.iter().enumerate() {
-            let st: State<DV, B> = if let Some(i) = self.nodes.iter().position(|&y| y == x) {
-                fields(self.off_node(i), E::NF)
-            } else if x < self.nodes[0] {
-                self.eq.left_state(x, &left, &g, &prep)
-            } else if x > self.nodes[k0 - 1] {
-                self.eq.right_state(x, &right, &g, &prep)
-            } else {
-                let i = (0..k0).rev().find(|&i| self.nodes[i] <= x).unwrap_or(0);
-                let s0 = fields(self.off_node(i), E::NF);
-                let xs = plan_path(&self.eq, &s0, self.nodes[i], x, &g, plan);
-                let mut w = Work::<DV, B>::new(E::NF, E::NAUX, plan.kt);
-                taylor_path(&self.eq, &s0, &xs, &g, &mut w)
-            };
+        // every new node's state is independent of the others': each on its own rayon task
+        let states: Vec<State<DV, B>> = nodes
+            .par_iter()
+            .map(|&x| {
+                if let Some(i) = self.nodes.iter().position(|&y| y == x) {
+                    fields(self.off_node(i), E::NF)
+                } else if x < self.nodes[0] {
+                    self.eq.left_state(x, &left, &g, &prep)
+                } else if x > self.nodes[k0 - 1] {
+                    self.eq.right_state(x, &right, &g, &prep)
+                } else {
+                    let i = (0..k0).rev().find(|&i| self.nodes[i] <= x).unwrap_or(0);
+                    let s0 = fields(self.off_node(i), E::NF);
+                    let xs = plan_path(&self.eq, &s0, self.nodes[i], x, &g, plan);
+                    let mut w = Work::<DV, B>::new(E::NF, E::NAUX, plan.kt);
+                    taylor_path(&self.eq, &s0, &xs, &g, &mut w)
+                }
+            })
+            .collect();
+        for (ix, st) in states.iter().enumerate() {
             let o = nl + ix * E::NF * m;
             for (f, v) in st.iter().enumerate() {
                 v.store(&mut oh[o + f * m..o + (f + 1) * m], &mut ol[o + f * m..o + (f + 1) * m]);
