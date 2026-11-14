@@ -85,13 +85,16 @@ impl<P: Precision<Native>> Factors<P> {
             x[j] = P::ONE;
         }
         if n > 1 {
+            // b scaled by 2 / (3 n) before the solve, so that the estimate's sum cannot overflow where the result
+            // itself is finite
+            let sc = 2.0 / (3 * n) as f64;
             let b: Vec<P::Scalar> = (0..n)
                 .map(|i| {
-                    let v = 1.0 + i as f64 / (n - 1) as f64;
+                    let v = sc * (1.0 + i as f64 / (n - 1) as f64);
                     scalar(if i % 2 == 0 { v } else { -v })
                 })
                 .collect();
-            est = est.max(2.0 * l1(&self.solve(&b)) / (3 * n) as f64);
+            est = est.max(l1(&self.solve(&b)));
         }
         est
     }

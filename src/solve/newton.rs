@@ -81,10 +81,12 @@ pub struct NewtonReport {
 }
 
 impl NewtonReport {
-    /// The error of the final iterate, |z - z*| in the 2-norm, estimated by the last step's simplified correction: the
-    /// next Newton correction from the final iterate, formed with the old factors, which equals -(z - z*) to first
-    /// order (Deuflhard, Newton Methods for Nonlinear Problems, Springer 2004). None with the residual rule
-    /// or without a step.
+    /// The error of the final iterate, |z - z*| in the 2-norm, estimated by the last step's simplified correction
+    /// |M^-1 F(z)|, formed with the step's factors M (Deuflhard, Newton Methods for Nonlinear Problems, Springer 2004).
+    /// With the exact Jacobian's factors (`newton`), M approaches J(z*) and the correction equals -(z - z*) to first
+    /// order. With factors frozen at another point or approximate (`newton_chord`, `reuse`, `newton_with`), it is
+    /// M^-1 J(z*) times the error, which differs from the error by the factors' mismatch: for F(x) = x^2 - 1 from x = 2
+    /// with J frozen at 4 it tends to half the error. None with the residual rule or without a step.
     pub fn error_estimate(&self) -> Option<f64> {
         self.dz_bar.last().copied()
     }
