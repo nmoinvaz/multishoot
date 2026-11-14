@@ -35,6 +35,8 @@
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
+//! * [`winding`]: the zeros of an analytic function such as det M(lambda) counted inside a polygon by the argument
+//!   principle with adaptive sampling, located by the contour's moment and refined by Muller's method;
 //! * [`prec`]: helpers for states held as part arrays in any of multidouble's precisions ([`Precision`]:
 //!   double-double [`Double`], quad-double [`Quad`], octo-double [`Octo`]);
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
@@ -59,6 +61,7 @@ pub mod residual;
 pub mod shooting;
 pub mod solve;
 pub mod taylor;
+pub mod winding;
 
 pub use equations::{Equations, State, Work};
 pub use fast::{MixedLu, Storage};

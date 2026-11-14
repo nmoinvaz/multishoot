@@ -265,4 +265,38 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     pub fn mode_logdet(&self, z: &[&[f64]], rate: Rate, par: bool) -> Result<(f64, f64), String> {
         self.mode_matrix(z, rate, par)?.logdet(par)
     }
+
+    /// The winding number of det M(lambda) along the closed polygon through `vertices`, by
+    /// [`crate::winding::winding`]: the modes whose rates lie inside, less any poles of det M there
+    pub fn mode_winding(
+        &self,
+        z: &[&[f64]],
+        vertices: &[crate::winding::C64],
+        opts: &crate::winding::WindOpts,
+        par: bool,
+    ) -> Result<crate::winding::Winding, String> {
+        crate::winding::winding(
+            |l| self.mode_logdet(z, Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)), par),
+            vertices,
+            opts,
+        )
+    }
+
+    /// A zero of det M(lambda) near `x0`, a mode's rate, by [`crate::winding::muller`] from x0 - h, x0 + h and x0
+    pub fn mode_zero(
+        &self,
+        z: &[&[f64]],
+        x0: crate::winding::C64,
+        h: f64,
+        tol: f64,
+        par: bool,
+    ) -> Result<crate::winding::C64, String> {
+        crate::winding::muller(
+            |l| self.mode_logdet(z, Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)), par),
+            x0,
+            h,
+            tol,
+            50,
+        )
+    }
 }
