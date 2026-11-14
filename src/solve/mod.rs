@@ -8,7 +8,9 @@
 //!   method whose steps it refines from an approximate factorization;
 //! * [`lm`]: the Levenberg-Marquardt method, for starts where Newton's method stalls or its Jacobian is singular;
 //! * [`anm`]: the asymptotic numerical method, the Taylor series of a solution branch in the problem's parameter;
-//! * [`predict`]: predictors for continuation: Lagrange extrapolation, the cubic Hermite, and the exact tangent.
+//! * [`predict`]: predictors for continuation: Lagrange extrapolation, the cubic Hermite, and the exact tangent;
+//! * [`subspace`]: the weakest singular directions of the Jacobian, Newton's method with them removed from its steps,
+//!   and the sensitivities of single unknowns to the residual.
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 
@@ -17,6 +19,7 @@ pub mod gcr;
 pub mod lm;
 pub mod newton;
 pub mod predict;
+pub mod subspace;
 
 /// A system F(z) = 0 of `len()` equations in as many unknowns, evaluated in the precision P. The state z is held as
 /// P::PARTS part arrays of f64 (part q of unknown i at `z[q][i]`).
