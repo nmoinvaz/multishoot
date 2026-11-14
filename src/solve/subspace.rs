@@ -16,6 +16,7 @@ use crate::prec::nan_max;
 use multidouble::dd::DD;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
+use rayon::prelude::*;
 
 /// The factors of J and of J^T at a point
 pub struct Factors<P: Precision<Native>> {
@@ -25,23 +26,37 @@ pub struct Factors<P: Precision<Native>> {
 }
 
 impl<P: Precision<Native>> Factors<P> {
-    /// J and J^T of `pr` at z, factored
+    /// J and J^T of `pr` at z, factored; with `par` the transpose's columns and the two factorizations run on rayon
+    /// tasks, their factors the same
     pub fn new<Pr: Problem<P> + ?Sized>(pr: &Pr, z: &[&[f64]], par: bool) -> Result<Self, String> {
         let n = pr.len();
         let (c, ld) = pr.jacobian(z, par)?;
         let mut ct = vec![vec![0.0; ld * n]; P::PARTS];
+        // column i of J^T is row i of J
+        let row = |cq: &[f64], i: usize, col: &mut [f64]| {
+            for (j, x) in col[..n].iter_mut().enumerate() {
+                *x = cq[j * ld + i];
+            }
+        };
         for (cq, tq) in c.iter().zip(ct.iter_mut()) {
-            for j in 0..n {
-                for i in 0..n {
-                    tq[i * ld + j] = cq[j * ld + i];
-                }
+            if par {
+                tq.par_chunks_mut(ld)
+                    .take(n)
+                    .enumerate()
+                    .for_each(|(i, col)| row(cq, i, col));
+            } else {
+                tq.chunks_mut(ld)
+                    .take(n)
+                    .enumerate()
+                    .for_each(|(i, col)| row(cq, i, col));
             }
         }
-        Ok(Factors {
-            n,
-            lu: P::lu_factor(n, ld, c, par)?,
-            lut: P::lu_factor(n, ld, ct, par)?,
-        })
+        let (lu, lut) = if par {
+            rayon::join(|| P::lu_factor(n, ld, c, par), || P::lu_factor(n, ld, ct, par))
+        } else {
+            (P::lu_factor(n, ld, c, par), P::lu_factor(n, ld, ct, par))
+        };
+        Ok(Factors { n, lu: lu?, lut: lut? })
     }
 
     /// J^-1 b
@@ -164,6 +179,7 @@ fn jacobi(mut a: Vec<Vec<f64>>) -> (Vec<f64>, Vec<Vec<f64>>) {
 /// The w weakest right singular directions of J at the factors: an orthonormal basis (f64 vectors, weakest first) and
 /// its singular values. Inverse subspace iteration on (J^T J)^-1 from a deterministic start (`seed`), `iters`
 /// products, then Rayleigh-Ritz on the subspace: the eigenvalues lambda of V^T (J^T J)^-1 V give sigma = lambda^-1/2.
+/// The w products of an iteration run on rayon tasks; the result does not depend on it.
 pub fn weak_subspace<P: Precision<Native>>(
     f: &Factors<P>,
     w: usize,
@@ -173,11 +189,12 @@ pub fn weak_subspace<P: Precision<Native>>(
     let mut st = seed.max(1);
     let mut v: Vec<Vec<f64>> = (0..w).map(|_| (0..f.n).map(|_| wave(&mut st)).collect()).collect();
     orthonormalize(&mut v);
+    // the w products of each iteration are independent solves, each on its own rayon task
     for _ in 0..iters {
-        v = v.iter().map(|x| f.normal(x)).collect();
+        v = v.par_iter().map(|x| f.normal(x)).collect();
         orthonormalize(&mut v);
     }
-    let av: Vec<Vec<f64>> = v.iter().map(|x| f.normal(x)).collect();
+    let av: Vec<Vec<f64>> = v.par_iter().map(|x| f.normal(x)).collect();
     let t: Vec<Vec<f64>> = (0..w).map(|i| (0..w).map(|j| dot(&v[i], &av[j])).collect()).collect();
     let (lam, q) = jacobi(t);
     let mut order: Vec<usize> = (0..w).collect();
