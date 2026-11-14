@@ -4,6 +4,7 @@ mod common;
 
 use common::Planted;
 use multishoot::periodic::{sin_cos_grid, Parity, Resampler};
+use multishoot::prec::nan_max;
 use multishoot::{Parities, Plan, DD};
 
 /// the field sum over the harmonics ks of (0.3 + 0.1 k) cos k theta + (0.2 - 0.05 k) sin k theta on the grid of m
@@ -46,6 +47,37 @@ fn resampler_moves_resolved_fields_exactly() {
     assert!(full <= 1e-30 && odd <= 1e-30 && even <= 1e-30);
     let c = resample_err(Parity::Odd, Parity::Even, &[1, 3, 5]);
     println!("control, odd field with the even resampler: {c:.3e}");
+    assert!(c > 1e-3, "control did not fire");
+}
+
+/// the largest error of moving the field of harmonics ks from m points to each of m2s, with the resampler of its parity
+fn resample_err_m(parity: Parity, m: usize, m2s: &[usize], ks: &[i64]) -> f64 {
+    let f = field(parity, m, ks);
+    m2s.iter()
+        .map(|&m2| max_diff(&Resampler::new(parity, m, m2).apply(&f), &field(parity, m2, ks)))
+        .fold(0.0, nan_max)
+}
+
+/// Pass, written before the first run: on grids whose period is not a power of two, where 1 / N is not an f64, and on
+/// odd grids, which have no Nyquist harmonic, resolved fields move to 1e-30: a full field of harmonics 0..5 from 24
+/// points to 12, 24 and 48, odd (1, 3, 5) and even (0, 2, 4) fields from 12 points to 6, 12 and 24, and a full field
+/// of harmonics 0..2 from 5 points to 5, 7 and 10. The control: harmonic 3 on 5 points, which that grid aliases,
+/// misses by more than 1e-3.
+#[test]
+fn resampler_is_exact_on_grids_of_any_size() {
+    let errs = [
+        resample_err_m(Parity::Full, 24, &[12, 24, 48], &[0, 1, 2, 3, 4, 5]),
+        resample_err_m(Parity::Odd, 12, &[6, 12, 24], &[1, 3, 5]),
+        resample_err_m(Parity::Even, 12, &[6, 12, 24], &[0, 2, 4]),
+        resample_err_m(Parity::Full, 5, &[5, 7, 10], &[0, 1, 2]),
+    ];
+    println!(
+        "resampler: full 24 {:.3e}, odd 12 {:.3e}, even 12 {:.3e}, full 5 {:.3e}",
+        errs[0], errs[1], errs[2], errs[3]
+    );
+    assert!(errs.iter().all(|&e| e <= 1e-30));
+    let c = resample_err_m(Parity::Full, 5, &[10], &[0, 1, 3]);
+    println!("control, harmonic 3 on 5 points: {c:.3e}");
     assert!(c > 1e-3, "control did not fire");
 }
 
