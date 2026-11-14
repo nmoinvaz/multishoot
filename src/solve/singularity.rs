@@ -495,35 +495,51 @@ mod tests {
     use super::*;
     use crate::{Double, Quad};
 
-    /// the roots' largest distance from the wanted ones (each matched to its nearest)
+    /// the roots' largest distance from the wanted ones (each matched to its nearest), the difference formed in P
+    /// before it is rounded, so that errors far below f64's rounding show
     fn root_err<P: Precision<Native>>(got: &[Cx<P>], want: &[(f64, f64)]) -> f64 {
         want.iter()
-            .map(|w| {
+            .map(|&w| {
                 got.iter()
-                    .map(|g| {
-                        let (re, im) = g.to_f64();
-                        (re - w.0).hypot(im - w.1)
-                    })
+                    .map(|&g| (g - Cx::from_f64(w.0, w.1)).abs())
                     .fold(f64::INFINITY, f64::min)
             })
             .fold(0.0, nan_max)
     }
 
+    /// the roots with the first moved by eps (in P): a result off by eps
+    fn moved<P: Precision<Native>>(r: &[Cx<P>], eps: f64) -> Vec<Cx<P>> {
+        let mut r = r.to_vec();
+        r[0] = r[0] + Cx::from_f64(eps, 0.0);
+        r
+    }
+
     /// (x - 1)(x - 2)(x + 3)(x^2 + 1) = x^5 - 6 x^3 + 6 x^2 - 7 x + 6: its roots 1, 2, -3, +-i to 1e-25 in
-    /// double-double and 1e-55 in quad-double. The control: the polynomial with one coefficient off by 1e-6 has its
-    /// roots off by more than 1e-9.
+    /// double-double and 1e-55 in quad-double. The controls: the roots with one moved by 1e-20 (double-double) and
+    /// 1e-50 (quad-double), errors that f64 cannot hold, fail the checks, and the polynomial with one coefficient off
+    /// by 1e-6 has its roots off by more than 1e-9.
     #[test]
     fn roots_of_a_known_polynomial() {
         let a = [6.0, -7.0, 6.0, -6.0, 0.0, 1.0];
         let want = [(1.0, 0.0), (2.0, 0.0), (-3.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
         let d: Vec<DD> = a.iter().map(|&v| DD::from_f64(v)).collect();
-        let e = root_err::<Double>(&roots::<Double>(&d), &want);
+        let rd = roots::<Double>(&d);
+        let e = root_err::<Double>(&rd, &want);
         let q: Vec<_> = a
             .iter()
             .map(|&v| <Quad as Precision<Native>>::from_dd(DD::from_f64(v)))
             .collect();
-        let eq = root_err::<Quad>(&roots::<Quad>(&q), &want);
+        let rq = roots::<Quad>(&q);
+        let eq = root_err::<Quad>(&rq, &want);
         assert!(e <= 1e-25 && eq <= 1e-55, "{e:e} {eq:e}");
+        assert!(
+            root_err::<Double>(&moved(&rd, 1e-20), &want) > 1e-25,
+            "double-double control did not fire"
+        );
+        assert!(
+            root_err::<Quad>(&moved(&rq, 1e-50), &want) > 1e-55,
+            "quad-double control did not fire"
+        );
         let mut bad = d.clone();
         bad[2] = DD::from_f64(6.0 + 1e-6);
         assert!(
@@ -532,8 +548,9 @@ mod tests {
         );
     }
 
-    /// The [1/1] approximant of 1 / (1 - a / 2) + 3 is exact: its pole is 2 to 1e-28. The control: the series of
-    /// 1 / (1 - a / 2.1) gives another pole, off by more than 0.05.
+    /// The [1/1] approximant of 1 / (1 - a / 2) + 3 is exact: its pole is 2 to 1e-28, the difference formed in
+    /// double-double. The controls: the pole moved by 1e-20, an error f64 cannot hold, fails the check, and the series
+    /// of 1 / (1 - a / 2.1) gives another pole, off by more than 0.05.
     #[test]
     fn pade_of_a_rational_function() {
         let pole = |s: f64| {
@@ -544,11 +561,17 @@ mod tests {
                 DD::ONE / DD::from_f64(s * s),
             ];
             let (_, q) = pade::<Double>(&g, 1).unwrap();
-            roots::<Double>(&q)[0].to_f64()
+            roots::<Double>(&q)
         };
-        let (re, im) = pole(2.0);
-        assert!((re - 2.0).abs() <= 1e-28 && im.abs() <= 1e-28, "{re} {im}");
-        let (re, _) = pole(2.1);
-        assert!((re - 2.0).abs() > 0.05, "control did not fire");
+        let p = pole(2.0);
+        assert!(root_err::<Double>(&p, &[(2.0, 0.0)]) <= 1e-28, "{:?}", p[0].to_f64());
+        assert!(
+            root_err::<Double>(&moved(&p, 1e-20), &[(2.0, 0.0)]) > 1e-28,
+            "control did not fire"
+        );
+        assert!(
+            root_err::<Double>(&pole(2.1), &[(2.0, 0.0)]) > 0.05,
+            "control did not fire"
+        );
     }
 }
