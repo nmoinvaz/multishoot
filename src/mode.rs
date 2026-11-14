@@ -280,7 +280,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The winding number of det M(lambda) along the closed polygon through `vertices`, by
-    /// [`crate::winding::winding`]: the modes whose rates lie inside, less any poles of det M there
+    /// [`crate::winding::winding_batch`]: the modes whose rates lie inside, less any poles of det M there. Each batch
+    /// of samples is evaluated by `mode_logdets`, its rates side by side with `par`; the result is the one of
+    /// `winding` with `mode_logdet`, bit for bit.
     pub fn mode_winding(
         &self,
         z: &[&[f64]],
@@ -288,8 +290,14 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         opts: &crate::winding::WindOpts,
         par: bool,
     ) -> Result<crate::winding::Winding, String> {
-        crate::winding::winding(
-            |l| self.mode_logdet(z, Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)), par),
+        crate::winding::winding_batch(
+            |ls: &[crate::winding::C64]| {
+                let rates: Vec<Rate> = ls
+                    .iter()
+                    .map(|l| Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)))
+                    .collect();
+                self.mode_logdets(z, &rates, par)
+            },
             vertices,
             opts,
         )

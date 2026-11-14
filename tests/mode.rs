@@ -812,3 +812,39 @@ fn mode_winding_counts_and_locates_the_modes() {
     println!("control, from the mirrored box: {rc:?} ({:.2} off)", dist(rc));
     assert!(dist(rc) > 0.5, "control did not fire");
 }
+
+/// Pass: `mode_winding`, its batches of samples evaluated side by side by `mode_logdets`, in pools of 1 and 6 threads
+/// and without `par`, gives the samples, turns and evaluations of `winding` with `mode_logdet` one rate at a time, bit
+/// for bit, on the wave's box (0.3, 1) x (-0.8, 0.8). The control: the box with one corner moved by 1e-3 differs.
+#[test]
+fn mode_winding_is_the_one_by_one_count() {
+    use multishoot::winding::{winding, WindOpts, Winding};
+    let (sh, z) = wave_problem(None);
+    let opts = WindOpts::default();
+    let bits = |w: &Winding| -> (Vec<u64>, u64, usize) {
+        let s = w
+            .edges
+            .iter()
+            .flat_map(|e| {
+                e.t.iter()
+                    .map(|t| t.to_bits())
+                    .chain(e.val.iter().flat_map(|v| [v.0.to_bits(), v.1.to_bits()]))
+            })
+            .collect();
+        (s, w.turns.to_bits(), w.evals)
+    };
+    let one_by_one = |poly: &[(f64, f64)]| {
+        let f = |l: (f64, f64)| sh.mode_logdet(&parts(&z), Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)), true);
+        bits(&winding(f, poly, &opts).unwrap())
+    };
+    let poly = rect(0.3, 1.0, -0.8, 0.8);
+    let want = one_by_one(&poly);
+    for (t, par) in [(1, true), (6, true), (3, false)] {
+        let w = in_pool(t, || sh.mode_winding(&parts(&z), &poly, &opts, par).unwrap());
+        assert!(bits(&w) == want, "{t} threads, par {par}");
+    }
+    let mut moved = poly.clone();
+    moved[2].0 += 1e-3;
+    let w = in_pool(6, || sh.mode_winding(&parts(&z), &moved, &opts, true).unwrap());
+    assert!(bits(&w) != want, "control did not fire");
+}
