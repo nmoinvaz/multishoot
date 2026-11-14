@@ -106,18 +106,20 @@ fn gcr_control_inexact_products_miss() {
     assert!(e > 1e-25, "control did not fire");
 }
 
-/// gcr in double-double on the matrix a (by rows) with b, preconditioned by the identity: (x, products, converged)
-fn dense(a: &[Vec<f64>], b: &[f64], nu: f64) -> (Vec<DD>, usize, bool) {
-    let apply = |u: &[DD]| -> Result<Vec<DD>, String> {
-        Ok(a.iter()
+/// gcr in double-double on the matrix a (by rows) with b, preconditioned by the matrix m (M^-1 by rows):
+/// (x, products, converged)
+fn dense_m(a: &[Vec<f64>], m: &[Vec<f64>], b: &[f64], nu: f64) -> (Vec<DD>, usize, bool) {
+    let mul = |a: &[Vec<f64>], u: &[DD]| -> Vec<DD> {
+        a.iter()
             .map(|row| {
                 row.iter()
                     .zip(u)
                     .fold(DD::ZERO, |t, (&aij, &uj)| t + DD::from_f64(aij) * uj)
             })
-            .collect())
+            .collect()
     };
-    let precond = |r: &[DD]| -> Result<Vec<DD>, String> { Ok(r.to_vec()) };
+    let apply = |u: &[DD]| -> Result<Vec<DD>, String> { Ok(mul(a, u)) };
+    let precond = |r: &[DD]| -> Result<Vec<DD>, String> { Ok(mul(m, r)) };
     let b: Vec<DD> = b.iter().map(|&v| DD::from_f64(v)).collect();
     let opts = GcrOpts {
         nu,
@@ -125,6 +127,14 @@ fn dense(a: &[Vec<f64>], b: &[f64], nu: f64) -> (Vec<DD>, usize, bool) {
     };
     let (x, info) = gcr::<Double>(apply, precond, &b, &opts).unwrap();
     (x, info.products, info.converged)
+}
+
+/// [`dense_m`] preconditioned by the identity
+fn dense(a: &[Vec<f64>], b: &[f64], nu: f64) -> (Vec<DD>, usize, bool) {
+    let id: Vec<Vec<f64>> = (0..b.len())
+        .map(|i| (0..b.len()).map(|j| (i == j) as u8 as f64).collect())
+        .collect();
+    dense_m(a, &id, b, nu)
 }
 
 /// the cyclic shift of size n, A e_j = e_(j+1) and A e_(n-1) = sign e_0, by rows
@@ -185,6 +195,31 @@ fn gcr_converges_on_an_exact_residual() {
     let (_, p, ok) = dense(&[vec![1.0, 0.0], vec![0.0, 0.0]], &[0.0, 1.0], 0.9);
     println!("control, singular A, b = e_1: {p} products, converged {ok}");
     assert!(!ok, "control did not fire");
+}
+
+/// Pass, written before the first run: with d = 2^-110, A = [[1, 0, 0], [0, 0, -d], [0, d, 0]], M^-1 = [[1, 0, 0],
+/// [-d, 1, 0], [0, 0, 1]] and b = (1, d, 0), the first iteration leaves r = (0, d, 0), far below the rounding floor,
+/// with x = (1, 0, 0) off by 1 along the weak direction, and the second takes a zero step. gcr goes on and returns
+/// the solution (1, 0, -1) exactly, converged, after three products. The control: with nu infinite (every iteration
+/// counts) the zero step ends the loop, converged, with x = (1, 0, 0).
+#[test]
+fn gcr_does_not_stop_on_a_zero_step_below_the_floor() {
+    let d = 2f64.powi(-110);
+    let a = vec![vec![1.0, 0.0, 0.0], vec![0.0, 0.0, -d], vec![0.0, d, 0.0]];
+    let m = vec![vec![1.0, 0.0, 0.0], vec![-d, 1.0, 0.0], vec![0.0, 0.0, 1.0]];
+    let want = [DD::ONE, DD::ZERO, -DD::ONE];
+    let (x, p, ok) = dense_m(&a, &m, &[1.0, d, 0.0], 0.9);
+    println!(
+        "weak block below the floor: x = ({}, {}, {}), {p} products, converged {ok}",
+        x[0].hi, x[1].hi, x[2].hi
+    );
+    assert!(x == want && p == 3 && ok);
+    let (x, p, ok) = dense_m(&a, &m, &[1.0, d, 0.0], f64::INFINITY);
+    println!(
+        "control, every iteration counts: x = ({}, {}, {}), {p} products, converged {ok}",
+        x[0].hi, x[1].hi, x[2].hi
+    );
+    assert!(x != want, "control did not fire");
 }
 
 const B: usize = 2;
