@@ -23,7 +23,7 @@ use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use crate::mode::Rate;
 use crate::newton::{NewtonOpts, NewtonReport, Step};
-use crate::solve::Problem;
+use crate::solve::{Jvp, Problem};
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -272,6 +272,12 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> Problem<P> for Shoot
     }
     fn jacobian(&self, z: &[&[f64]], par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
         Shooting::jacobian::<P>(self, z, par)
+    }
+}
+
+impl<E: Equations<B>, const B: usize, P: Precision<Native>> Jvp<P> for Shooting<E, B> {
+    fn jvp(&self, z: &[&[f64]], v: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
+        Ok(Shooting::jvp::<P>(self, z, v, par)?.0)
     }
 }
 
