@@ -11,13 +11,13 @@
 //! the last term would be delta times the first.
 use super::newton::exact;
 use super::{Jvp, ResidualJet};
-use crate::prec::parts;
+use crate::prec::{max_abs, parts};
 use multidouble::dd::DD;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 
 /// The Taylor coefficients z_0..z_N of a branch, and for each order k >= 1 the relative residual |J z_k + F_k| /
-/// |F_k| of its solve after refinement (max norms)
+/// |F_k| of its solve after refinement (max norms, NaN where either holds a NaN, and NaN without refinement)
 #[derive(Clone, Debug)]
 pub struct Branch<P: Precision<Native>> {
     pub z: Vec<Vec<P::Scalar>>,
@@ -29,11 +29,6 @@ fn to_parts<P: Precision<Native>>(v: &[P::Scalar]) -> Vec<Vec<f64>> {
     (0..P::PARTS)
         .map(|q| v.iter().map(|&x| P::part(x, q)).collect())
         .collect()
-}
-
-/// max |x| over the scalars (hi parts)
-fn amax<P: Precision<Native>>(v: &[P::Scalar]) -> f64 {
-    v.iter().map(|&x| P::to_dd(x).hi.abs()).fold(0.0, f64::max)
 }
 
 /// The branch's coefficients z_1..z_order at the solution z0 (P::PARTS part arrays), the module's documentation,
@@ -68,9 +63,9 @@ pub fn series<P: Precision<Native>, Pr: ResidualJet<P> + Jvp<P> + ?Sized>(
             P::lu_solve(&lu, &mut r);
             x.iter_mut().zip(&r).for_each(|(xi, &ri)| *xi = *xi + ri);
         }
-        let nb = amax::<P>(&b);
+        let nb = max_abs::<P>(&b);
         br.residual.push(if refine > 0 {
-            amax::<P>(&resid(&x)?) / nb.max(f64::MIN_POSITIVE)
+            max_abs::<P>(&resid(&x)?) / if nb.is_nan() { nb } else { nb.max(f64::MIN_POSITIVE) }
         } else {
             f64::NAN
         });
@@ -102,11 +97,16 @@ impl<P: Precision<Native>> Branch<P> {
     }
 
     /// Cochelin's step (delta |z_1| / |z_N|)^(1 / (N - 1)) (max norms): where the series' last term is delta times its
-    /// first. Infinite when z_N is zero (a polynomial branch); needs N >= 2.
+    /// first. Infinite when z_N is zero (a polynomial or constant branch), NaN when a coefficient holds a NaN; needs
+    /// N >= 2.
     pub fn radius(&self, delta: f64) -> f64 {
         let n = self.order();
         assert!(n >= 2, "radius: the series needs order 2 or more, not {n}");
-        (delta * amax::<P>(&self.z[1]) / amax::<P>(&self.z[n])).powf(1.0 / (n - 1) as f64)
+        let last = max_abs::<P>(&self.z[n]);
+        if last == 0.0 {
+            return f64::INFINITY;
+        }
+        (delta * max_abs::<P>(&self.z[1]) / last).powf(1.0 / (n - 1) as f64)
     }
 }
 
@@ -115,22 +115,37 @@ mod tests {
     use super::*;
     use crate::Double;
 
-    /// For z_k = r^-k the radius is delta^(1 / (N - 1)) r, and z(a) is the geometric sum. The control: a series one
-    /// order shorter has another radius.
+    /// For z_k = r^-k the radius is delta^(1 / (N - 1)) r, and z(a) is the geometric sum. The controls: a series one
+    /// order shorter has another radius, and its sum at a misses by its last term.
     #[test]
     fn radius_and_eval_of_a_geometric_series() {
         let r = 0.25f64;
         let z: Vec<Vec<DD>> = (0..=6).map(|k| vec![DD::from_f64(r.powi(-k))]).collect();
         let br = Branch::<Double> { z, residual: vec![] };
         let want = 1e-8f64.powf(1.0 / 5.0) * r;
-        assert!((br.radius(1e-8) / want - 1.0).abs() < 1e-14, "{}", br.radius(1e-8));
+        let radius_ok = |b: &Branch<Double>| (b.radius(1e-8) / want - 1.0).abs() < 1e-14;
         let a = 0.1;
         let sum: f64 = (0..=6).map(|k| (a / r).powi(k)).sum();
-        assert!((br.eval(a)[0].hi / sum - 1.0).abs() < 1e-15);
+        let eval_ok = |b: &Branch<Double>| (b.eval(a)[0].hi / sum - 1.0).abs() < 1e-15;
+        assert!(radius_ok(&br) && eval_ok(&br), "{}", br.radius(1e-8));
         let short = Branch::<Double> {
             z: br.z[..6].to_vec(),
             residual: vec![],
         };
-        assert!((short.radius(1e-8) / want - 1.0).abs() > 1e-3, "control did not fire");
+        assert!(!radius_ok(&short), "radius control did not fire");
+        assert!(!eval_ok(&short), "eval control did not fire");
+    }
+
+    /// The series of a constant branch, z_1 = z_2 = 0, has an infinite radius, and one with a NaN in z_1 a NaN
+    /// radius. The control: a last coefficient of 1e-300 gives a finite radius.
+    #[test]
+    fn radius_of_a_constant_branch() {
+        let br = |z1: f64, z2: f64| Branch::<Double> {
+            z: vec![vec![DD::ONE], vec![DD::from_f64(z1)], vec![DD::from_f64(z2)]],
+            residual: vec![],
+        };
+        assert_eq!(br(0.0, 0.0).radius(1e-8), f64::INFINITY);
+        assert!(br(f64::NAN, 1.0).radius(1e-8).is_nan());
+        assert!(br(0.0, 1e-300).radius(1e-8).is_finite(), "control did not fire");
     }
 }
