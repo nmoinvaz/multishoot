@@ -183,25 +183,49 @@ impl Winding {
     }
 }
 
-/// a cache of g's evaluations, keyed by lambda's bits, so that the polygon's corners are evaluated once
+/// a cache of g's evaluations, keyed by lambda's bits, so that the polygon's corners are evaluated once; `f`
+/// evaluates a batch of points
 struct Cache<F> {
     f: F,
     seen: std::collections::HashMap<(u64, u64), (f64, f64)>,
     max: usize,
 }
 
-impl<F: FnMut(C64) -> Result<(f64, f64), String>> Cache<F> {
+impl<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>> Cache<F> {
     fn get(&mut self, x: C64) -> Result<(f64, f64), String> {
-        let key = (x.0.to_bits(), x.1.to_bits());
-        if let Some(&v) = self.seen.get(&key) {
-            return Ok(v);
+        self.fill(&[x])?;
+        Ok(self.seen[&(x.0.to_bits(), x.1.to_bits())])
+    }
+
+    /// Evaluates the points of xs not seen yet, each once, as one batch, with the outcome of evaluating them one by
+    /// one in order: the first error among them, or the budget's error at the first point past `max`.
+    fn fill(&mut self, xs: &[C64]) -> Result<(), String> {
+        let mut new: Vec<C64> = Vec::new();
+        let mut keys = std::collections::HashSet::new();
+        for &x in xs {
+            let key = (x.0.to_bits(), x.1.to_bits());
+            if !self.seen.contains_key(&key) && keys.insert(key) {
+                new.push(x);
+            }
         }
-        if self.seen.len() >= self.max {
+        if new.is_empty() {
+            return Ok(());
+        }
+        let take = new.len().min(self.max.saturating_sub(self.seen.len()));
+        let vals = (self.f)(&new[..take]);
+        if vals.len() > take || (vals.len() < take && !vals.last().is_some_and(|v| v.is_err())) {
+            return Err(format!(
+                "winding: {} values for {take} points, without an error",
+                vals.len()
+            ));
+        }
+        for (x, v) in new.iter().zip(vals) {
+            self.seen.insert((x.0.to_bits(), x.1.to_bits()), v?);
+        }
+        if take < new.len() {
             return Err(format!("winding: more than {} evaluations", self.max));
         }
-        let v = (self.f)(x)?;
-        self.seen.insert(key, v);
-        Ok(v)
+        Ok(())
     }
 }
 
@@ -233,17 +257,33 @@ fn scales(edges: &[Edge], e: usize, opts: &WindOpts) -> Vec<f64> {
         .collect()
 }
 
+/// the midpoint of interval j of edge e: (t, lambda)
+fn midpoint(edge: &Edge, j: usize) -> (f64, C64) {
+    let tm = (edge.t[j] + edge.t[j + 1]) / 2.0;
+    (tm, edge.at(tm))
+}
+
 /// insert the midpoint of interval j of edge e
-fn bisect<F: FnMut(C64) -> Result<(f64, f64), String>>(
+fn bisect<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
     edge: &mut Edge,
     j: usize,
     cache: &mut Cache<F>,
 ) -> Result<(), String> {
-    let tm = (edge.t[j] + edge.t[j + 1]) / 2.0;
-    let v = cache.get(edge.at(tm))?;
+    let (tm, x) = midpoint(edge, j);
+    let v = cache.get(x)?;
     edge.t.insert(j + 1, tm);
     edge.val.insert(j + 1, v);
     Ok(())
+}
+
+/// the midpoints of edge e's intervals js, in the order of js, evaluated as one batch
+fn bisect_points<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
+    edge: &Edge,
+    js: impl Iterator<Item = usize>,
+    cache: &mut Cache<F>,
+) -> Result<(), String> {
+    let xs: Vec<C64> = js.map(|j| midpoint(edge, j).1).collect();
+    cache.fill(&xs)
 }
 
 /// whether the wrapped halves h1, h2 of an interval fail to add up to its wrapped step: their sum differs from it by
@@ -255,6 +295,32 @@ fn mismatched(whole: f64, h1: f64, h2: f64) -> bool {
 /// The winding number of g along the closed polygon through `vertices` (in order; the last joins the first), from
 /// `f(lambda)` = (ln|g(lambda)|, arg g(lambda)), sampled as the module's documentation describes.
 pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
+    mut f: F,
+    vertices: &[C64],
+    opts: &WindOpts,
+) -> Result<Winding, String> {
+    // one point after another, stopping at the first error
+    let one_by_one = |xs: &[C64]| {
+        let mut out = Vec::with_capacity(xs.len());
+        for &x in xs {
+            let v = f(x);
+            let stop = v.is_err();
+            out.push(v);
+            if stop {
+                break;
+            }
+        }
+        out
+    };
+    winding_batch(one_by_one, vertices, opts)
+}
+
+/// `winding` with g evaluated in batches: `f(points)` gives (ln|g|, arg g) at each point, in order, or stops after an
+/// error. The batches are the points that do not depend on one another: the initial grids of all edges, and each
+/// round's midpoints of one edge, so that an f which evaluates a batch in parallel (`Shooting::mode_logdets`) uses the
+/// threads. The samples, the result and the evaluations are `winding`'s for the same values, and so is an error: the
+/// first an evaluation in `winding`'s order would meet.
+pub fn winding_batch<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
     f: F,
     vertices: &[C64],
     opts: &WindOpts,
@@ -279,9 +345,12 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
             resolved: true,
             mismatches: 0,
         };
-        // the initial grid, refused before it is allocated when it alone exceeds the evaluations allowed
+        // the initial grid, refused before it is allocated when it alone exceeds the evaluations allowed; the grids of
+        // the edges before it are evaluated first, as one by one they would be
         let nf = (e.len() / opts.h0).ceil().max(1.0);
         if !nf.is_finite() || nf + 1.0 > opts.max_evals as f64 {
+            let xs: Vec<C64> = edges.iter().flat_map(|e: &Edge| e.t.iter().map(|&t| e.at(t))).collect();
+            cache.fill(&xs)?;
             return Err(format!(
                 "winding: an edge of length {} at h0 {} needs more than max_evals {} samples",
                 e.len(),
@@ -293,8 +362,13 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
         e.t = (0..=n)
             .map(|j| if j == n { 1.0 } else { j as f64 / n as f64 })
             .collect();
-        e.val = e.t.iter().map(|&t| cache.get(e.at(t))).collect::<Result<_, _>>()?;
         edges.push(e);
+    }
+    // every edge's grid as one batch
+    let xs: Vec<C64> = edges.iter().flat_map(|e| e.t.iter().map(|&t| e.at(t))).collect();
+    cache.fill(&xs)?;
+    for e in edges.iter_mut() {
+        e.val = e.t.iter().map(|&t| cache.get(e.at(t))).collect::<Result<_, _>>()?;
     }
     loop {
         let mut changed = false;
@@ -319,6 +393,7 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
                     break;
                 }
                 changed = true;
+                bisect_points(&edges[e], split.iter().rev().copied(), &mut cache)?;
                 for &j in split.iter().rev() {
                     bisect(&mut edges[e], j, &mut cache)?;
                 }
@@ -337,6 +412,7 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
                     }
                 }
             }
+            bisect_points(&edges[e], check.iter().rev().copied(), &mut cache)?;
             for &j in check.iter().rev() {
                 let whole = steps[j];
                 bisect(&mut edges[e], j, &mut cache)?;

@@ -2,7 +2,7 @@
 //! at known places, including the two that a count on the arg steps alone misses: a close pair of zeros between two
 //! samples, and a row of zeros along an edge that turns the arg by whole turns between samples. Each rule of the
 //! sampling has a control that switches it off and must miscount.
-use multishoot::winding::{winding, WindOpts, C64};
+use multishoot::winding::{winding, winding_batch, WindOpts, Winding, C64};
 
 /// (ln|g|, arg g) of g = prod (lambda - z_i) exp(c lambda + d lambda^2)
 fn planted(zeros: &[C64], c: C64, d: C64) -> impl Fn(C64) -> Result<(f64, f64), String> + '_ {
@@ -281,4 +281,75 @@ fn muller_started_at_a_zero() {
     let r = multishoot::winding::muller(g, (0.0, 0.0), 1.0, 1e-14, 50);
     println!("muller from the zero: {r:?}");
     assert_eq!(r, Ok((0.0, 0.0)));
+}
+
+/// the bits of a winding's samples (every edge's t and values), turns, evaluations, resolution and mismatches
+fn winding_bits(w: &Winding) -> (Vec<u64>, u64, usize, bool, Vec<usize>) {
+    let samples = w
+        .edges
+        .iter()
+        .flat_map(|e| {
+            e.t.iter()
+                .map(|t| t.to_bits())
+                .chain(e.val.iter().flat_map(|v| [v.0.to_bits(), v.1.to_bits()]))
+        })
+        .collect();
+    let mm = w.edges.iter().map(|e| e.mismatches).collect();
+    (samples, w.turns.to_bits(), w.evals, w.resolved, mm)
+}
+
+/// Pass, written before the first run: `winding_batch`, its f evaluating each batch at once, gives `winding`'s samples,
+/// turns, evaluations, resolution and mismatches bit for bit on the planted zeros of `counts_planted_zeros_in_boxes`
+/// in the box (0, 4) x (-1, 1) and with the close pair of `close_pair_between_samples`; and the same error where the
+/// budget runs out (max_evals 40) and where f fails on the half plane re lambda > 3.1 (its message names the point).
+/// The batches hold more than one point. The control: g with one zero moved by 1e-9 changes the samples.
+#[test]
+fn batched_sampling_is_the_one_by_one() {
+    let (c, d) = ((3.0, 0.7), (0.2, 0.1));
+    let zeros = [(1.0, 0.3), (2.5, -0.4), (3.2, 0.6), (5.0, 0.0)];
+    let g = planted(&zeros, c, d);
+    let pair = [(0.5, 0.5), (0.5 + 1e-3, 0.5)];
+    let gp = planted(&pair, (0.0, 0.0), (0.0, 0.0));
+    let poly = rect(0.0, 4.0, -1.0, 1.0);
+    let opts = WindOpts::default();
+    let largest = std::cell::Cell::new(0);
+    let batched = |f: &dyn Fn(C64) -> Result<(f64, f64), String>, poly: &[C64], opts: &WindOpts| {
+        winding_batch(
+            |xs: &[C64]| {
+                largest.set(largest.get().max(xs.len()));
+                xs.iter().map(|&x| f(x)).collect()
+            },
+            poly,
+            opts,
+        )
+    };
+    for (f, poly) in [
+        (&g as &dyn Fn(C64) -> _, &poly[..]),
+        (&gp, &rect(0.0, 1.0, 0.0, 1.0)[..]),
+    ] {
+        let one = winding(f, poly, &opts).unwrap();
+        let all = batched(f, poly, &opts).unwrap();
+        assert!(winding_bits(&all) == winding_bits(&one), "{poly:?}");
+    }
+    let small = WindOpts { max_evals: 40, ..opts };
+    let e1 = winding(&g, &poly, &small).unwrap_err();
+    assert_eq!(batched(&g, &poly, &small).unwrap_err(), e1);
+    let failing = |x: C64| {
+        if x.0 > 3.1 {
+            Err(format!("no value at {x:?}"))
+        } else {
+            g(x)
+        }
+    };
+    let e2 = winding(failing, &poly, &opts).unwrap_err();
+    assert_eq!(batched(&failing, &poly, &opts).unwrap_err(), e2);
+    println!("errors: {e1}; {e2}; largest batch {}", largest.get());
+    assert!(largest.get() > 1, "no batch held more than one point");
+    let moved = [(1.0, 0.3), (2.5, -0.4), (3.2 + 1e-9, 0.6), (5.0, 0.0)];
+    let gm = planted(&moved, c, d);
+    let one = winding(&g, &poly, &opts).unwrap();
+    assert!(
+        winding_bits(&batched(&gm, &poly, &opts).unwrap()) != winding_bits(&one),
+        "control did not fire"
+    );
 }
