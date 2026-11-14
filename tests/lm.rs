@@ -254,11 +254,13 @@ impl Problem<Quad> for Ident {
 }
 
 /// Pass, written before the first run: from z = 1e-30 in quad-double with tol 1e-60, LM hands over to Newton at once
-/// and reports convergence with max |F| <= 1e-60 at its final state. The control: Newton with its own default
-/// tolerance (1e-28), as the handover used to run it, reports convergence at max |F| = 1e-30, which the check rejects.
+/// and reports convergence with max |F| <= 1e-60 at its final state, the last max |F| of its report. The controls:
+/// Newton with its own default tolerance (1e-28), as the handover used to run it, reports convergence at max |F| =
+/// 1e-30, and LM's report without Newton's final entry ends at 1e-30; the check rejects both.
 #[test]
 fn lm_hands_over_with_its_own_tolerance() {
-    let check = |converged: bool, f: f64| converged && f <= 1e-60;
+    // (converged, the report's last max |F|, max |F| at the final state)
+    let check = |converged: bool, reported: f64, f: f64| converged && f <= 1e-60 && reported == f;
     let start = || vec![vec![1e-30], vec![0.0], vec![0.0], vec![0.0]];
     let fmax = |z: &[Vec<f64>]| max_abs::<Quad>(&Ident.residual(&parts(z), false).unwrap());
     let mut z = start();
@@ -267,13 +269,17 @@ fn lm_hands_over_with_its_own_tolerance() {
         ..Default::default()
     };
     let rep = levenberg_marquardt::<Quad, _>(&Ident, &mut z, &opts).unwrap();
+    let last = *rep.fnorm.last().unwrap();
     println!(
-        "LM to 1e-60: converged {}, max |F| {:.3e}, handed over {}",
+        "LM to 1e-60: converged {}, max |F| {:.3e}, reported {last:.3e}, handed over {}",
         rep.converged,
         fmax(&z),
         rep.newton.is_some()
     );
-    assert!(check(rep.converged, fmax(&z)) && rep.newton.is_some());
+    assert!(check(rep.converged, last, fmax(&z)) && rep.newton.is_some());
+    let before = rep.fnorm[rep.fnorm.len() - 2];
+    println!("control, report without Newton's final entry: reported {before:.3e}");
+    assert!(!check(rep.converged, before, fmax(&z)), "control did not fire");
     let mut z = start();
     let nr = newton::<Quad, _>(&Ident, &mut z, &NewtonOpts::default()).unwrap();
     println!(
@@ -281,7 +287,52 @@ fn lm_hands_over_with_its_own_tolerance() {
         nr.converged,
         fmax(&z)
     );
-    assert!(!check(nr.converged, fmax(&z)), "control did not fire");
+    assert!(
+        !check(nr.converged, *nr.fnorm.last().unwrap(), fmax(&z)),
+        "control did not fire"
+    );
+}
+
+/// F(z) = z - 1, its residual an error past `limit` (an integration that fails away from the start)
+struct Fragile {
+    limit: f64,
+}
+
+impl Problem<Double> for Fragile {
+    fn len(&self) -> usize {
+        1
+    }
+    fn residual(&self, z: &[&[f64]], _par: bool) -> Result<Vec<DD>, String> {
+        let a = DD::new(z[0][0], z[1][0]);
+        if a.hi > self.limit {
+            return Err("integration failed".into());
+        }
+        Ok(vec![a - DD::ONE])
+    }
+    fn jacobian(&self, _z: &[&[f64]], _par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
+        let ld = ld_for(1);
+        let mut c = vec![vec![0.0; ld]; 2];
+        c[0][0] = 1.0;
+        Ok((c, ld))
+    }
+}
+
+/// Pass, written before the first run: with the residual an error past z = 0.5, LM from 0 returns that error at its
+/// first trial state, near 1. The control: with the residual valid up to 2, LM converges, and the check, which wants
+/// the error, rejects that result.
+#[test]
+fn lm_returns_the_problems_error() {
+    let check = |r: &Result<bool, String>| matches!(r, Err(e) if e == "integration failed");
+    let run = |limit: f64| {
+        let mut z = vec![vec![0.0], vec![0.0]];
+        levenberg_marquardt::<Double, _>(&Fragile { limit }, &mut z, &LmOpts::default()).map(|r| r.converged)
+    };
+    let r = run(0.5);
+    println!("residual an error past 0.5: {r:?}");
+    assert!(check(&r));
+    let r = run(2.0);
+    println!("control, residual valid up to 2: {r:?}");
+    assert!(!check(&r), "control did not fire");
 }
 
 const B: usize = 2;
