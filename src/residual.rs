@@ -101,6 +101,40 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         }
     }
 
+    /// An a-posteriori estimate of the Taylor paths' truncation error: the residual at z with every segment's path
+    /// recomputed with each step halved (twice the steps at the same order), and per residual block (0..=K, the
+    /// endpoints' blocks first and last) the largest change of its rows, |F(z) - F_halved(z)| in hi parts. With an
+    /// error of order h^(kt+1) per step the halved path's error is about 2^-kt of the original's, so the change
+    /// estimates the original path's error; the endpoint maps take no steps and show zero. `segs` is restored.
+    pub fn taylor_check<P: Precision<Native>>(&mut self, z: &[&[f64]], par: bool) -> Result<Vec<f64>, String> {
+        let f0 = self.residual::<P>(z, par)?;
+        let fine: Vec<Vec<f64>> = self
+            .segs
+            .iter()
+            .map(|s| {
+                let mut out = Vec::with_capacity(2 * s.len());
+                for w in s.windows(2) {
+                    out.push(w[0]);
+                    out.push(0.5 * (w[0] + w[1]));
+                }
+                out.extend(s.last());
+                out
+            })
+            .collect();
+        let saved = std::mem::replace(&mut self.segs, fine);
+        let f1 = self.residual::<P>(z, par);
+        self.segs = saved;
+        let f1 = f1?;
+        let rows = E::NF * Self::M;
+        Ok((0..=self.k())
+            .map(|b| {
+                (self.row_block(b)..self.row_block(b) + rows)
+                    .map(|i| P::to_dd(f0[i] - f1[i]).hi.abs())
+                    .fold(0.0, crate::prec::nan_max)
+            })
+            .collect())
+    }
+
     /// The residual at z (PARTS part arrays of length `len()`), one scalar per row.
     pub fn residual<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
         self.check_z::<P>(z)?;
