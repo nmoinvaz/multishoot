@@ -13,11 +13,11 @@
 //! residual at a trial state is returned, as Newton's method does.
 //!
 //! G is formed once per step in P, on the lanes of P (8 rows of a column per lane vector, the dot accumulator of the
-//! lane type), only its upper triangle and with its columns in parallel; each mu tried costs one factorization of
-//! G + mu D.
+//! lane type), only its upper triangle and with its columns in parallel, as are its lane vectors, its copy into the
+//! full matrix and J^T F; each mu tried costs one factorization of G + mu D.
 use super::newton::{newton, norm2, NewtonOpts, NewtonReport};
 use super::Problem;
-use crate::prec::{max_abs, parts};
+use crate::prec::{columns_mut, max_abs, parts};
 use multidouble::dd::DD;
 use multidouble::dual::Lane;
 use multidouble::field::Fl;
@@ -94,7 +94,12 @@ pub fn gram<P: Precision<Native>>(
     par: bool,
 ) -> (Vec<Vec<f64>>, Vec<P::Scalar>) {
     let nv = ld / 8;
-    let cols: Vec<Vec<P::V>> = (0..n).map(|j| lanes::<P>(n, nv, |q, i| c[q][j * ld + i])).collect();
+    let col = |j: usize| lanes::<P>(n, nv, |q, i| c[q][j * ld + i]);
+    let cols: Vec<Vec<P::V>> = if par {
+        (0..n).into_par_iter().map(col).collect()
+    } else {
+        (0..n).map(col).collect()
+    };
     let bv = lanes::<P>(n, nv, |q, i| P::part(b[i], q));
     let dot = |x: &[P::V], y: &[P::V]| -> P::Scalar {
         let mut a = <P::V as Lane>::acc0();
@@ -112,15 +117,26 @@ pub fn gram<P: Precision<Native>>(
         (0..n).map(upper).collect()
     };
     let mut g = vec![vec![0.0; ld * n]; P::PARTS];
-    for (j, col) in tri.iter().enumerate() {
-        for (i, &v) in col.iter().enumerate() {
-            for (q, gq) in g.iter_mut().enumerate() {
-                gq[j * ld + i] = P::part(v, q);
-                gq[i * ld + j] = P::part(v, q);
+    // column j of G: rows i <= j from the triangle's column j, rows i > j from its row j; each column on its own
+    let fill = |(j, gj): (usize, Vec<&mut [f64]>)| {
+        for (q, gq) in gj.into_iter().enumerate() {
+            for (i, x) in gq[..n].iter_mut().enumerate() {
+                *x = P::part(if i <= j { tri[j][i] } else { tri[i][j] }, q);
             }
         }
+    };
+    let gc = columns_mut(&mut g, ld, n);
+    if par {
+        gc.into_par_iter().enumerate().for_each(fill);
+    } else {
+        gc.into_iter().enumerate().for_each(fill);
     }
-    let jb = cols.iter().map(|col| dot(col, &bv)).collect();
+    let jbv = |col: &Vec<P::V>| dot(col, &bv);
+    let jb = if par {
+        cols.par_iter().map(jbv).collect()
+    } else {
+        cols.iter().map(jbv).collect()
+    };
     (g, jb)
 }
 

@@ -2,7 +2,7 @@
 //! and Newton's method cannot step, its handover to Newton, and the planted multiple-shooting problem.
 mod common;
 
-use common::{perturbed, Planted};
+use common::{in_pool, perturbed, wave, Fnv, Planted};
 use multishoot::lm::{gram, levenberg_marquardt, LmOpts};
 use multishoot::multidouble::linalg::ld_for;
 use multishoot::newton::{newton, NewtonOpts};
@@ -89,6 +89,61 @@ fn gram_matches_scalar_dot_products() {
         println!("control, {fault:?}: G {eg:.3e}, g {ej:.3e}");
         assert_eq!(gram_checks((eg, ej)), want, "control {fault:?} did not fire");
     }
+}
+
+/// The hashes of `gram` in double-double and quad-double, with `par`, of a J of 37 x 37 with entries from `wave` (lo
+/// parts nonzero, padding rows 1e300) and b from it too; `bump` changes the last bit of J's entry (5, 30)
+fn gram_hashes(par: bool, bump: bool) -> [u64; 2] {
+    let n = 37;
+    let ld = ld_for(n);
+    let mut c = vec![vec![1e300; ld * n]; 4];
+    for j in 0..n {
+        for i in 0..n {
+            let k = j * ld + i;
+            let w = wave(k);
+            c[0][k] = if bump && (i, j) == (5, 30) {
+                f64::from_bits(w.to_bits() + 1)
+            } else {
+                w
+            };
+            c[1][k] = 1e-17 * wave(k + 7919);
+            c[2][k] = 1e-34 * wave(k + 104729);
+            c[3][k] = 0.0;
+        }
+    }
+    let mut h = [Fnv::new(), Fnv::new()];
+    let b2: Vec<DD> = (0..n).map(|i| DD::new(wave(i + 31), 1e-17 * wave(i + 37))).collect();
+    let (g, jb) = gram::<Double>(n, ld, &c[..2], &b2, par);
+    g.iter().flatten().for_each(|&x| h[0].f64(x));
+    jb.iter().for_each(|x| {
+        h[0].f64(x.hi);
+        h[0].f64(x.lo);
+    });
+    let b4: Vec<_> = b2.iter().map(|&x| <Quad as Precision<Native>>::from_dd(x)).collect();
+    let (g, jb) = gram::<Quad>(n, ld, &c, &b4, par);
+    g.iter().flatten().for_each(|&x| h[1].f64(x));
+    jb.iter()
+        .for_each(|&x| (0..4).for_each(|q| h[1].f64(<Quad as Precision<Native>>::part(x, q))));
+    [h[0].0, h[1].0]
+}
+
+/// the reference hashes of `gram_hashes`, recorded with G's copy and g formed in sequence on aarch64 (NEON)
+const GRAM_REFERENCE: [u64; 2] = [0xf8150bd81333c530, 0x7fa2e58e37ab4eba];
+
+/// The Gram matrix does not depend on the threads: pass, `gram_hashes` with `par` in pools of 1, 3 and 6 threads, and
+/// without it, equals the reference of the serial copy. The control: the last bit of one entry of J changes both.
+#[test]
+fn gram_does_not_depend_on_threads() {
+    for (t, par) in [(1, true), (3, true), (6, true), (3, false)] {
+        let h = in_pool(t, || gram_hashes(par, false));
+        println!("gram hashes, {t} threads, par {par}: [{:#018x}, {:#018x}]", h[0], h[1]);
+        assert_eq!(h, GRAM_REFERENCE, "{t} threads, par {par}");
+    }
+    let c = in_pool(3, || gram_hashes(true, true));
+    assert!(
+        c[0] != GRAM_REFERENCE[0] && c[1] != GRAM_REFERENCE[1],
+        "control did not fire"
+    );
 }
 
 /// F(z) = (z0^2 + z1^2 - 1, z0 - z1): the circle and the diagonal, roots +-(1, 1) / sqrt(2). Its Jacobian
