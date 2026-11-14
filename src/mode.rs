@@ -267,16 +267,28 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// `mode_logdet` at each of the rates, such as the samples of a contour of the argument principle, in their
-    /// order, each rate's error in its place. With `par` the rates run on rayon tasks, each evaluated serially when
-    /// there are at least as many rates as threads (so at most one mode matrix per thread is held) and in parallel
-    /// otherwise. The determinant's LU parallelizes poorly, so whole rates side by side use the threads better. Each
-    /// value is that rate's `mode_logdet`, whose bits do not depend on `par`.
+    /// order, each rate's error in its place. With `par` and T threads, the rates run on rayon tasks: the first
+    /// multiple of T of them each evaluated serially, whole rates side by side (the determinant's LU parallelizes
+    /// poorly, so they use the threads better), and the fewer than T left over each in parallel, side by side, so
+    /// that no thread waits on a lone serial rate. At most T mode matrices are held at a time. Each value is that
+    /// rate's `mode_logdet`, whose bits do not depend on `par`.
     pub fn mode_logdets(&self, z: &[&[f64]], rates: &[Rate], par: bool) -> Vec<Result<(f64, f64), String>> {
         if !par {
             return rates.iter().map(|&r| self.mode_logdet(z, r, false)).collect();
         }
-        let inner = rates.len() < rayon::current_num_threads();
-        rates.par_iter().map(|&r| self.mode_logdet(z, r, inner)).collect()
+        let t = rayon::current_num_threads();
+        let full = rates.len() / t * t;
+        let mut out: Vec<_> = rates[..full]
+            .par_iter()
+            .map(|&r| self.mode_logdet(z, r, false))
+            .collect();
+        out.extend(
+            rates[full..]
+                .par_iter()
+                .map(|&r| self.mode_logdet(z, r, true))
+                .collect::<Vec<_>>(),
+        );
+        out
     }
 
     /// The winding number of det M(lambda) along the closed polygon through `vertices`, by
