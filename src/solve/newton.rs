@@ -13,6 +13,8 @@ use crate::prec::{max_abs, parts};
 use multidouble::dd::DD;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Instant;
 
 /// A Newton step at z: dz = -J^-1 F (PARTS part arrays), the residual F, the LU of J, and the seconds of the
@@ -128,12 +130,54 @@ pub trait Factored<P: Precision<Native>> {
     fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar>;
 }
 
+impl<P: Precision<Native>, F: Factored<P>> Factored<P> for Rc<F> {
+    fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar> {
+        (**self).solve_neg(r)
+    }
+}
+
 /// The exact Jacobian's LU in P
-struct Exact<P: Precision<Native>>(P::Lu);
+pub struct Exact<P: Precision<Native>>(pub P::Lu);
 
 impl<P: Precision<Native>> Factored<P> for Exact<P> {
     fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar> {
         solve_neg::<P>(&self.0, r)
+    }
+}
+
+/// The exact Jacobian of `pr` at z, factored
+pub fn exact<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
+    pr: &Pr,
+    z: &[&[f64]],
+    par: bool,
+) -> Result<Exact<P>, String> {
+    let (c, ld) = pr.jacobian(z, par)?;
+    Ok(Exact(P::lu_factor(pr.len(), ld, c, par)?))
+}
+
+/// A factorization reused for `every` steps: the returned closure calls `factor` at the first step and again every
+/// `every` steps, and hands out the last factors in between. The loops of [`newton_with`] call it once per step, so
+/// with it they run Shamanskii's method, the chord method for `every` at least the step count (Kelley, Iterative
+/// Methods for Linear and Nonlinear Equations, SIAM 1995, section 5.4). Each reuse saves a Jacobian and a
+/// factorization, and the steps within a run converge linearly, contracting by about the change of J since its
+/// factorization. `every` is at least 1.
+pub fn reuse<F>(
+    every: usize,
+    factor: impl Fn(&[&[f64]]) -> Result<F, String>,
+) -> impl Fn(&[&[f64]]) -> Result<Rc<F>, String> {
+    assert!(every >= 1, "reuse: every must be at least 1");
+    let last: RefCell<Option<(usize, Rc<F>)>> = RefCell::new(None);
+    move |z| {
+        let mut last = last.borrow_mut();
+        if let Some((uses, f)) = last.as_mut() {
+            if *uses < every {
+                *uses += 1;
+                return Ok(f.clone());
+            }
+        }
+        let f = Rc::new(factor(z)?);
+        *last = Some((1, f.clone()));
+        Ok(f)
     }
 }
 
@@ -171,11 +215,23 @@ pub fn newton<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
     z: &mut Vec<Vec<f64>>,
     opts: &NewtonOpts,
 ) -> Result<NewtonReport, String> {
-    let exact = |z: &[&[f64]]| -> Result<Exact<P>, String> {
-        let (c, ld) = pr.jacobian(z, opts.par)?;
-        Ok(Exact(P::lu_factor(pr.len(), ld, c, opts.par)?))
-    };
-    newton_with::<P, Pr, _>(pr, z, opts, exact)
+    newton_with::<P, Pr, _>(pr, z, opts, |z| exact::<P, Pr>(pr, z, opts.par))
+}
+
+/// Newton's method with the exact Jacobian formed and factored only every `every` steps and reused in between
+/// ([`reuse`]): Shamanskii's method, the chord method for `every` >= `opts.max_iter`, and `newton` bit for bit for
+/// `every` = 1. Damped by `opts.damping` as `newton`, the correction rule's simplified corrections solved with the
+/// step's factors.
+pub fn newton_chord<P: Precision<Native>, Pr: Problem<P> + ?Sized>(
+    pr: &Pr,
+    z: &mut Vec<Vec<f64>>,
+    opts: &NewtonOpts,
+    every: usize,
+) -> Result<NewtonReport, String> {
+    if every == 0 {
+        return Err("newton_chord: every must be at least 1".into());
+    }
+    newton_with::<P, Pr, _>(pr, z, opts, reuse(every, |z| exact::<P, Pr>(pr, z, opts.par)))
 }
 
 /// The damped loop of `newton` with the Newton matrix that `factor` forms and factors at each step's z: the exact
