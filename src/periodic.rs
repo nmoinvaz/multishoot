@@ -198,8 +198,9 @@ pub fn sin_cos_grid(parity: Parity, m: usize, j: usize, k: i64) -> (DD, DD) {
 /// both grids are formed once ([`sin_cos_grid`]), so one `Resampler` serves every field of its parity.
 pub struct Resampler {
     m2: usize,
-    /// per harmonic used: k, the analysis factor, the synthesis weights of the cosine and sine parts
-    ks: Vec<(i64, f64, f64, f64)>,
+    /// per harmonic used: k, the analysis factor 1 / N (2 / N on a half grid) in double-double, the synthesis
+    /// weights of the cosine and sine parts
+    ks: Vec<(i64, DD, f64, f64)>,
     /// analysis: (sin, cos) of k theta_j on the old grid, by harmonic then point
     old: Vec<Vec<(DD, DD)>>,
     /// synthesis: (sin, cos) of k theta_j on the new grid, by harmonic then point
@@ -214,25 +215,27 @@ impl Resampler {
             Parity::Odd => k % 2 == 1,
             Parity::Even => k % 2 == 0,
         };
-        // the half grids hold M of the period's 2M points; the other half doubles the allowed harmonics' sums
+        // the half grids hold M of the period's 2M points; the other half doubles the allowed harmonics' sums. The
+        // factor is formed in double-double: 1 / N is not an f64 unless N is a power of two.
         let fac = match parity {
-            Parity::Full => 1.0 / n as f64,
-            _ => 2.0 / n as f64,
-        };
+            Parity::Full => DD::ONE,
+            _ => DD::from_f64(2.0),
+        } / DD::from_f64(n as f64);
         let kcut = n.min(n2) / 2;
-        let ks: Vec<(i64, f64, f64, f64)> = (0..=kcut)
+        let ks: Vec<(i64, DD, f64, f64)> = (0..=kcut)
             .filter(|&k| allowed(k))
             .map(|k| {
                 let (wc, ws) = if k == 0 {
                     (1.0, 0.0)
-                } else if k < kcut {
-                    (2.0, 2.0)
-                } else if n2 >= n {
-                    // the old grid's Nyquist, its symmetric interpolant c cos(N theta / 2)
+                } else if 2 * k == n {
+                    // the old grid's Nyquist (n <= n2 here), its symmetric interpolant c cos(N theta / 2)
                     (1.0, 0.0)
-                } else {
+                } else if 2 * k == n2 {
                     // the new grid's Nyquist: its sine is zero on the new points
                     (2.0, 0.0)
+                } else {
+                    // below both grids' Nyquist (an odd grid has none): both parts
+                    (2.0, 2.0)
                 };
                 (k, fac, wc, ws)
             })
@@ -260,7 +263,7 @@ impl Resampler {
                     a = a + fj * cs;
                     b = b + fj * sn;
                 }
-                (a.mul_f(fac), b.mul_f(fac))
+                (a * fac, b * fac)
             })
             .collect();
         (0..self.m2)
@@ -324,6 +327,25 @@ pub fn dmat<const B: usize>(parity: Parity) -> DMat<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A constant field (1, its lo part 1e-17) moved from 24 points to 48 keeps its value to 1e-30. The control: with
+    /// the analysis factor rounded to the f64 1 / 24, as before, it misses by more than 1e-17.
+    #[test]
+    fn resampler_factor_in_double_double() {
+        let f = vec![DD::new(1.0, 1e-17); 24];
+        let err = |r: &Resampler| {
+            r.apply(&f)
+                .iter()
+                .map(|&v| (v - DD::new(1.0, 1e-17)).hi.abs())
+                .fold(0.0, crate::prec::nan_max)
+        };
+        let mut r = Resampler::new(Parity::Full, 24, 48);
+        let e = err(&r);
+        assert!(e <= 1e-30, "{e:e}");
+        r.ks.iter_mut().for_each(|k| k.1 = DD::from_f64(1.0 / 24.0));
+        let c = err(&r);
+        assert!(c > 1e-17, "control did not fire: {c:e}");
+    }
     use crate::lane::DV;
     use crate::prec::nan_max;
     use multidouble::field::Fl;
