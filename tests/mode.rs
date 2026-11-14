@@ -2,7 +2,7 @@
 //! linear problem `Wave`, whose determinant is known in closed form for every complex lambda.
 mod common;
 
-use common::{as_pointwise, perturbed, wave, Fnv, Planted};
+use common::{as_pointwise, in_pool, perturbed, wave, Fnv, Planted};
 use multishoot::lane::{DMat, Lane};
 use multishoot::periodic::{dmat, Parity};
 use multishoot::prec::parts;
@@ -563,6 +563,54 @@ fn mode_bytes_control_one_ulp_differs() {
     let mut r = hash_rate();
     r.im.hi = f64::from_bits(r.im.hi.to_bits() + 1);
     assert_ne!(mode_hash(r), mode_hash(hash_rate()), "control did not fire");
+}
+
+/// n rates on the circle of radius 0.4 about 0.3 + 0.2 i
+fn contour(n: usize) -> Vec<Rate> {
+    (0..n)
+        .map(|i| {
+            let (s, c) = (std::f64::consts::TAU * i as f64 / n as f64).sin_cos();
+            Rate::new(DD::from_f64(0.3 + 0.4 * c), DD::from_f64(0.2 + 0.4 * s))
+        })
+        .collect()
+}
+
+/// the bits of (ln|det|, arg det) at each rate
+fn logdet_bits(v: &[(f64, f64)]) -> Vec<(u64, u64)> {
+    v.iter().map(|&(a, b)| (a.to_bits(), b.to_bits())).collect()
+}
+
+/// The contour's determinants side by side. Pass: `mode_logdets` with `par`, in pools of 1 and 6 threads, with 8
+/// rates (each rate serial) and 2 (each rate in parallel on 6 threads), and without `par` in a pool of 3, gives the
+/// bits of a loop of `mode_logdet` with and without `par`, rate by rate in order. The control: the loop with two
+/// rates swapped differs.
+#[test]
+fn mode_logdets_are_each_rates_logdet() {
+    let (sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let z = perturbed(&zs, 1e-2);
+    let zp = parts(&z);
+    for n in [8, 2] {
+        let rates = contour(n);
+        let one = |r: &[Rate], par: bool| -> Vec<(f64, f64)> {
+            r.iter().map(|&r| sh.mode_logdet(&zp, r, par).unwrap()).collect()
+        };
+        let want = logdet_bits(&one(&rates, true));
+        assert_eq!(
+            logdet_bits(&one(&rates, false)),
+            want,
+            "{n} rates: mode_logdet depends on par"
+        );
+        for (t, par) in [(1, true), (6, true), (3, false)] {
+            let got: Vec<(f64, f64)> = in_pool(t, || sh.mode_logdets(&zp, &rates, par))
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect();
+            assert_eq!(logdet_bits(&got), want, "{n} rates, {t} threads, par {par}");
+        }
+        let mut swapped = rates.clone();
+        swapped.swap(0, 1);
+        assert_ne!(logdet_bits(&one(&swapped, true)), want, "control did not fire");
+    }
 }
 
 /// the bits of both words of every value of a double-double field

@@ -266,6 +266,19 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         self.mode_matrix(z, rate, par)?.logdet(par)
     }
 
+    /// `mode_logdet` at each of the rates, such as the samples of a contour of the argument principle, in their
+    /// order, each rate's error in its place. With `par` the rates run on rayon tasks, each evaluated serially when
+    /// there are at least as many rates as threads (so at most one mode matrix per thread is held) and in parallel
+    /// otherwise. The determinant's LU parallelizes poorly, so whole rates side by side use the threads better. Each
+    /// value is that rate's `mode_logdet`, whose bits do not depend on `par`.
+    pub fn mode_logdets(&self, z: &[&[f64]], rates: &[Rate], par: bool) -> Vec<Result<(f64, f64), String>> {
+        if !par {
+            return rates.iter().map(|&r| self.mode_logdet(z, r, false)).collect();
+        }
+        let inner = rates.len() < rayon::current_num_threads();
+        rates.par_iter().map(|&r| self.mode_logdet(z, r, inner)).collect()
+    }
+
     /// The winding number of det M(lambda) along the closed polygon through `vertices`, by
     /// [`crate::winding::winding`]: the modes whose rates lie inside, less any poles of det M there
     pub fn mode_winding(
