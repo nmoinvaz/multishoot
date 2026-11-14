@@ -108,20 +108,30 @@ fn run<P: Precision<Native>>(diag_err: f64, tol: f64) -> (bool, usize, f64, f64)
 fn newton_converges_on_a_problem_that_is_not_shooting() {
     let (ok, steps, f, err) = run::<Double>(1.0, 1e-28);
     println!("double-double: converged {ok} in {steps} steps, max |F| {f:.3e}, max |z - z*| {err:.3e}");
-    assert!(ok && f <= 1e-28 && err <= 1e-27);
+    assert_eq!(checks((ok, f, err), 1e-28, 1e-27), [true; 3]);
     let (ok, steps, f, err) = run::<Quad>(1.0, 1e-60);
     println!("quad-double: converged {ok} in {steps} steps, max |F| {f:.3e}, max |z - z*| {err:.3e}");
-    assert!(ok && f <= 1e-60 && err <= 1e-59);
+    assert_eq!(checks((ok, f, err), 1e-60, 1e-59), [true; 3]);
+}
+
+/// the three checks of a run: converged, max |F| <= ftol and max |z - z*| <= etol
+fn checks((ok, f, err): (bool, f64, f64), ftol: f64, etol: f64) -> [bool; 3] {
+    [ok, f <= ftol, err <= etol]
 }
 
 /// The control: with the Jacobian's diagonal 10% off, Newton contracts only linearly, by about 0.1 per step, and must
-/// fail to converge within the 8 steps, to 1e-28 in double-double and to 1e-60 in quad-double.
+/// fail every check of the run within the 8 steps, in double-double and in quad-double: it does not converge, and both
+/// max |F| and max |z - z*| stay above their bounds.
 #[test]
 fn newton_control_wrong_jacobian_does_not_converge() {
-    let (ok, steps, f, _) = run::<Double>(1.1, 1e-28);
-    println!("control, diagonal 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}");
-    assert!(!ok, "control did not fire");
-    let (ok, steps, f, _) = run::<Quad>(1.1, 1e-60);
-    println!("control, quad-double, diagonal 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}");
-    assert!(!ok, "quad-double control did not fire");
+    let (ok, steps, f, err) = run::<Double>(1.1, 1e-28);
+    println!("control, diagonal 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}, max |z - z*| {err:.3e}");
+    assert_eq!(checks((ok, f, err), 1e-28, 1e-27), [false; 3], "control did not fire");
+    let (ok, steps, f, err) = run::<Quad>(1.1, 1e-60);
+    println!("control, quad-double: converged {ok} in {steps} steps, max |F| {f:.3e}, max |z - z*| {err:.3e}");
+    assert_eq!(
+        checks((ok, f, err), 1e-60, 1e-59),
+        [false; 3],
+        "quad-double control did not fire"
+    );
 }
