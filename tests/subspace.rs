@@ -319,3 +319,33 @@ fn deflated_newton_never_moves_along_the_subspace() {
     println!("control, the start: moved along the span {along:.3e}, left off it {off:.3e}");
     assert_eq!(checks((along, off)), [true, false], "control did not fire");
 }
+
+/// Pass, written before the first run: on the planted matrix, whose smallest singular value is 2^-40, ||A||_1 from
+/// the factors equals the largest column sum of |A| to 1e-15, and the estimate of ||A^-1||_1 lies between a third of
+/// its exact value (the largest column sum of |A^-1|, from the solves of the unit vectors) and that value times
+/// 1 + 1e-12. The controls: estimates four times too large and four times too small fail the check.
+#[test]
+fn condition_estimate_of_the_planted_matrix() {
+    let (pr, zs) = lin();
+    let f = Factors::<Double>::new(&pr, &parts(&zs), false).unwrap();
+    let norm1 = (0..N)
+        .map(|j| (0..N).map(|i| pr.a[i][j].hi.abs()).sum::<f64>())
+        .fold(0.0, nan_max);
+    let exact = (0..N)
+        .map(|k| {
+            let mut e = vec![DD::ZERO; N];
+            e[k] = DD::ONE;
+            f.solve(&e).iter().map(|v| v.hi.abs()).sum::<f64>()
+        })
+        .fold(0.0, nan_max);
+    let est = f.inv_norm1();
+    let ok = |e: f64| e >= exact / 3.0 && e <= exact * (1.0 + 1e-12);
+    println!(
+        "||A||_1 {:.6e} (factors {:.6e}); ||A^-1||_1 {exact:.6e}, estimate {est:.6e}; cond1 {:.3e}",
+        norm1,
+        f.norm1,
+        f.cond1()
+    );
+    assert!((f.norm1 / norm1 - 1.0).abs() <= 1e-15 && ok(est));
+    assert!(!ok(4.0 * est) && !ok(est / 4.0), "control did not fire");
+}

@@ -17,11 +17,12 @@ use multidouble::dd::DD;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 
-/// The factors of J and of J^T at a point
+/// The factors of J and of J^T at a point, and ||J||_1 (the largest column sum of |J|, hi parts)
 pub struct Factors<P: Precision<Native>> {
     pub n: usize,
     pub lu: P::Lu,
     pub lut: P::Lu,
+    pub norm1: f64,
 }
 
 impl<P: Precision<Native>> Factors<P> {
@@ -29,6 +30,9 @@ impl<P: Precision<Native>> Factors<P> {
     pub fn new<Pr: Problem<P> + ?Sized>(pr: &Pr, z: &[&[f64]], par: bool) -> Result<Self, String> {
         let n = pr.len();
         let (c, ld) = pr.jacobian(z, par)?;
+        let norm1 = (0..n)
+            .map(|j| c[0][j * ld..j * ld + n].iter().map(|v| v.abs()).sum::<f64>())
+            .fold(0.0, nan_max);
         let mut ct = vec![vec![0.0; ld * n]; P::PARTS];
         for (cq, tq) in c.iter().zip(ct.iter_mut()) {
             for j in 0..n {
@@ -41,7 +45,60 @@ impl<P: Precision<Native>> Factors<P> {
             n,
             lu: P::lu_factor(n, ld, c, par)?,
             lut: P::lu_factor(n, ld, ct, par)?,
+            norm1,
         })
+    }
+
+    /// An estimate of ||J^-1||_1 from the factors, a lower bound that is usually exact: Hager's method (SIAM J. Sci.
+    /// Stat. Comput. 5 (1984) 311) as Higham gives it (ACM Trans. Math. Softw. 14 (1988) 381). From x = (1, ..., 1) / n
+    /// it alternates y = J^-1 x and z = J^-T sign(y), moving x to the unit vector of the largest |z_j|, until the
+    /// estimate |y|_1 stops growing or that |z_j| does not exceed z . x (at most five times); then it takes the larger
+    /// of that and 2 |J^-1 b|_1 / (3 n) for b_i = (-1)^i (1 + i / (n - 1)), which catches what a poor start misses.
+    /// The solves are in P.
+    pub fn inv_norm1(&self) -> f64 {
+        let n = self.n;
+        let l1 = |v: &[P::Scalar]| v.iter().map(|&x| P::to_dd(x).hi.abs()).sum::<f64>();
+        let scalar = |v: f64| P::from_dd(DD::from_f64(v));
+        let mut x: Vec<P::Scalar> = vec![scalar(1.0 / n as f64); n];
+        let mut est = 0.0f64;
+        let mut last = usize::MAX;
+        for it in 0..5 {
+            let y = self.solve(&x);
+            let e = l1(&y);
+            if it > 0 && e <= est {
+                break;
+            }
+            est = e;
+            let sgn: Vec<P::Scalar> = y
+                .iter()
+                .map(|&v| scalar(if P::to_dd(v).hi < 0.0 { -1.0 } else { 1.0 }))
+                .collect();
+            let z = self.solve_t(&sgn);
+            let za: Vec<f64> = z.iter().map(|&v| P::to_dd(v).hi.abs()).collect();
+            let j = (0..n).max_by(|&a, &b| za[a].total_cmp(&za[b])).unwrap_or(0);
+            let zx: f64 = z.iter().zip(&x).map(|(&a, &b)| P::to_dd(a * b).hi).sum();
+            if (it > 0 && za[j] <= zx) || j == last {
+                break;
+            }
+            last = j;
+            x = vec![P::ZERO; n];
+            x[j] = P::ONE;
+        }
+        if n > 1 {
+            let b: Vec<P::Scalar> = (0..n)
+                .map(|i| {
+                    let v = 1.0 + i as f64 / (n - 1) as f64;
+                    scalar(if i % 2 == 0 { v } else { -v })
+                })
+                .collect();
+            est = est.max(2.0 * l1(&self.solve(&b)) / (3 * n) as f64);
+        }
+        est
+    }
+
+    /// An estimate of the 1-norm condition number ||J||_1 ||J^-1||_1, a lower bound (see [`Factors::inv_norm1`])
+    pub fn cond1(&self) -> f64 {
+        self.norm1 * self.inv_norm1()
     }
 
     /// J^-1 b
