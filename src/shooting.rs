@@ -29,6 +29,7 @@ use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
+use rayon::prelude::*;
 
 /// A linear condition on the unknowns, `sum_i w_i z_(idx_i) - rhs = 0`: a phase condition, a normalization, a pinned
 /// unknown
@@ -236,7 +237,9 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// Plans every segment's steps (`plan_path`) from its source node's state in z (double-double, hi and lo parts)
-    /// toward its target node, with the globals of z, at the order `plan.kt`, which becomes the problem's.
+    /// toward its target node, with the globals of z, at the order `plan.kt`, which becomes the problem's. The
+    /// segments are independent and are planned on rayon tasks; the points do not depend on it, and a panic is the
+    /// first segment's to panic, as in a serial loop.
     pub fn plan_segments(&mut self, zh: &[f64], zl: &[f64], plan: &Plan) {
         assert!(
             zh.len() == self.len() && zl.len() == self.len(),
@@ -247,6 +250,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let og = self.off_global();
         let g: Vec<DV> = (0..E::NG).map(|i| DV::splat(DD::new(zh[og + i], zl[og + i]))).collect();
         let segs = (1..self.k())
+            .into_par_iter()
             .map(|b| {
                 let src = self.seg_source(b);
                 let dst = if self.seg_inward(b) { b - 1 } else { b };
