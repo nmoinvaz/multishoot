@@ -246,6 +246,12 @@ fn bisect<F: FnMut(C64) -> Result<(f64, f64), String>>(
     Ok(())
 }
 
+/// whether the wrapped halves h1, h2 of an interval fail to add up to its wrapped step: their sum differs from it by
+/// a whole turn exactly when the interval hid one, so the difference is compared unwrapped
+fn mismatched(whole: f64, h1: f64, h2: f64) -> bool {
+    (h1 + h2 - whole).abs() > 1e-9
+}
+
 /// The winding number of g along the closed polygon through `vertices` (in order; the last joins the first), from
 /// `f(lambda)` = (ln|g(lambda)|, arg g(lambda)), sampled as the module's documentation describes.
 pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
@@ -273,7 +279,17 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
             resolved: true,
             mismatches: 0,
         };
-        let n = (e.len() / opts.h0).ceil().max(1.0) as usize;
+        // the initial grid, refused before it is allocated when it alone exceeds the evaluations allowed
+        let nf = (e.len() / opts.h0).ceil().max(1.0);
+        if !nf.is_finite() || nf + 1.0 > opts.max_evals as f64 {
+            return Err(format!(
+                "winding: an edge of length {} at h0 {} needs more than max_evals {} samples",
+                e.len(),
+                opts.h0,
+                opts.max_evals
+            ));
+        }
+        let n = nf as usize;
         e.t = (0..=n)
             .map(|j| if j == n { 1.0 } else { j as f64 / n as f64 })
             .collect();
@@ -307,24 +323,27 @@ pub fn winding<F: FnMut(C64) -> Result<(f64, f64), String>>(
                     bisect(&mut edges[e], j, &mut cache)?;
                 }
             }
-            // verification: the halves of every step above tol / 2 must add up to it
+            // verification: the halves of every step above tol / 2 must add up to it; one that would need an interval
+            // below hmin leaves the edge unresolved, and every inserted sample sends the sweep round again, since it
+            // changes the rates the alias rule reads
             let steps = edges[e].steps();
-            let check: Vec<usize> = (0..steps.len())
-                .filter(|&j| {
-                    steps[j].abs() > opts.tol / 2.0 && l * (edges[e].t[j + 1] - edges[e].t[j]) / 2.0 >= opts.hmin
-                })
-                .collect();
+            let mut check = Vec::new();
+            for (j, st) in steps.iter().enumerate() {
+                if st.abs() > opts.tol / 2.0 {
+                    if l * (edges[e].t[j + 1] - edges[e].t[j]) / 2.0 < opts.hmin {
+                        edges[e].resolved = false;
+                    } else {
+                        check.push(j);
+                    }
+                }
+            }
             for &j in check.iter().rev() {
                 let whole = steps[j];
                 bisect(&mut edges[e], j, &mut cache)?;
+                changed = true;
                 let v = &edges[e].val;
-                let (h1, h2) = (wrap(v[j + 1].1 - v[j].1), wrap(v[j + 2].1 - v[j + 1].1));
-                if wrap(h1 + h2 - whole).abs() > 1e-9 {
+                if mismatched(whole, wrap(v[j + 1].1 - v[j].1), wrap(v[j + 2].1 - v[j + 1].1)) {
                     edges[e].mismatches += 1;
-                    changed = true;
-                }
-                if h1.abs() > opts.tol || h2.abs() > opts.tol {
-                    changed = true;
                 }
             }
         }
@@ -358,6 +377,10 @@ pub fn muller<F: FnMut(C64) -> Result<(f64, f64), String>>(
 ) -> Result<C64, String> {
     let mut xs = [csub(x0, (h, 0.0)), cadd(x0, (h, 0.0)), x0];
     let mut ls = [f(xs[0])?, f(xs[1])?, f(xs[2])?];
+    // a starting point that is a zero, before the values are normalized by one of them
+    if let Some(i) = (0..3).rev().find(|&i| ls[i].0 == f64::NEG_INFINITY) {
+        return Ok(xs[i]);
+    }
     for _ in 0..max_iter {
         // g_i / g_2
         let g = |i: usize| -> C64 {
@@ -399,4 +422,19 @@ pub fn muller<F: FnMut(C64) -> Result<(f64, f64), String>>(
         ls = [ls[1], ls[2], l3];
     }
     Err(format!("muller: no convergence in {max_iter} steps"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phases 0, -3 and 0.6 at an interval's start, midpoint and end: its wrapped step is 0.6, its halves -3 and
+    /// 3.6 - 2 pi, which sum to 0.6 - 2 pi, a hidden turn, and must count as a mismatch. The control: the consistent
+    /// halves of phases 0, 0.3 and 0.6 do not.
+    #[test]
+    fn a_hidden_turn_is_a_mismatch() {
+        let halves = |a0: f64, a1: f64, a2: f64| mismatched(wrap(a2 - a0), wrap(a1 - a0), wrap(a2 - a1));
+        assert!(halves(0.0, -3.0, 0.6));
+        assert!(!halves(0.0, 0.3, 0.6), "control did not fire");
+    }
 }

@@ -177,3 +177,108 @@ fn long_row_along_an_edge() {
         assert!(!right(r, 16), "control {name} did not fire: {r:?}");
     }
 }
+
+fn cm(a: C64, b: C64) -> C64 {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+
+/// Pass, written before the first run: an edge whose initial grid alone exceeds the evaluations allowed (h0 1e-12,
+/// max_evals 16) is refused with an error before the grid is allocated. The control: h0 0.5 with max_evals 1000
+/// counts.
+#[test]
+fn initial_grid_beyond_the_budget_is_refused() {
+    let g = planted(&[], (0.0, 0.0), (0.0, 0.0));
+    let poly = rect(0.0, 1.0, 0.0, 1.0);
+    let tiny = WindOpts {
+        h0: 1e-12,
+        max_evals: 16,
+        ..WindOpts::default()
+    };
+    let r = winding(&g, &poly, &tiny);
+    println!(
+        "h0 1e-12, max_evals 16: {:?}",
+        r.as_ref().map(|w| w.count()).map_err(|e| e.clone())
+    );
+    assert!(r.is_err());
+    let fine = WindOpts {
+        h0: 0.5,
+        max_evals: 1000,
+        ..WindOpts::default()
+    };
+    assert!(winding(&g, &poly, &fine).is_ok(), "control did not fire");
+}
+
+/// Pass, written before the first run: on the unit square with g = exp(0.6 i z), h0 1 and hmin 0.6, two steps exceed
+/// tol / 2 and their verification would need intervals of 0.5, below hmin: the count is not resolved. The control:
+/// with hmin 1e-4 it is.
+#[test]
+fn verification_below_hmin_is_unresolved() {
+    let g = planted(&[], (0.0, 0.6), (0.0, 0.0));
+    let poly = rect(0.0, 1.0, 0.0, 1.0);
+    let w = winding(
+        &g,
+        &poly,
+        &WindOpts {
+            h0: 1.0,
+            hmin: 0.6,
+            ..WindOpts::default()
+        },
+    )
+    .unwrap();
+    println!("hmin 0.6: resolved {}", w.resolved);
+    assert!(!w.resolved);
+    let w = winding(
+        &g,
+        &poly,
+        &WindOpts {
+            h0: 1.0,
+            hmin: 1e-4,
+            ..WindOpts::default()
+        },
+    )
+    .unwrap();
+    assert!(w.resolved, "control did not fire");
+}
+
+/// Pass: g = exp(q(z)), q(z) = 0.6 z - 320 z (z - 1)(z - 1 - i)(z - i)(z - 1 - i / 2), has no zeros, so on the unit
+/// square from h0 1 its count is 0 and its moment 0 to 1e-2, the accuracy it needs as Muller's start, resolved: the
+/// samples that verification inserts, where q reaches 100 + 0.3 i, are checked against the alias rule again (without
+/// that, the count came out resolved with a moment of 7.96). The first criterion, 1e-6, failed at 1.7e-4, the error of
+/// the moment's midpoint rule where ln g changes by up to pi / 2 per interval, not of the sampling.
+#[test]
+fn verification_samples_are_rechecked() {
+    let g = |z: C64| -> Result<(f64, f64), String> {
+        let mut p = cm(z, (z.0 - 1.0, z.1));
+        p = cm(p, (z.0 - 1.0, z.1 - 1.0));
+        p = cm(p, (z.0, z.1 - 1.0));
+        p = cm(p, (z.0 - 1.0, z.1 - 0.5));
+        Ok((0.6 * z.0 - 320.0 * p.0, 0.6 * z.1 - 320.0 * p.1))
+    };
+    let w = winding(
+        g,
+        &rect(0.0, 1.0, 0.0, 1.0),
+        &WindOpts {
+            h0: 1.0,
+            ..WindOpts::default()
+        },
+    )
+    .unwrap();
+    let m = w.moment();
+    println!(
+        "exp(q): count {}, moment {m:?}, resolved {}, {} evaluations",
+        w.count(),
+        w.resolved,
+        w.evals
+    );
+    assert!(w.count() == 0 && m.0.hypot(m.1) <= 1e-2 && w.resolved);
+}
+
+/// Pass, written before the first run: Muller's method for g(z) = z started at its zero returns that zero, where the
+/// normalization by g there would divide by zero.
+#[test]
+fn muller_started_at_a_zero() {
+    let g = |z: C64| -> Result<(f64, f64), String> { Ok((z.0.hypot(z.1).ln(), z.1.atan2(z.0))) };
+    let r = multishoot::winding::muller(g, (0.0, 0.0), 1.0, 1e-14, 50);
+    println!("muller from the zero: {r:?}");
+    assert_eq!(r, Ok((0.0, 0.0)));
+}
