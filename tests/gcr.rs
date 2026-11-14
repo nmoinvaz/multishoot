@@ -106,6 +106,87 @@ fn gcr_control_inexact_products_miss() {
     assert!(e > 1e-25, "control did not fire");
 }
 
+/// gcr in double-double on the matrix a (by rows) with b, preconditioned by the identity: (x, products, converged)
+fn dense(a: &[Vec<f64>], b: &[f64], nu: f64) -> (Vec<DD>, usize, bool) {
+    let apply = |u: &[DD]| -> Result<Vec<DD>, String> {
+        Ok(a.iter()
+            .map(|row| {
+                row.iter()
+                    .zip(u)
+                    .fold(DD::ZERO, |t, (&aij, &uj)| t + DD::from_f64(aij) * uj)
+            })
+            .collect())
+    };
+    let precond = |r: &[DD]| -> Result<Vec<DD>, String> { Ok(r.to_vec()) };
+    let b: Vec<DD> = b.iter().map(|&v| DD::from_f64(v)).collect();
+    let opts = GcrOpts {
+        nu,
+        ..Default::default()
+    };
+    let (x, info) = gcr::<Double>(apply, precond, &b, &opts).unwrap();
+    (x, info.products, info.converged)
+}
+
+/// the cyclic shift of size n, A e_j = e_(j+1) and A e_(n-1) = sign e_0, by rows
+fn shift(n: usize, sign: f64) -> Vec<Vec<f64>> {
+    (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| match (i, j) {
+                    (0, j) if j == n - 1 => sign,
+                    (i, j) if i == j + 1 => 1.0,
+                    _ => 0.0,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// gcr on the shift of size n with b = e_0, whose solution is sign e_(n-1): (x is that exactly, products, converged)
+fn on_shift(n: usize, sign: f64, nu: f64) -> (bool, usize, bool) {
+    let mut b = vec![0.0; n];
+    b[0] = 1.0;
+    let (x, p, ok) = dense(&shift(n, sign), &b, nu);
+    let exact = (0..n).all(|i| x[i] == DD::from_f64(if i == n - 1 { sign } else { 0.0 }));
+    (exact, p, ok)
+}
+
+/// Pass, written before the first run: on the rotation [[0, -1], [1, 0]] with b = e_0, where GMRES stagnates at its
+/// first step, and on the cyclic shift of size 6 with b = e_0, where it stagnates for five, gcr returns the solution
+/// sign e_(n-1) exactly, converged, after n products. The control: with nu infinite (GCR's residual directions only)
+/// the second direction's image vanishes on both, and gcr returns x = 0, not converged.
+#[test]
+fn gcr_does_not_break_down_where_gmres_stagnates() {
+    for (n, sign) in [(2, -1.0), (6, 1.0)] {
+        let (exact, p, ok) = on_shift(n, sign, 0.9);
+        println!("shift of size {n}: exact {exact}, {p} products, converged {ok}");
+        assert!(exact && p == n && ok);
+        let (exact, p, ok) = on_shift(n, sign, f64::INFINITY);
+        println!("control, residual directions only: exact {exact}, {p} products, converged {ok}");
+        assert!(!exact && !ok, "control did not fire");
+    }
+}
+
+/// Pass, written before the first run: with A = I and b = e_0, gcr returns x = e_0, converged, after one product, and
+/// with b = 0 it returns x = 0, converged, after none. The control: with the singular A = diag(1, 0) and b = e_1 the
+/// first direction's image vanishes while r is nonzero, and gcr reports no convergence.
+#[test]
+fn gcr_converges_on_an_exact_residual() {
+    let id = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+    let (x, p, ok) = dense(&id, &[1.0, 0.0], 0.9);
+    println!(
+        "A = I, b = e_0: x = ({}, {}), {p} products, converged {ok}",
+        x[0].hi, x[1].hi
+    );
+    assert!(x == [DD::ONE, DD::ZERO] && p == 1 && ok);
+    let (x, p, ok) = dense(&id, &[0.0, 0.0], 0.9);
+    println!("A = I, b = 0: {p} products, converged {ok}");
+    assert!(x == [DD::ZERO, DD::ZERO] && p == 0 && ok);
+    let (_, p, ok) = dense(&[vec![1.0, 0.0], vec![0.0, 0.0]], &[0.0, 1.0], 0.9);
+    println!("control, singular A, b = e_1: {p} products, converged {ok}");
+    assert!(!ok, "control did not fire");
+}
+
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
 
