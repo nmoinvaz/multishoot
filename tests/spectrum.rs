@@ -53,15 +53,16 @@ fn coef_err(got: &[(i64, DD, DD)], want: &[(i64, DD, DD)]) -> f64 {
         .zip(want)
         .map(|(g, w)| {
             assert_eq!(g.0, w.0);
-            (g.1 - w.1).hi.abs().max((g.2 - w.2).hi.abs())
+            nan_max((g.1 - w.1).hi.abs(), (g.2 - w.2).hi.abs())
         })
         .fold(0.0, nan_max)
 }
 
 /// Pass, written before the first run: on the full grid of 16 points and the odd and even half grids of 8, a field of
 /// amplitudes 10^-k with exact phases gives back its coefficients to 1e-30, and its tail over the top two harmonics
-/// is the planted ratio to 1e-12 relative. The control: the field of a planted set whose a_3 is changed by 1e-20
-/// misses the original coefficients by more than 1e-25.
+/// is the planted ratio to 1e-12 relative. The controls: the field of a planted set whose a_3 is changed by 1e-20
+/// misses the original coefficients by more than 1e-25, a result with one sine coefficient NaN fails the coefficient
+/// check, and a tail of twice the planted ratio fails the tail check.
 #[test]
 fn spectrum_recovers_planted_coefficients() {
     for (parity, m) in [(Parity::Full, 16), (Parity::Odd, 8), (Parity::Even, 8)] {
@@ -71,8 +72,14 @@ fn spectrum_recovers_planted_coefficients() {
         let amp: Vec<f64> = want.iter().map(|&(_, a, b)| a.hi.hypot(b.hi)).collect();
         let ratio = amp[amp.len() - 2..].iter().copied().fold(0.0, nan_max) / amp.iter().copied().fold(0.0, nan_max);
         let t = tail(parity, &f, 2);
+        let tail_ok = |t: f64| (t / ratio - 1.0).abs() <= 1e-12;
         println!("{parity:?} on {m}: coefficients {e:.3e}, tail {t:.6e} (planted {ratio:.6e})");
-        assert!(e <= 1e-30 && (t / ratio - 1.0).abs() <= 1e-12, "{parity:?}");
+        assert!(e <= 1e-30 && tail_ok(t), "{parity:?}");
+        assert!(!tail_ok(2.0 * t), "tail control did not fire");
+        let mut nan = spectrum(parity, &f);
+        nan[1].2 = DD::from_f64(f64::NAN);
+        let accurate = |e: f64| e <= 1e-30;
+        assert!(!accurate(coef_err(&nan, &want)), "NaN control did not fire");
     }
     let want = planted(Parity::Full, 16);
     let mut off = want.clone();
