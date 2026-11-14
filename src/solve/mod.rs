@@ -6,10 +6,12 @@
 //!   factors;
 //! * [`gcr`]: a preconditioned Krylov solver (GMRES in its GCR form) on exact Jacobian-vector products, and the Newton
 //!   method whose steps it refines from an approximate factorization;
-//! * [`lm`]: the Levenberg-Marquardt method, for starts where Newton's method stalls or its Jacobian is singular.
+//! * [`lm`]: the Levenberg-Marquardt method, for starts where Newton's method stalls or its Jacobian is singular;
+//! * [`anm`]: the asymptotic numerical method, the Taylor series of a solution branch in the problem's parameter.
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 
+pub mod anm;
 pub mod gcr;
 pub mod lm;
 pub mod newton;
@@ -34,4 +36,12 @@ pub trait Problem<P: Precision<Native>> {
 pub trait Jvp<P: Precision<Native>>: Problem<P> {
     /// J v at z, z and v as P::PARTS part arrays of length `len()`
     fn jvp(&self, z: &[&[f64]], v: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String>;
+}
+
+/// A problem whose equations depend on a parameter p, with the residual's Taylor series in it: the coefficients of
+/// F(sum_k z_k h^k, p0 + h) in h, exact to the precision P
+pub trait ResidualJet<P: Precision<Native>>: Problem<P> {
+    /// The coefficients of orders 0..nout - 1, one scalar per row, for the coefficient vectors zs (each P::PARTS part
+    /// arrays of length `len()`, z_k zero past them). Order k is linear in z_k: J z_k plus what the lower orders give.
+    fn residual_jet(&self, zs: &[Vec<&[f64]>], nout: usize, par: bool) -> Result<Vec<Vec<P::Scalar>>, String>;
 }
