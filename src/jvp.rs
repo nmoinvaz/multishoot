@@ -10,7 +10,6 @@ use crate::shooting::Shooting;
 use multidouble::field::Fl;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
-use rayon::prelude::*;
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// the field of v at offset off as a seed (`load`), without the point of unknown c under `Control::DropColumn(c)`
@@ -75,13 +74,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 .collect();
             self.block_state::<P::U>(b, &inp, &g, &prep)
         };
-        let nb = self.k() + 1;
-        // the blocks are few (K + 1) and unequal; with par, each runs on its own task
-        let states: Vec<State<P::U, B>> = if par {
-            (0..nb).into_par_iter().map(one).collect()
-        } else {
-            (0..nb).map(one).collect()
-        };
+        // the blocks are few (K + 1) and unequal; with par, each runs on its own task, the longest first
+        let states: Vec<State<P::U, B>> = self.map_blocks(par, one);
         let mut jv = vec![P::ZERO; self.rows()];
         let mut f = vec![P::ZERO; self.rows()];
         for (b, s) in states.iter().enumerate() {

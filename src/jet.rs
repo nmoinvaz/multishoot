@@ -11,7 +11,6 @@ use crate::shooting::Shooting;
 use multidouble::field::Fl;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
-use rayon::prelude::*;
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// The residual's coefficients of orders 0..nout - 1 on the jet state with coefficient vectors zs (each PARTS
@@ -62,12 +61,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             let inp: Vec<Fl<P::J<N>, B>> = self.block_inputs(b).iter().map(|&o| fld_jet(o)).collect();
             self.block_state::<P::J<N>>(b, &inp, &g, &prep)
         };
-        let nb = self.k() + 1;
-        let states: Vec<State<P::J<N>, B>> = if par {
-            (0..nb).into_par_iter().map(one).collect()
-        } else {
-            (0..nb).map(one).collect()
-        };
+        let states: Vec<State<P::J<N>, B>> = self.map_blocks(par, one);
         let mut out = vec![vec![P::ZERO; self.rows()]; nout];
         for (b, s) in states.iter().enumerate() {
             let t = self.block_target(b);

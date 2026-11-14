@@ -1,7 +1,8 @@
 //! The residual F(z) in any of multidouble's precisions (`Precision`): every block's state from its inputs, minus its target node, then the
 //! extra rows. F is zero exactly when the pieces join into one solution that meets the extra conditions.
 //!
-//! The blocks are independent, so with `par` each runs on its own rayon task; the result does not depend on it.
+//! The blocks are independent, so with `par` each runs on its own rayon task, the endpoint maps and the longest
+//! segments started first; the result does not depend on it.
 use crate::equations::{Equations, State};
 use crate::shooting::Shooting;
 use multidouble::field::Fl;
@@ -62,6 +63,36 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         (0..E::NG).map(|i| self.scalar::<P>(z, self.off_global() + i)).collect()
     }
 
+    /// The blocks in the order their tasks are started: the endpoint maps first (their cost is the equations'), then
+    /// the segments by decreasing number of steps, ties by index, so that the longest paths do not start last
+    pub(crate) fn block_order(&self) -> Vec<usize> {
+        let k = self.k();
+        let mut order: Vec<usize> = (0..=k).collect();
+        order.sort_by_key(|&b| {
+            (
+                b != 0 && b != k,
+                std::cmp::Reverse(if b == 0 || b == k { 0 } else { self.segs[b - 1].len() }),
+            )
+        });
+        order
+    }
+
+    /// f on every block, in block order; with `par` each block on its own rayon task, started in `block_order`, so the
+    /// values do not depend on `par`. A panic of several blocks is the first's in `block_order`, not in block order.
+    pub(crate) fn map_blocks<T: Send>(&self, par: bool, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+        let nb = self.k() + 1;
+        if !par {
+            return (0..nb).map(f).collect();
+        }
+        let order = self.block_order();
+        let vals: Vec<T> = order.par_iter().with_max_len(1).map(|&b| f(b)).collect();
+        let mut out: Vec<Option<T>> = (0..nb).map(|_| None).collect();
+        for (&b, v) in order.iter().zip(vals) {
+            out[b] = Some(v);
+        }
+        out.into_iter().map(|v| v.expect("every block once")).collect()
+    }
+
     /// The states of every block at z, in value lanes, or the error of z's check or of its preparation
     /// (`Equations::try_prepare`)
     pub fn try_block_states<P: Precision<Native>>(
@@ -76,12 +107,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             let inp: Vec<Fl<P::V, B>> = self.block_inputs(b).iter().map(|&o| self.load::<P>(z, o)).collect();
             self.block_state::<P::V>(b, &inp, &g, &prep)
         };
-        let nb = self.k() + 1;
-        Ok(if par {
-            (0..nb).into_par_iter().map(one).collect()
-        } else {
-            (0..nb).map(one).collect()
-        })
+        Ok(self.map_blocks(par, one))
     }
 
     /// The states of every block at z, in value lanes (`try_block_states`). Panics when the preparation fails.

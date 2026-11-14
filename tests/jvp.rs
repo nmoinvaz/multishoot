@@ -2,7 +2,7 @@
 //! times the vector, and its bytes, which must not depend on multidouble's SIMD backend.
 mod common;
 
-use common::{perturbed, wave, Fnv, Planted};
+use common::{in_pool, perturbed, wave, Fnv, Planted};
 use multishoot::prec::{nan_max, parts};
 use multishoot::{Double, Native, Octo, Precision, Quad, Shooting};
 
@@ -233,4 +233,57 @@ mod controls {
     fn dropped_global_column_fails() {
         dropped(|sh| sh.off_global(), "the global");
     }
+}
+
+/// The hashes of the residual in quad-double and of the residual's series (orders 0 to 4, double-double) on the jet
+/// state z + h v, at the state and direction of `state_and_direction`, the blocks on rayon tasks with `par`
+fn residual_hashes(sh: &Shooting<Planted<B>, B>, z8: &[Vec<f64>], v8: &[Vec<f64>], par: bool) -> [u64; 2] {
+    let (z, v) = (parts(z8), parts(v8));
+    let jet = sh
+        .residual_jet::<Double, 8>(&[z[..2].to_vec(), v[..2].to_vec()], par, 5)
+        .unwrap();
+    let mut h = Fnv::new();
+    jet.iter().flatten().for_each(|x| {
+        h.f64(x.hi);
+        h.f64(x.lo);
+    });
+    [fnv::<Quad>(&sh.residual::<Quad>(&z[..4], par).unwrap()), h.0]
+}
+
+/// the reference hashes of `residual_hashes`, recorded with the blocks started in index order on aarch64 (NEON)
+const RESIDUAL_REFERENCE: [u64; 2] = [0x71f836f4c615fda7, 0xf37988258540b157];
+
+/// The block tasks' values do not depend on the threads or on the order the tasks start in: pass, the hashes of J v
+/// (`hashes`), of the residual and of its series (`residual_hashes`), with `par` in pools of 1, 3 and 6 threads and
+/// without it, equal the references recorded with the blocks in index order. The control: v with one ulp changed
+/// changes J v's and the series' hashes.
+#[test]
+fn block_tasks_do_not_depend_on_threads() {
+    let (sh, zs) = planted();
+    let (z, v) = state_and_direction(&sh, &zs);
+    for (t, par) in [(1, true), (3, true), (6, true), (3, false)] {
+        assert_eq!(
+            in_pool(t, || hashes(&sh, &z, &v, par)),
+            REFERENCE,
+            "J v, {t} threads, par {par}"
+        );
+        let h = in_pool(t, || residual_hashes(&sh, &z, &v, par));
+        println!(
+            "residual hashes, {t} threads, par {par}: [{:#018x}, {:#018x}]",
+            h[0], h[1]
+        );
+        assert_eq!(h, RESIDUAL_REFERENCE, "residual and series, {t} threads, par {par}");
+    }
+    let mut vu = v.clone();
+    vu[0][40] = f64::from_bits(vu[0][40].to_bits() + 1);
+    assert_ne!(
+        in_pool(3, || hashes(&sh, &z, &vu, true)),
+        REFERENCE,
+        "control did not fire"
+    );
+    assert_ne!(
+        in_pool(3, || residual_hashes(&sh, &z, &vu, true))[1],
+        RESIDUAL_REFERENCE[1],
+        "series control did not fire"
+    );
 }
