@@ -291,3 +291,35 @@ fn newton_refuses_options_out_of_range() {
         );
     }
 }
+
+/// |z - z*| in the 2-norm, the difference formed in double-double
+fn err2(z: &[Vec<f64>], zs: &[Vec<f64>]) -> f64 {
+    (0..z[0].len())
+        .map(|i| (DD::new(z[0][i], z[1][i]) - DD::new(zs[0][i], zs[1][i])).hi)
+        .map(|d| d * d)
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// Pass, written before the first run: Newton from z* perturbed by 1e-3, stopped after two steps (its error then 2e-8,
+/// far above the rounding), reports an error estimate within 1% of |z - z*|. The control: the iterate moved by
+/// another 1e-6 misses the estimate by far more than 1%.
+#[test]
+fn newton_error_estimate_matches_the_error() {
+    let (sh, zs) = planted();
+    let mut z = perturbed(&zs, 1e-3);
+    let opts = NewtonOpts {
+        tol: 0.0,
+        max_iter: 2,
+        ..Default::default()
+    };
+    let rep = sh.newton::<Double>(&mut z, &opts).unwrap();
+    let est = rep.error_estimate().unwrap();
+    let err = err2(&z, &zs);
+    println!("after {} steps: estimate {est:.4e}, error {err:.4e}", rep.dz_bar.len());
+    assert!((est / err - 1.0).abs() <= 0.01);
+    let moved = perturbed(&z, 1e-6);
+    let em = err2(&moved, &zs);
+    println!("control, the iterate moved by 1e-6: error {em:.4e}");
+    assert!((est / em - 1.0).abs() > 0.01, "control did not fire");
+}
