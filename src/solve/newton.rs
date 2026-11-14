@@ -69,21 +69,32 @@ impl Default for NewtonOpts {
 }
 
 /// What [`newton`] did: max |F| before each step and at the end, each step's lambda, the correction rule's
-/// contraction theta = |dz_bar| / |dz| for each step taken (empty with the residual rule), and whether it converged.
+/// contraction theta = |dz_bar| / |dz| and simplified correction |dz_bar| = |J(z_k)^-1 F(z_(k+1))| (2-norms) for each
+/// step taken (both empty with the residual rule), and whether it converged.
 #[derive(Clone, Debug)]
 pub struct NewtonReport {
     pub fnorm: Vec<f64>,
     pub scale: Vec<f64>,
     pub theta: Vec<f64>,
+    pub dz_bar: Vec<f64>,
     pub converged: bool,
 }
 
 impl NewtonReport {
+    /// The error of the final iterate, |z - z*| in the 2-norm, estimated by the last step's simplified correction: the
+    /// next Newton correction from the final iterate, formed with the old factors, which equals -(z - z*) to first
+    /// order (Deuflhard, Newton Methods for Nonlinear Problems, Springer 2004). None with the residual rule
+    /// or without a step.
+    pub fn error_estimate(&self) -> Option<f64> {
+        self.dz_bar.last().copied()
+    }
+
     fn new() -> Self {
         NewtonReport {
             fnorm: Vec::new(),
             scale: Vec::new(),
             theta: Vec::new(),
+            dz_bar: Vec::new(),
             converged: false,
         }
     }
@@ -332,6 +343,7 @@ fn newton_correction<P: Precision<Native>, Pr: Problem<P> + ?Sized, F: Factored<
             }
             rep.scale.push(lam);
             rep.theta.push(theta);
+            rep.dz_bar.push(nbar);
             *z = zt;
             f = ft;
             if opts.tol_dz > 0.0 && lam == 1.0 && nbar <= opts.tol_dz {
