@@ -4,9 +4,9 @@
 mod common;
 
 use common::{perturbed, Cylinder};
-use multishoot::anm::series;
+use multishoot::anm::{series, Branch};
 use multishoot::multidouble::linalg::ld_for;
-use multishoot::prec::parts;
+use multishoot::prec::{nan_max, parts};
 use multishoot::{Double, Jvp, Native, NewtonOpts, Precision, Problem, Quad, ResidualJet, DD};
 
 const N: usize = 10;
@@ -15,12 +15,14 @@ const LAM0: f64 = 0.7;
 
 /// F_i(z, lam) = z_i^3 - w_i(lam)^3 + kappa (z_(i+1) - w_(i+1)(lam)), the index cyclic, with the quadratic
 /// w_i(lam) = a_i + b_i lam + c_i lam^2, so the branch through lam0 is z(lam0 + h) = w(lam0 + h): z_1 = b + 2 c lam0,
-/// z_2 = c, z_k = 0 for k >= 3. `freeze`: the series with lam a constant (the control).
+/// z_2 = c, z_k = 0 for k >= 3. `freeze`: the series with lam a constant (the control). `nan_jvp`: the products J v
+/// all NaN (a broken refinement, the control of the recorded residuals).
 struct Poly<P: Precision<Native>> {
     a: Vec<P::Scalar>,
     b: Vec<P::Scalar>,
     c: Vec<P::Scalar>,
     freeze: bool,
+    nan_jvp: bool,
 }
 
 fn s<P: Precision<Native>>(x: f64) -> P::Scalar {
@@ -53,6 +55,7 @@ impl<P: Precision<Native>> Poly<P> {
             b: (0..N).map(|i| s::<P>(0.2 * (i as f64).cos())).collect(),
             c: (0..N).map(|i| s::<P>(0.05 * (2.0 * i as f64).sin())).collect(),
             freeze,
+            nan_jvp: false,
         }
     }
     /// w_i(lam0 + h) as a series of n terms
@@ -99,6 +102,9 @@ impl<P: Precision<Native>> Problem<P> for Poly<P> {
 impl<P: Precision<Native>> Jvp<P> for Poly<P> {
     fn jvp(&self, z: &[&[f64]], v: &[&[f64]], _par: bool) -> Result<Vec<P::Scalar>, String> {
         let (z, v) = (scalars::<P>(z), scalars::<P>(v));
+        if self.nan_jvp {
+            return Ok(vec![s::<P>(f64::NAN); N]);
+        }
         Ok((0..N)
             .map(|i| s::<P>(3.0) * z[i] * z[i] * v[i] + s::<P>(KAPPA) * v[(i + 1) % N])
             .collect())
@@ -129,25 +135,30 @@ impl<P: Precision<Native>> ResidualJet<P> for Poly<P> {
     }
 }
 
-/// The series of order 8 at the root in P, refined once: (|z_1 - w'| / |w'|, |z_2 - c| / |c|, max over k >= 3 of
-/// |z_k|, |z(0.3) - w(lam0 + 0.3)|), max norms
-fn poly<P: Precision<Native>>(freeze: bool) -> [f64; 4] {
-    let pr = Poly::<P>::new(freeze);
+/// The series of order 8 at the root of the polynomial branch in P, refined once
+fn poly_branch<P: Precision<Native>>(freeze: bool, nan_jvp: bool) -> Branch<P> {
+    let mut pr = Poly::<P>::new(freeze);
+    pr.nan_jvp = nan_jvp;
     let z0 = pr.root();
-    let br = series::<P, _>(&pr, &parts(&z0), 8, 1, false).unwrap();
+    series::<P, _>(&pr, &parts(&z0), 8, 1, false).unwrap()
+}
+
+/// a series of order 8 against the true branch: [|z_1 - w'| / |w'|, |z_2 - c| / |c|, max over k >= 3 of |z_k|,
+/// |z(0.3) - w(lam0 + 0.3)| / |w(lam0 + 0.3)|], max norms, NaN where any entry is
+fn poly_errors<P: Precision<Native>>(br: &Branch<P>) -> [f64; 4] {
     let truth = Poly::<P>::new(false);
     let rel = |x: &[P::Scalar], y: &[P::Scalar]| {
         let d = x
             .iter()
             .zip(y)
             .map(|(&a, &b)| P::to_dd(a - b).hi.abs())
-            .fold(0.0, f64::max);
-        d / y.iter().map(|&b| P::to_dd(b).hi.abs()).fold(0.0, f64::max)
+            .fold(0.0, nan_max);
+        d / y.iter().map(|&b| P::to_dd(b).hi.abs()).fold(0.0, nan_max)
     };
     let w1: Vec<P::Scalar> = (0..N).map(|i| truth.w(i, 2)[1]).collect();
     let high = (3..=8)
         .flat_map(|k| br.z[k].iter().map(|&v| P::to_dd(v).hi.abs()))
-        .fold(0.0, f64::max);
+        .fold(0.0, nan_max);
     let wa: Vec<P::Scalar> = (0..N)
         .map(|i| {
             let w = truth.w(i, 3);
@@ -163,33 +174,80 @@ fn poly<P: Precision<Native>>(freeze: bool) -> [f64; 4] {
     ]
 }
 
+/// the accuracy checks of the polynomial branch: [z_1, z_2, z(0.3)] within tol, [z_3..z_8] within tol_high
+fn poly_checks(e: [f64; 4], tol: f64, tol_high: f64) -> [bool; 4] {
+    [e[0] <= tol, e[1] <= tol, e[2] <= tol_high, e[3] <= tol]
+}
+
 /// Pass, written before the first run: at the root of the polynomial branch the series of order 8 gives z_1 and z_2
 /// to 1e-29 relative, every higher order below 1e-28, and z(0.3) to 1e-29, in double-double; in quad-double the same
-/// to 1e-60 and 1e-59. The control: with the parameter frozen in the residual's series, z_1 misses w' by all of it.
+/// to 1e-60 and 1e-59. The controls, each a wrong series in double-double: with the parameter frozen in the
+/// residual's series, z_1, z_2 and z(0.3) miss (its higher orders are zero); z_2 off by 1e-20 fails z_2 and z(0.3);
+/// z_3 = 1e-20 in one entry, and a NaN in z_5, fail the higher orders and z(0.3).
 #[test]
 fn anm_reproduces_a_polynomial_branch() {
-    let d = poly::<Double>(false);
+    let d = poly_errors(&poly_branch::<Double>(false, false));
     println!(
         "double-double: z_1 {:.3e}, z_2 {:.3e}, z_3..z_8 {:.3e}, z(0.3) {:.3e}",
         d[0], d[1], d[2], d[3]
     );
-    assert!(d[0] <= 1e-29 && d[1] <= 1e-29 && d[2] <= 1e-28 && d[3] <= 1e-29);
-    let q = poly::<Quad>(false);
+    assert_eq!(poly_checks(d, 1e-29, 1e-28), [true; 4]);
+    let q = poly_errors(&poly_branch::<Quad>(false, false));
     println!(
         "quad-double: z_1 {:.3e}, z_2 {:.3e}, z_3..z_8 {:.3e}, z(0.3) {:.3e}",
         q[0], q[1], q[2], q[3]
     );
-    assert!(q[0] <= 1e-60 && q[1] <= 1e-60 && q[2] <= 1e-59 && q[3] <= 1e-60);
-    let c = poly::<Double>(true);
-    println!("control, parameter frozen: z_1 {:.3e}", c[0]);
-    assert!(c[0] > 0.5, "control did not fire");
+    assert_eq!(poly_checks(q, 1e-60, 1e-59), [true; 4]);
+    let control = |name: &str, br: &Branch<Double>, want: [bool; 4]| {
+        let e = poly_errors(br);
+        println!(
+            "control, {name}: z_1 {:.3e}, z_2 {:.3e}, z_3..z_8 {:.3e}, z(0.3) {:.3e}",
+            e[0], e[1], e[2], e[3]
+        );
+        assert_eq!(poly_checks(e, 1e-29, 1e-28), want, "control {name} did not fire");
+    };
+    control(
+        "parameter frozen",
+        &poly_branch::<Double>(true, false),
+        [false, false, true, false],
+    );
+    let good = poly_branch::<Double>(false, false);
+    let mut br = good.clone();
+    br.z[2][0] = br.z[2][0] + DD::from_f64(1e-20);
+    control("z_2 off by 1e-20", &br, [true, false, true, false]);
+    let mut br = good.clone();
+    br.z[3][0] = DD::from_f64(1e-20);
+    control("z_3 = 1e-20", &br, [true, true, false, false]);
+    let mut br = good;
+    br.z[5][0] = DD::from_f64(f64::NAN);
+    control("NaN in z_5", &br, [true, true, false, false]);
+}
+
+/// Pass, written before the first run: the solves of the polynomial branch's eight orders have relative residuals of
+/// at most 1e-30 after one refinement, and its frozen branch, constant in the parameter, has an infinite radius. The
+/// control: with the products J v all NaN every recorded residual is NaN, and the check rejects them.
+#[test]
+fn anm_records_its_solve_residuals() {
+    let check = |br: &Branch<Double>| br.residual.iter().copied().fold(0.0, nan_max) <= 1e-30;
+    let br = poly_branch::<Double>(false, false);
+    println!("residuals: {:?}", br.residual);
+    assert!(check(&br));
+    let frozen = poly_branch::<Double>(true, false);
+    println!("frozen branch: radius {}", frozen.radius(1e-8));
+    assert_eq!(frozen.radius(1e-8), f64::INFINITY);
+    let bad = poly_branch::<Double>(false, true);
+    println!("control, products NaN: residuals {:?}", bad.residual);
+    assert!(
+        bad.residual.iter().all(|r| r.is_nan()) && !check(&bad),
+        "control did not fire"
+    );
 }
 
 const B: usize = 1;
 
-/// The series of order `order` of `Cylinder`'s branch in mu at its double-double root, refined once: (|z_1 - e_lambda|,
-/// max over k >= 2 of |z_k|, the largest relative residual of the orders' solves)
-fn cylinder(freeze: bool, order: usize) -> (f64, f64, f64) {
+/// The series of order `order` of `Cylinder`'s branch in mu at its double-double root, refined once, and the index
+/// of the eigenvalue among the unknowns
+fn cylinder(freeze: bool, order: usize) -> (Branch<Double>, usize) {
     let (mut sh, zs) = Cylinder::<B>::shooting(Cylinder::new(), 30);
     let mut z = perturbed(&zs, 1e-3);
     let opts = NewtonOpts {
@@ -199,29 +257,57 @@ fn cylinder(freeze: bool, order: usize) -> (f64, f64, f64) {
     };
     assert!(sh.newton::<Double>(&mut z, &opts).unwrap().converged);
     sh.eq.freeze_mu = freeze;
-    let br = series::<Double, _>(&sh, &parts(&z), order, 1, true).unwrap();
-    let og = sh.off_global();
+    (
+        series::<Double, _>(&sh, &parts(&z), order, 1, true).unwrap(),
+        sh.off_global(),
+    )
+}
+
+/// [|z_1 - e_lambda|, max over k >= 2 of |z_k|], NaN where any entry is
+fn cylinder_errors(br: &Branch<Double>, og: usize) -> [f64; 2] {
     let e1 = br.z[1]
         .iter()
         .enumerate()
         .map(|(i, &v)| (v - if i == og { DD::ONE } else { DD::ZERO }).hi.abs())
-        .fold(0.0, f64::max);
-    let high = (2..=order)
+        .fold(0.0, nan_max);
+    let high = (2..=br.order())
         .flat_map(|k| br.z[k].iter().map(|v| v.hi.abs()))
-        .fold(0.0, f64::max);
-    let res = br.residual.iter().copied().fold(0.0, f64::max);
-    (e1, high, res)
+        .fold(0.0, nan_max);
+    [e1, high]
+}
+
+/// the accuracy checks of Cylinder's branch: [z_1 within 1e-28, the higher orders within 1e-26]
+fn cylinder_checks(e: [f64; 2]) -> [bool; 2] {
+    [e[0] <= 1e-28, e[1] <= 1e-26]
 }
 
 /// Pass, written before the first run: through the multiple-shooting problem, the series of order 10 (jets of 8 and
 /// 16 coefficients) gives z_1 = e_lambda, one in the eigenvalue and zero elsewhere, to 1e-28, and every higher order
-/// below 1e-26. The control: with mu frozen in the residual's series, z_1 misses e_lambda by all of it.
+/// below 1e-26. The controls: with mu frozen in the residual's series, z_1 misses e_lambda by all of it (its higher
+/// orders are zero); z_2 = 1e-20 in one entry, and a NaN in z_4, fail the higher orders.
 #[test]
 fn anm_follows_the_eigenvalue_through_shooting() {
-    let (e1, high, res) = cylinder(false, 10);
-    println!("cylinder: |z_1 - e_lambda| {e1:.3e}, z_2..z_10 {high:.3e}, solve residuals up to {res:.3e}");
-    assert!(e1 <= 1e-28 && high <= 1e-26);
-    let (e1, _, _) = cylinder(true, 3);
-    println!("control, mu frozen: |z_1 - e_lambda| {e1:.3e}");
-    assert!(e1 > 0.5, "control did not fire");
+    let (br, og) = cylinder(false, 10);
+    let e = cylinder_errors(&br, og);
+    let res = br.residual.iter().copied().fold(0.0, nan_max);
+    println!(
+        "cylinder: |z_1 - e_lambda| {:.3e}, z_2..z_10 {:.3e}, solve residuals up to {res:.3e}",
+        e[0], e[1]
+    );
+    assert_eq!(cylinder_checks(e), [true; 2]);
+    let control = |name: &str, br: &Branch<Double>, want: [bool; 2]| {
+        let e = cylinder_errors(br, og);
+        println!(
+            "control, {name}: |z_1 - e_lambda| {:.3e}, higher orders {:.3e}",
+            e[0], e[1]
+        );
+        assert_eq!(cylinder_checks(e), want, "control {name} did not fire");
+    };
+    control("mu frozen", &cylinder(true, 3).0, [false, true]);
+    let mut bad = br.clone();
+    bad.z[2][0] = DD::from_f64(1e-20);
+    control("z_2 = 1e-20", &bad, [true, false]);
+    let mut bad = br;
+    bad.z[4][0] = DD::from_f64(f64::NAN);
+    control("NaN in z_4", &bad, [true, false]);
 }
