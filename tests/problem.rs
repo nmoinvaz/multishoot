@@ -115,10 +115,13 @@ fn newton_converges_on_a_problem_that_is_not_shooting() {
 }
 
 /// The control: with the Jacobian's diagonal 10% off, Newton contracts only linearly, by about 0.1 per step, and must
-/// fail to converge to 1e-28 within the 8 steps.
+/// fail to converge within the 8 steps, to 1e-28 in double-double and to 1e-60 in quad-double.
 #[test]
 fn newton_control_wrong_jacobian_does_not_converge() {
     let (ok, steps, f, _) = run::<Double>(1.1, 1e-28);
     println!("control, diagonal 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}");
     assert!(!ok, "control did not fire");
+    let (ok, steps, f, _) = run::<Quad>(1.1, 1e-60);
+    println!("control, quad-double, diagonal 10% off: converged {ok} in {steps} steps, max |F| {f:.3e}");
+    assert!(!ok, "quad-double control did not fire");
 }
