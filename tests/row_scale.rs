@@ -2,9 +2,9 @@
 //! ones times the factors.
 mod common;
 
-use common::{perturbed, Planted};
-use multishoot::prec::parts;
-use multishoot::{Double, Shooting, DD};
+use common::{in_pool, perturbed, Fnv, Planted};
+use multishoot::prec::{parts, widen};
+use multishoot::{Double, Quad, Rate, Shooting, DD};
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
@@ -87,4 +87,45 @@ fn row_scale_control_wrong_length_fails() {
     sc.row_scale.pop();
     assert!(sc.residual::<Double>(&parts(&z), true).is_err() && sc.jacobian::<Double>(&parts(&z), true).is_err());
     assert!(sc.jvp::<Double>(&parts(&z), &parts(&z), true).is_err());
+}
+
+/// The hashes of the planted problem's Jacobian in quad-double and of its mode matrix at the rate 0.3 + 0.2 i, at z*
+/// perturbed by 1e-3, with every row scaled by a factor that rounds (1.5, 0.7, 3 and 1.1 in turn, starting `rot` rows
+/// on), with `par`
+fn scaled_hashes(rot: usize, par: bool) -> [u64; 2] {
+    let (mut sh, zs) = Planted::<B>::shooting(&NODES, 30, 1e-32);
+    sh.row_scale = (0..sh.rows()).map(|r| [1.5, 0.7, 3.0, 1.1][(r + rot) % 4]).collect();
+    let z = perturbed(&zs, 1e-3);
+    let mut hj = Fnv::new();
+    let (c, _) = sh.jacobian::<Quad>(&parts(&widen(&z, 4)), par).unwrap();
+    c.iter().flatten().for_each(|&x| hj.f64(x));
+    let mut hm = Fnv::new();
+    let mm = sh
+        .mode_matrix(&parts(&z), Rate::new(DD::from_f64(0.3), DD::from_f64(0.2)), par)
+        .unwrap();
+    mm.re.iter().chain(&mm.im).flatten().for_each(|&x| hm.f64(x));
+    [hj.0, hm.0]
+}
+
+/// the reference hashes of `scaled_hashes`, recorded with the rows scaled in a serial loop on aarch64 (NEON)
+const SCALED_REFERENCE: [u64; 2] = [0x077c6dd5fddf8816, 0x449d6c551020ab51];
+
+/// Rows scaled by factors that round keep their bits however the columns are scaled: pass, `scaled_hashes` with
+/// `par` in pools of 1, 3 and 6 threads, and without it, equals the reference of the serial loop. The control: the
+/// factors one row on change both hashes.
+#[test]
+fn scaled_rows_do_not_depend_on_threads() {
+    for (t, par) in [(1, true), (3, true), (6, true), (3, false)] {
+        let h = in_pool(t, || scaled_hashes(0, par));
+        println!(
+            "scaled hashes, {t} threads, par {par}: [{:#018x}, {:#018x}]",
+            h[0], h[1]
+        );
+        assert_eq!(h, SCALED_REFERENCE, "{t} threads, par {par}");
+    }
+    let c = in_pool(3, || scaled_hashes(1, true));
+    assert!(
+        c[0] != SCALED_REFERENCE[0] && c[1] != SCALED_REFERENCE[1],
+        "control did not fire"
+    );
 }

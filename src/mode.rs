@@ -17,6 +17,7 @@
 use crate::equations::{Equations, State};
 use crate::jacobian::Seed;
 use crate::lane::{BaseLane, Dc, Du, Lane, DV};
+use crate::prec::columns_mut;
 use crate::shooting::Shooting;
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -244,19 +245,30 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                     self.rows()
                 ));
             }
-            for (i, &sr) in self.row_scale.iter().enumerate().take(n) {
-                let s = DD::from_f64(sr);
-                for j in 0..n {
-                    let k = j * ld + i;
-                    for part in [&mut re, &mut im] {
+            let s: Vec<DD> = self.row_scale[..n].iter().map(|&sr| DD::from_f64(sr)).collect();
+            // each column's real and imaginary parts on their own, on rayon tasks with par
+            let scale = |col: &mut Vec<&mut [f64]>| {
+                for (i, &si) in s.iter().enumerate() {
+                    for p in [0, 2] {
                         let v = DD {
-                            hi: part[0][k],
-                            lo: part[1][k],
-                        } * s;
-                        (part[0][k], part[1][k]) = (v.hi, v.lo);
+                            hi: col[p][i],
+                            lo: col[p + 1][i],
+                        } * si;
+                        (col[p][i], col[p + 1][i]) = (v.hi, v.lo);
                     }
                 }
+            };
+            let mut parts: Vec<Vec<f64>> = re.into_iter().chain(im).collect();
+            let mut cols = columns_mut(&mut parts, ld, n);
+            if par {
+                cols.par_iter_mut().for_each(scale);
+            } else {
+                cols.iter_mut().for_each(scale);
             }
+            drop(cols);
+            let mut it = parts.into_iter();
+            re = it.by_ref().take(2).collect();
+            im = it.collect();
         }
         Ok(ModeMatrix { n, ld, re, im })
     }

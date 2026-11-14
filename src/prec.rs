@@ -44,3 +44,15 @@ pub fn widen(z: &[Vec<f64>], parts: usize) -> Vec<Vec<f64>> {
         .chain((z.len()..parts).map(|_| vec![0.0; l]))
         .collect()
 }
+
+/// The first `ncols` columns (of leading dimension ld) of column-major part arrays, each column as its slices in
+/// every part array, in the order of the arrays: for a pass that updates each column on its own, in parallel
+pub(crate) fn columns_mut(c: &mut [Vec<f64>], ld: usize, ncols: usize) -> Vec<Vec<&mut [f64]>> {
+    let mut cols: Vec<Vec<&mut [f64]>> = (0..ncols).map(|_| Vec::with_capacity(c.len())).collect();
+    for cq in c.iter_mut() {
+        for (col, ch) in cols.iter_mut().zip(cq.chunks_mut(ld)) {
+            col.push(ch);
+        }
+    }
+    cols
+}
