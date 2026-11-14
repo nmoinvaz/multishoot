@@ -190,15 +190,22 @@ pub fn weak_subspace<P: Precision<Native>>(
     (basis, sigma)
 }
 
-/// x minus its component in the span of the linearly independent f64 vectors of `basis`, in P. The vectors, orthonormal
-/// only to f64's rounding, are made orthogonal in P by Gram-Schmidt, and each component is divided by q . q, so x's
-/// component along the span is removed to P's rounding.
+/// x minus its component in the span of the linearly independent f64 vectors of `basis`, in P. Each vector is scaled
+/// exactly by a power of two to max |b| in [1, 2), so that q . q neither overflows nor underflows; the vectors,
+/// orthonormal at most to f64's rounding, are made orthogonal in P by Gram-Schmidt, and each component is divided by
+/// q . q, so x's component along the span is removed to P's rounding.
 pub fn remove<P: Precision<Native>>(x: &mut [P::Scalar], basis: &[Vec<f64>]) {
     let dot = |a: &[P::Scalar], b: &[P::Scalar]| P::dot(a.iter().copied().zip(b.iter().copied()));
     // (q, 1 / (q . q)) of each basis vector
     let mut qs: Vec<(Vec<P::Scalar>, P::Scalar)> = Vec::with_capacity(basis.len());
     for b in basis {
-        let mut q: Vec<P::Scalar> = b.iter().map(|&v| P::from_dd(DD::from_f64(v))).collect();
+        let m = b.iter().map(|v| v.abs()).fold(0.0, nan_max);
+        let sc = if m > 0.0 && m.is_finite() {
+            2f64.powi(-(m.log2().floor() as i32).clamp(-1000, 1000))
+        } else {
+            1.0
+        };
+        let mut q: Vec<P::Scalar> = b.iter().map(|&v| P::from_dd(DD::from_f64(v * sc))).collect();
         for (p, inv) in &qs {
             let c = dot(p, &q) * *inv;
             q.iter_mut().zip(p).for_each(|(qi, &pi)| *qi = *qi - c * pi);
@@ -313,12 +320,14 @@ mod tests {
                 .hi
                 .abs()
             })
-            .fold(0.0, f64::max)
+            .fold(0.0, nan_max)
     }
 
     /// Pass: with the basis (1, 1, 0) / sqrt 2 and (1, -1, 1) / sqrt 3 rounded to f64, orthonormal only to about
-    /// 1e-16, `remove` leaves x = 3 b_1 - 2 b_2 + (1, -1, -2) with components along both below 1e-30 in
-    /// double-double, and its part (1, -1, -2) off the span to 1e-15. The control: x itself fails the first check.
+    /// 1e-16, and the same vectors scaled by 2^-600 and 2^600 (where q . q would underflow and overflow),
+    /// `remove` leaves x = 3 b_1 - 2 b_2 + (1, -1, -2) with components along both below 1e-30 in double-double, and
+    /// its part (1, -1, -2) off the span to 1e-15. The controls: x itself fails the first check, and an all-NaN
+    /// result fails both.
     #[test]
     fn remove_is_exact_in_p_for_an_f64_basis() {
         let basis = vec![
@@ -332,10 +341,22 @@ mod tests {
                     + DD::from_f64(e[i])
             })
             .collect();
-        let mut x = x0.clone();
-        remove::<crate::Double>(&mut x, &basis);
-        let rest = (0..3).map(|i| (x[i] - DD::from_f64(e[i])).hi.abs()).fold(0.0, f64::max);
-        assert!(along::<crate::Double>(&x, &basis) <= 1e-30 && rest <= 1e-15, "{x:?}");
-        assert!(along::<crate::Double>(&x0, &basis) > 1e-30, "control did not fire");
+        // [the components along the basis below 1e-30, the part off the span kept to 1e-15]
+        let checks = |x: &[DD]| {
+            let rest = (0..3).map(|i| (x[i] - DD::from_f64(e[i])).hi.abs()).fold(0.0, nan_max);
+            [along::<crate::Double>(x, &basis) <= 1e-30, rest <= 1e-15]
+        };
+        for scale in [1.0, 2f64.powi(-600), 2f64.powi(600)] {
+            let scaled: Vec<Vec<f64>> = basis.iter().map(|b| b.iter().map(|v| v * scale).collect()).collect();
+            let mut x = x0.clone();
+            remove::<crate::Double>(&mut x, &scaled);
+            assert_eq!(checks(&x), [true; 2], "scale {scale:e}: {x:?}");
+        }
+        assert!(!checks(&x0)[0], "control did not fire");
+        assert_eq!(
+            checks(&[DD::from_f64(f64::NAN); 3]),
+            [false; 2],
+            "NaN control did not fire"
+        );
     }
 }
