@@ -72,6 +72,6 @@ pub use projected::ProjectedRows;
 pub use relayout::Parities;
 pub use shooting::{ExtraRow, Shooting};
 pub use solve::newton::{NewtonOpts, NewtonReport};
-pub use solve::{anm, gcr, lm, newton, predict};
+pub use solve::{anm, gcr, lm, newton, predict, subspace};
 pub use solve::{Jvp, Problem, ResidualJet};
 pub use taylor::Plan;
