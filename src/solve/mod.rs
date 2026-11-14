@@ -9,6 +9,8 @@
 //! * [`lm`]: the Levenberg-Marquardt method, for starts where Newton's method stalls or its Jacobian is singular;
 //! * [`anm`]: the asymptotic numerical method, the Taylor series of a solution branch in the problem's parameter;
 //! * [`predict`]: predictors for continuation: Lagrange extrapolation, the cubic Hermite, and the exact tangent;
+//! * [`singularity`]: the nearest singularities of a series from its coefficients: Pade poles that recur across the
+//!   approximants' orders, the root test's radius, the ratio method and a recurrence for a conjugate pair;
 //! * [`subspace`]: the weakest singular directions of the Jacobian, Newton's method with them removed from its steps,
 //!   and the sensitivities of single unknowns to the residual.
 use multidouble::precision::Precision;
@@ -19,6 +21,7 @@ pub mod gcr;
 pub mod lm;
 pub mod newton;
 pub mod predict;
+pub mod singularity;
 pub mod subspace;
 
 /// A system F(z) = 0 of `len()` equations in as many unknowns, evaluated in the precision P. The state z is held as
