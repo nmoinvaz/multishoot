@@ -3,7 +3,7 @@
 mod common;
 
 use common::{perturbed, Cylinder};
-use multishoot::prec::parts;
+use multishoot::prec::{nan_max, parts};
 use multishoot::predict::{hermite, lagrange, tangent};
 use multishoot::{Double, Native, NewtonOpts, Precision, Quad, DD};
 
@@ -39,27 +39,35 @@ fn branch<P: Precision<Native>>(deg: usize, p: f64, deriv: bool, scale: f64) -> 
         .collect()
 }
 
-/// max |a - b| / max |b| over the unknowns, in P
+/// max |a - b| / max |b| over the unknowns, in P (NaN where any entry is)
 fn rel<P: Precision<Native>>(a: &[Vec<f64>], b: &[Vec<f64>]) -> f64 {
     let sc = |z: &[Vec<f64>], i: usize| P::from_raw(&z.iter().map(|p| p[i]).collect::<Vec<_>>());
     let d = (0..N)
         .map(|i| P::to_dd(sc(a, i) - sc(b, i)).hi.abs())
-        .fold(0.0, f64::max);
-    d / (0..N).map(|i| P::to_dd(sc(b, i)).hi.abs()).fold(0.0, f64::max)
+        .fold(0.0, nan_max);
+    d / (0..N).map(|i| P::to_dd(sc(b, i)).hi.abs()).fold(0.0, nan_max)
 }
 
-/// Lagrange through the branch of degree deg at p = 0.1, 0.2, 0.3, 0.4, extrapolated to 0.55: relative error
-fn lagrange_err<P: Precision<Native>>(deg: usize) -> f64 {
+/// Lagrange through the branch of degree deg at p = 0.1, 0.2, 0.3, 0.4, extrapolated to 0.55: (the prediction, the
+/// branch there)
+#[allow(clippy::type_complexity)]
+fn lagrange_at<P: Precision<Native>>(deg: usize) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let ps = [0.1, 0.2, 0.3, 0.4];
     let zs: Vec<Vec<Vec<f64>>> = ps.iter().map(|&p| branch::<P>(deg, p, false, 0.0)).collect();
     let refs: Vec<Vec<&[f64]>> = zs.iter().map(|z| parts(z)).collect();
     let pts: Vec<(f64, &[&[f64]])> = ps.iter().zip(&refs).map(|(&p, r)| (p, &r[..])).collect();
-    rel::<P>(&lagrange::<P>(&pts, 0.55), &branch::<P>(deg, 0.55, false, 0.0))
+    (lagrange::<P>(&pts, 0.55), branch::<P>(deg, 0.55, false, 0.0))
+}
+
+/// the relative error of [`lagrange_at`]
+fn lagrange_err<P: Precision<Native>>(deg: usize) -> f64 {
+    let (pred, truth) = lagrange_at::<P>(deg);
+    rel::<P>(&pred, &truth)
 }
 
 /// Pass, written before the first run: through four points of a cubic branch, Lagrange extrapolation to 0.55 is exact
-/// to 1e-30 relative in double-double and 1e-62 in quad-double. The control: a quartic branch misses by more than
-/// 1e-8.
+/// to 1e-30 relative in double-double and 1e-62 in quad-double. The controls: a quartic branch misses by more than
+/// 1e-8, and the quad-double prediction with one component NaN fails the check.
 #[test]
 fn lagrange_is_exact_on_a_cubic_branch() {
     let (d, q, c) = (
@@ -70,6 +78,12 @@ fn lagrange_is_exact_on_a_cubic_branch() {
     println!("lagrange: double-double {d:.3e}, quad-double {q:.3e}; control, quartic {c:.3e}");
     assert!(d <= 1e-30 && q <= 1e-62);
     assert!(c > 1e-8, "control did not fire");
+    let (mut pred, truth) = lagrange_at::<Quad>(3);
+    pred[0][2] = f64::NAN;
+    let e = rel::<Quad>(&pred, &truth);
+    println!("control, one component NaN: {e:.3e}");
+    let accurate = |e: f64| e <= 1e-62;
+    assert!(!accurate(e), "control did not fire");
 }
 
 /// the cubic Hermite through p = 0.2 and 0.5 of the cubic branch, at 0.7, the tangent at 0.5 scaled by 1 + bump:
@@ -96,8 +110,20 @@ fn hermite_is_exact_on_a_cubic_branch() {
     assert!(c > 1e-14, "control did not fire");
 }
 
+/// max |t - e_lambda| over the unknowns (NaN where any entry is), og the eigenvalue's index
+fn tangent_err(t: &[Vec<f64>], og: usize) -> f64 {
+    (0..t[0].len())
+        .map(|i| {
+            (DD::new(t[0][i], t[1][i]) - if i == og { DD::ONE } else { DD::ZERO })
+                .hi
+                .abs()
+        })
+        .fold(0.0, nan_max)
+}
+
 /// Pass, written before the first run: the tangent dz/dmu of `Cylinder` at its double-double root is e_lambda, one in
-/// the eigenvalue and zero elsewhere, to 1e-28. The control: with mu frozen in the residual's series it is zero.
+/// the eigenvalue and zero elsewhere, to 1e-28. The controls: with mu frozen in the residual's series it is zero, and
+/// the tangent with one component NaN fails the check.
 #[test]
 fn tangent_is_the_eigenvalue_direction() {
     let run = |freeze: bool| {
@@ -110,18 +136,18 @@ fn tangent_is_the_eigenvalue_direction() {
         };
         assert!(sh.newton::<Double>(&mut z, &opts).unwrap().converged);
         sh.eq.freeze_mu = freeze;
-        let t = tangent::<Double, _>(&sh, &parts(&z), 1, true).unwrap();
-        let og = sh.off_global();
-        (0..sh.len())
-            .map(|i| {
-                (DD::new(t[0][i], t[1][i]) - if i == og { DD::ONE } else { DD::ZERO })
-                    .hi
-                    .abs()
-            })
-            .fold(0.0, f64::max)
+        (tangent::<Double, _>(&sh, &parts(&z), 1, true).unwrap(), sh.off_global())
     };
-    let (e, c) = (run(false), run(true));
+    let ((t, og), (tc, _)) = (run(false), run(true));
+    let (e, c) = (tangent_err(&t, og), tangent_err(&tc, og));
     println!("tangent against e_lambda {e:.3e}; control, mu frozen {c:.3e}");
     assert!(e <= 1e-28);
     assert!(c > 0.5, "control did not fire");
+    let mut tn = t.clone();
+    let k = (og + 1) % tn[0].len();
+    tn[0][k] = f64::NAN;
+    let e = tangent_err(&tn, og);
+    println!("control, one component NaN: {e:.3e}");
+    let accurate = |e: f64| e <= 1e-28;
+    assert!(!accurate(e), "control did not fire");
 }
