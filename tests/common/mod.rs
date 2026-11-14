@@ -142,6 +142,15 @@ impl<const B: usize> Equations<B> for Rotor<B> {
     }
 }
 
+/// f run in a rayon pool of n threads, for the checks that a result does not depend on the pool's size
+pub fn in_pool<T: Send>(n: usize, f: impl FnOnce() -> T + Send) -> T {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .build()
+        .unwrap()
+        .install(f)
+}
+
 /// FNV-1a over the bits of f64s: a fingerprint of results that must be the same on every SIMD backend
 pub struct Fnv(pub u64);
 
