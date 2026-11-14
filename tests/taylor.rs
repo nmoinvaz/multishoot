@@ -3,7 +3,7 @@ mod common;
 
 use multishoot::prec::nan_max;
 
-use common::{max_diff, Fnv, Rotor, Wrong};
+use common::{in_pool, max_diff, Fnv, Rotor, Wrong};
 use multishoot::lane::DV;
 use multishoot::taylor::{plan_path, taylor_step, Plan};
 use multishoot::{Equations, Shooting, State, Work};
@@ -384,6 +384,20 @@ fn plan_points_match_reference() {
 #[test]
 fn plan_points_control_tolerance_differs() {
     assert_ne!(plan_hash(1.0 + 2f64.powi(-30)), plan_hash(1.0), "control did not fire");
+}
+
+/// The planner's points do not depend on the threads that plan the segments: pass, `plan_hash` in pools of 1, 2, 3
+/// and 7 threads equals the reference. The control: a tolerance scaled by 1 + 2^-30, in a pool of 3, changes it.
+#[test]
+fn plan_points_do_not_depend_on_threads() {
+    for t in [1, 2, 3, 7] {
+        assert_eq!(in_pool(t, || plan_hash(1.0)), PLAN_REFERENCE, "{t} threads");
+    }
+    assert_ne!(
+        in_pool(3, || plan_hash(1.0 + 2f64.powi(-30))),
+        PLAN_REFERENCE,
+        "control did not fire"
+    );
 }
 
 /// a plan of the rotor at order 2 over one tiny segment, x = 0 to 1e-12, at the tolerance tol
