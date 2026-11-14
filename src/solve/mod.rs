@@ -5,11 +5,13 @@
 //! * [`newton`]: the Newton step and the damped Newton loop, and the chord and Shamanskii methods that reuse its
 //!   factors;
 //! * [`gcr`]: a preconditioned Krylov solver (GMRES in its GCR form) on exact Jacobian-vector products, and the Newton
-//!   method whose steps it refines from an approximate factorization.
+//!   method whose steps it refines from an approximate factorization;
+//! * [`lm`]: the Levenberg-Marquardt method, for starts where Newton's method stalls or its Jacobian is singular.
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 
 pub mod gcr;
+pub mod lm;
 pub mod newton;
 
 /// A system F(z) = 0 of `len()` equations in as many unknowns, evaluated in the precision P. The state z is held as
