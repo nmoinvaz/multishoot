@@ -287,3 +287,29 @@ fn block_tasks_do_not_depend_on_threads() {
         "series control did not fire"
     );
 }
+
+/// The residual's series with the Cauchy sums split over threads (`cs_par`, its jets' lane vectors on rayon tasks
+/// inside the block tasks). Pass: in pools of 1 and 6 threads, and with the blocks in sequence, the series of orders 0
+/// to 15 (jets of 16, whose sums split) has the bits of the series with `cs`. The control: the problem with -omega u
+/// in place of -omega u_theta differs.
+#[test]
+fn split_cauchy_sums_keep_the_series_bits() {
+    let series = |par_sums: bool, coupled: bool, par: bool| -> Vec<(u64, u64)> {
+        let mut eq = Planted::<B>::with_coupling(coupled);
+        eq.par_sums = par_sums;
+        let (sh, zs) = Planted::<B>::shooting_of(eq, &NODES, 30, 1e-32);
+        let (z, v) = state_and_direction(&sh, &zs);
+        let (z, v) = (parts(&z), parts(&v));
+        sh.residual_jet::<Double, 16>(&[z[..2].to_vec(), v[..2].to_vec()], par, 16)
+            .unwrap()
+            .iter()
+            .flatten()
+            .map(|x| (x.hi.to_bits(), x.lo.to_bits()))
+            .collect()
+    };
+    let want = series(false, true, true);
+    for (t, par) in [(1, true), (6, true), (6, false)] {
+        assert!(in_pool(t, || series(true, true, par)) == want, "{t} threads, par {par}");
+    }
+    assert!(in_pool(6, || series(true, false, true)) != want, "control did not fire");
+}

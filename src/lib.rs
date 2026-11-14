@@ -68,7 +68,7 @@ pub use fast::{MixedLu, Storage};
 pub use mode::{ModeMatrix, Rate};
 pub use multidouble;
 pub use multidouble::dd::DD;
-pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
+pub use multidouble::field::{cs, cs_par, cs_range, cs_range_par, cs_w, cs_w_par, horner, Fl};
 pub use multidouble::precision::{Double, Octo, Precision, Quad};
 pub use multidouble::simd::Native;
 pub use projected::ProjectedRows;

@@ -48,7 +48,9 @@ impl<T: Lane, const B: usize> Work<T, B> {
 /// Every method is generic over the lane type, so that one code gives the residual (values), the exact Jacobian
 /// (duals), the Newton step in any precision and the residual's series in a parameter (jets). Constants enter as
 /// double-double (`Fl::muls`, `Fl::cst`); a parameter of the equations that the residual is expanded in enters through
-/// the lane's parameter arithmetic (`Lane::P`, `Param::var`).
+/// the lane's parameter arithmetic (`Lane::P`, `Param::var`). A recursion's Cauchy products may be `cs_par`'s, which
+/// sums a long jet product's lane vectors on rayon tasks with `cs`'s bits: that pays when the blocks are fewer than the
+/// threads, and costs a little when they fill them.
 pub trait Equations<const B: usize>: Sync {
     /// fields per point
     const NF: usize;

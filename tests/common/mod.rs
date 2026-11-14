@@ -198,6 +198,8 @@ pub struct Planted<const B: usize> {
     pub omega: f64,
     /// whether the points are coupled through -omega u_theta; without it the term is -omega u, pointwise
     pub coupled: bool,
+    /// whether the Cauchy sums are `cs_par`'s (a jet's lane vectors on rayon tasks) in place of `cs`'s
+    pub par_sums: bool,
     /// the manufactured solution's fields A, B (odd), C, E (even)
     pub a: Fl<DV, B>,
     pub b: Fl<DV, B>,
@@ -231,6 +233,7 @@ impl<const B: usize> Planted<B> {
             d,
             omega,
             coupled,
+            par_sums: false,
             a,
             b,
             c,
@@ -358,8 +361,13 @@ impl<const B: usize> Equations<B> for Planted<B> {
             } else {
                 -rate.shift(&u[k], u[k].mul_t(g[0]))
             };
-            let du = th + multishoot::cs(u, v, k) + su;
-            let dv = (multishoot::cs(u, u, k) - v[k]) + sv;
+            let cs = if self.par_sums {
+                multishoot::cs_par
+            } else {
+                multishoot::cs
+            };
+            let du = th + cs(u, v, k) + su;
+            let dv = (cs(u, u, k) - v[k]) + sv;
             let ik = DD::ONE / DD::from_f64((k + 1) as f64);
             w.c[0][k + 1] = du.muls(ik);
             w.c[1][k + 1] = dv.muls(ik);

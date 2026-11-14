@@ -35,9 +35,9 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "multidouble"
-version = "4.1.0"
+version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d09d9b1de6a67f678907303619342725e24acf3d9f1c853996e15506ee892f34"
+checksum = "f909d633d5fa58897ed8f042e30d6f58da95eb9eb14a899b24b23b883c2fc2dc"
 dependencies = [
  "rayon",
 ]
