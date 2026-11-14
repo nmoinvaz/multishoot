@@ -178,19 +178,31 @@ fn bits(rep: &NewtonReport, z: &[Vec<f64>]) -> Vec<u64> {
         .collect()
 }
 
+/// the two checks that a run is plain Newton: [same report and state bits, same Jacobian count]
+fn same_as_newton(every: usize) -> [bool; 2] {
+    let (ra, za, ja) = chord(0, 8);
+    let (rb, zb, jb) = chord(every, 8);
+    [bits(&ra, &za) == bits(&rb, &zb), ja == jb]
+}
+
 /// Pass, written before the first run: `newton_chord` with its factors formed at every step is `newton` bit for bit,
-/// in the report and the solution.
+/// in the report and the solution, and forms as many Jacobians. The control: formed every third step, it fails both
+/// checks.
 #[test]
 fn chord_every_step_is_newton() {
-    let (ra, za, ja) = chord(0, 8);
-    let (rb, zb, jb) = chord(1, 8);
-    assert_eq!(bits(&ra, &za), bits(&rb, &zb), "newton_chord(1) differs from newton");
-    assert_eq!(ja, jb);
+    assert_eq!(same_as_newton(1), [true; 2], "newton_chord(1) differs from newton");
+    assert_eq!(same_as_newton(3), [false; 2], "control did not fire");
+}
+
+/// the reuse check: converged, with ceil(steps / every) Jacobians, fewer than its steps
+fn reuses(rep: &NewtonReport, jac: usize, every: usize) -> bool {
+    let steps = rep.scale.len();
+    rep.converged && jac == steps.div_ceil(every) && jac < steps
 }
 
 /// Pass, written before the first run: with the factors formed every third step, Newton converges to max |F| <= 1e-28
 /// within 12 steps, and forms ceil(steps / 3) Jacobians, fewer than its steps. The control: formed at every step, it
-/// forms one Jacobian per step, so the count sees the reuse.
+/// forms one Jacobian per step, so the count sees the reuse, and the reuse check rejects it.
 #[test]
 fn chord_reuses_the_factors() {
     let (rep, _, jac) = chord(3, 12);
@@ -200,10 +212,11 @@ fn chord_reuses_the_factors() {
         rep.converged,
         rep.fnorm.last().unwrap()
     );
-    assert!(rep.converged && jac == steps.div_ceil(3) && jac < steps);
+    assert!(reuses(&rep, jac, 3));
     let (rep, _, jac) = chord(1, 12);
     println!("control, every 1: {} steps, {jac} Jacobians", rep.scale.len());
     assert_eq!(jac, rep.scale.len(), "control: every step forms its Jacobian");
+    assert!(!reuses(&rep, jac, 3), "control did not fire");
 }
 
 /// `every` 0 is refused.
