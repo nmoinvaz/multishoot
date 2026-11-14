@@ -220,3 +220,56 @@ fn root_radius_and_ratio_method() {
         sp.first().map(|p| (p.abs, deg(p.s), p.ms.clone()))
     );
 }
+
+/// the N1 background plus g(a) = w (1 - a / z0) / (1 - a / 2) with z0 = 2 (1 + delta) and w = 1e-8 / delta: a pole at
+/// 2 of residue about 1e-8, whose zero lies delta away, relative; it dominates the background from order 2 on
+fn pole_with_zero(delta: f64) -> Vec<Qs> {
+    let (mut c, _) = planted(Kind::N1, 1, 0.0, false);
+    let w = q(1e-8 / delta);
+    let z0 = q(2.0) * (q(1.0) + q(delta));
+    let d = inv(q(2.0)) - inv(z0);
+    let mut p = q(1.0);
+    for (i, ck) in c.iter_mut().enumerate() {
+        // c_1 = g_0 = w; c_(k+1) = g_k = w 2^-(k-1) (1/2 - 1/z0)
+        *ck = *ck + if i == 0 { w } else { w * p * d };
+        if i > 0 {
+            p = p * inv(q(2.0));
+        }
+    }
+    c
+}
+
+/// whether a stable pole lies within 1e-6 of 2
+fn pole_at_2<P: Precision<Native>>(c: &[P::Scalar], opts: &PoleOpts) -> bool {
+    stable_poles::<P>(c, opts)
+        .iter()
+        .any(|p| (p.s.0 - 2.0).hypot(p.s.1) <= 2e-6)
+}
+
+/// Pass, written before the first run: a pole at 2 whose numerator zero lies 1e-20 away (relative) is genuine to
+/// quad-double, whose doublet threshold is 2^-104, and a doublet to double-double, whose threshold is 2^-52: the
+/// first reports it within 1e-6 and the second does not; with the zero 1e-12 away both report it. The control: with
+/// no doublet threshold (`doublet: Some(0.0)`) double-double reports the pole whose zero is 1e-20 away.
+#[test]
+fn doublets_by_precision() {
+    let to_dd = |c: &[Qs]| {
+        c.iter()
+            .map(|&v| <Quad as Precision<Native>>::to_dd(v))
+            .collect::<Vec<DD>>()
+    };
+    let opts = PoleOpts::default();
+    let (c20, c12) = (pole_with_zero(1e-20), pole_with_zero(1e-12));
+    let checks = [
+        pole_at_2::<Quad>(&c20, &opts),
+        !pole_at_2::<Double>(&to_dd(&c20), &opts),
+        pole_at_2::<Quad>(&c12, &opts),
+        pole_at_2::<Double>(&to_dd(&c12), &opts),
+    ];
+    println!("doublets: [quad 1e-20 kept, double 1e-20 dropped, quad 1e-12 kept, double 1e-12 kept] = {checks:?}");
+    assert_eq!(checks, [true; 4]);
+    let none = PoleOpts {
+        doublet: Some(0.0),
+        ..PoleOpts::default()
+    };
+    assert!(pole_at_2::<Double>(&to_dd(&c20), &none), "control did not fire");
+}
