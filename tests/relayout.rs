@@ -2,7 +2,7 @@
 //! from 16 to 32 collocation points, and its solution moved to new node positions.
 mod common;
 
-use common::Planted;
+use common::{in_pool, Fnv, Planted};
 use multishoot::periodic::{sin_cos_grid, Parity, Resampler};
 use multishoot::prec::nan_max;
 use multishoot::{Parities, Plan, DD};
@@ -143,4 +143,41 @@ fn planted_solution_moves_to_new_nodes() {
     println!("planted renode: {e:.3e}; control, order 6: {c:.3e}");
     assert!(e <= 1e-28);
     assert!(c > 1e-20, "control did not fire");
+}
+
+/// the hash of the planted solution moved to the nodes NEW (order 30, last terms below 1e-32), the last bit of
+/// unknown 37 changed with `ulp`
+fn renode_hash(ulp: bool) -> u64 {
+    let (sh, mut zs) = Planted::<2>::shooting(&NODES, 30, 1e-32);
+    if ulp {
+        zs[0][37] = f64::from_bits(zs[0][37].to_bits() + 1);
+    }
+    let plan = Plan {
+        kt: 30,
+        tol: 1e-32,
+        hmax: 0.25,
+    };
+    let (h, l) = sh.renode(&zs[0], &zs[1], &NEW, &plan).unwrap();
+    let mut f = Fnv::new();
+    h.iter().chain(&l).for_each(|&x| f.f64(x));
+    f.0
+}
+
+/// the reference hash of `renode_hash`, recorded with the serial loop over the new nodes on aarch64 (NEON)
+const RENODE_REFERENCE: u64 = 0xce991f54ebf3bc7f;
+
+/// The moved solution does not depend on the threads that form the new nodes' states: pass, `renode_hash` in pools
+/// of 1, 2 and 5 threads equals the reference of the serial loop. The control: one ulp of unknown 37 changes it.
+#[test]
+fn renode_does_not_depend_on_threads() {
+    for t in [1, 2, 5] {
+        let h = in_pool(t, || renode_hash(false));
+        println!("renode hash, {t} threads: {h:#018x}");
+        assert_eq!(h, RENODE_REFERENCE, "{t} threads");
+    }
+    assert_ne!(
+        in_pool(2, || renode_hash(true)),
+        RENODE_REFERENCE,
+        "control did not fire"
+    );
 }
