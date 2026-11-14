@@ -380,7 +380,8 @@ impl Problem<Double> for Diag {
 
 /// Pass, written before the first run: for J = 2^-1018 I in 32 unknowns, where ||J^-1||_1 = 2^1018 is finite but
 /// twice the alternating vector's solve would overflow, the estimate is 2^1018 and the condition number 1, both to
-/// 1e-15 relative. The control: an infinite estimate, what the unscaled fallback gave, fails the check.
+/// 1e-15 relative. The controls: an infinite estimate of either, what the unscaled fallback gave, fails the check
+/// with the other right.
 #[test]
 fn condition_estimate_near_overflow() {
     let pr = Diag {
@@ -393,5 +394,6 @@ fn condition_estimate_near_overflow() {
     let (inv, cond) = (f.inv_norm1(), f.cond1());
     println!("2^-1018 I: ||J^-1||_1 {inv:e}, cond1 {cond}");
     assert!(ok(inv, cond));
-    assert!(!ok(f64::INFINITY, f64::INFINITY), "control did not fire");
+    assert!(!ok(f64::INFINITY, cond), "inverse-norm control did not fire");
+    assert!(!ok(inv, f64::INFINITY), "condition control did not fire");
 }
