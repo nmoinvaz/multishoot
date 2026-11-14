@@ -69,6 +69,6 @@ pub use multidouble::simd::Native;
 pub use projected::ProjectedRows;
 pub use shooting::{ExtraRow, Shooting};
 pub use solve::newton::{NewtonOpts, NewtonReport};
-pub use solve::{gcr, newton};
+pub use solve::{gcr, lm, newton};
 pub use solve::{Jvp, Problem};
 pub use taylor::Plan;
