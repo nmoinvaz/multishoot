@@ -353,3 +353,87 @@ fn batched_sampling_is_the_one_by_one() {
         "control did not fire"
     );
 }
+
+/// Pass, written before the first run: where the budget runs out (max_evals 40 on the box (0, 4) x (-1, 1)), the error
+/// is "winding: more than 40 evaluations" and f was given 40 points in all; where f fails at re lambda >= 4, the error
+/// names (4, -1), the corner that ends the first edge, the first such point in the edges' order. The controls feed the
+/// same checks wrong errors and must be rejected: the run with max_evals 41, and an f whose every failure names the
+/// last failing point of its batch.
+#[test]
+fn errors_name_the_first_point_in_order() {
+    let zeros = [(1.0, 0.3), (2.5, -0.4), (3.2, 0.6), (5.0, 0.0)];
+    let g = planted(&zeros, (3.0, 0.7), (0.2, 0.1));
+    let poly = rect(0.0, 4.0, -1.0, 1.0);
+    let opts = WindOpts::default();
+    // the budget's error and the number of points f was given
+    let budget = |max_evals: usize| {
+        let given = std::cell::Cell::new(0);
+        let f = |xs: &[C64]| {
+            given.set(given.get() + xs.len());
+            xs.iter().map(|&x| g(x)).collect()
+        };
+        let e = winding_batch(f, &poly, &WindOpts { max_evals, ..opts }).unwrap_err();
+        (e, given.get())
+    };
+    // f failing at re lambda >= 4, its failures naming their own point or, with `last`, the batch's last failing one
+    let failing = |last: bool| {
+        let f = |xs: &[C64]| {
+            let end = xs.iter().rev().find(|x| x.0 >= 4.0).copied();
+            xs.iter()
+                .map(|&x| match (x.0 >= 4.0, last) {
+                    (false, _) => g(x),
+                    (true, false) => Err(format!("no value at {x:?}")),
+                    (true, true) => Err(format!("no value at {:?}", end.unwrap())),
+                })
+                .collect()
+        };
+        winding_batch(f, &poly, &opts).unwrap_err()
+    };
+    let budget_ok = |(e, given): &(String, usize)| e == "winding: more than 40 evaluations" && *given == 40;
+    let first_ok = |e: &String| *e == format!("no value at {:?}", (4.0, -1.0));
+    let (b, f) = (budget(40), failing(false));
+    let (b_wrong, f_wrong) = (budget(41), failing(true));
+    println!("budget {b:?}, control {b_wrong:?}; failure {f}, control {f_wrong}");
+    assert!(budget_ok(&b) && first_ok(&f));
+    assert!(!budget_ok(&b_wrong) && !first_ok(&f_wrong), "control did not fire");
+}
+
+/// Pass, written before the first run: on the box (0, 100) x (-1, 1) at h0 0.01 with max_evals 15000, each edge's grid
+/// fits the budget but the grids together run out of it on the third edge's, the top. The error is then "winding: more
+/// than 15000 evaluations" with 15000 points given to f, also when f fails only past the budget (on the top edge at re
+/// lambda < 50); and when f fails on the top edge at re lambda > 60, before the budget runs out, the error is f's at
+/// (100, 1), the corner that starts it. Each check, fed the other case's error, must reject it.
+#[test]
+fn budget_in_the_first_grids_comes_after_errors_of_f() {
+    let poly = rect(0.0, 100.0, -1.0, 1.0);
+    let opts = WindOpts {
+        h0: 0.01,
+        max_evals: 15000,
+        ..WindOpts::default()
+    };
+    // the error where f fails at the points `bad` picks, and the number of points f was given
+    let run = |bad: &dyn Fn(C64) -> bool| {
+        let given = std::cell::Cell::new(0);
+        let f = |xs: &[C64]| {
+            given.set(given.get() + xs.len());
+            xs.iter()
+                .map(|&x| {
+                    if bad(x) {
+                        Err(format!("no value at {x:?}"))
+                    } else {
+                        Ok((0.0, 0.0))
+                    }
+                })
+                .collect()
+        };
+        (winding_batch(f, &poly, &opts).unwrap_err(), given.get())
+    };
+    let budget = |(e, given): &(String, usize)| e == "winding: more than 15000 evaluations" && *given == 15000;
+    let corner = |(e, _): &(String, usize)| *e == format!("no value at {:?}", (100.0, 1.0));
+    let none = run(&|_| false);
+    let past = run(&|x| x.1 == 1.0 && x.0 < 50.0);
+    let before = run(&|x| x.1 == 1.0 && x.0 > 60.0);
+    println!("{none:?}; {past:?}; {before:?}");
+    assert!(budget(&none) && budget(&past) && corner(&before));
+    assert!(!budget(&before) && !corner(&past), "control did not fire");
+}

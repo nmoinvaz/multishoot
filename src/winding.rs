@@ -200,18 +200,23 @@ impl<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>> Cache<F> {
     /// Evaluates the points of xs not seen yet, each once, as one batch, with the outcome of evaluating them one by
     /// one in order: the first error among them, or the budget's error at the first point past `max`.
     fn fill(&mut self, xs: &[C64]) -> Result<(), String> {
+        let room = self.max.saturating_sub(self.seen.len());
         let mut new: Vec<C64> = Vec::new();
         let mut keys = std::collections::HashSet::new();
         for &x in xs {
             let key = (x.0.to_bits(), x.1.to_bits());
             if !self.seen.contains_key(&key) && keys.insert(key) {
                 new.push(x);
+                // the first point past the budget is the last one needed
+                if new.len() > room {
+                    break;
+                }
             }
         }
         if new.is_empty() {
             return Ok(());
         }
-        let take = new.len().min(self.max.saturating_sub(self.seen.len()));
+        let take = new.len().min(room);
         let vals = (self.f)(&new[..take]);
         if vals.len() > take || (vals.len() < take && !vals.last().is_some_and(|v| v.is_err())) {
             return Err(format!(
@@ -335,6 +340,9 @@ pub fn winding_batch<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
     };
     let k = vertices.len();
     let mut edges = Vec::with_capacity(k);
+    // the initial grids' distinct points in order, collected up to the first one past the budget
+    let mut xs: Vec<C64> = Vec::new();
+    let mut keys = std::collections::HashSet::new();
     for i in 0..k {
         let (from, to) = (vertices[i], vertices[(i + 1) % k]);
         let mut e = Edge {
@@ -349,7 +357,6 @@ pub fn winding_batch<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
         // the edges before it are evaluated first, as one by one they would be
         let nf = (e.len() / opts.h0).ceil().max(1.0);
         if !nf.is_finite() || nf + 1.0 > opts.max_evals as f64 {
-            let xs: Vec<C64> = edges.iter().flat_map(|e: &Edge| e.t.iter().map(|&t| e.at(t))).collect();
             cache.fill(&xs)?;
             return Err(format!(
                 "winding: an edge of length {} at h0 {} needs more than max_evals {} samples",
@@ -362,10 +369,25 @@ pub fn winding_batch<F: FnMut(&[C64]) -> Vec<Result<(f64, f64), String>>>(
         e.t = (0..=n)
             .map(|j| if j == n { 1.0 } else { j as f64 / n as f64 })
             .collect();
+        for &t in &e.t {
+            let x = e.at(t);
+            if keys.insert((x.0.to_bits(), x.1.to_bits())) {
+                xs.push(x);
+                if xs.len() > opts.max_evals {
+                    break;
+                }
+            }
+        }
+        // past the budget, the grids after this point are not built; the points before it are evaluated first, so
+        // that an error of f among them comes before the budget's
+        if xs.len() > opts.max_evals {
+            cache.fill(&xs)?;
+            return Err(format!("winding: more than {} evaluations", opts.max_evals));
+        }
         edges.push(e);
     }
+    drop(keys);
     // every edge's grid as one batch
-    let xs: Vec<C64> = edges.iter().flat_map(|e| e.t.iter().map(|&t| e.at(t))).collect();
     cache.fill(&xs)?;
     for e in edges.iter_mut() {
         e.val = e.t.iter().map(|&t| cache.get(e.at(t))).collect::<Result<_, _>>()?;
