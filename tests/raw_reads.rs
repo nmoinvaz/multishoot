@@ -13,8 +13,8 @@
 mod common;
 
 use common::{perturbed, wave, Planted};
-use multishoot::prec::{parts, widen};
 use multishoot::{Double, ExtraRow, Native, Octo, Precision, Quad, Shooting, DD};
+use multisolver::prec::{parts, widen};
 
 const B: usize = 1;
 const M: usize = 8 * B;

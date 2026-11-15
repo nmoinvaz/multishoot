@@ -3,8 +3,9 @@
 mod common;
 
 use common::{perturbed, Fnv, Planted};
-use multishoot::prec::{max_abs, nan_max, parts, widen};
-use multishoot::{Double, Native, NewtonOpts, Octo, Precision, Quad, Shooting};
+use multishoot::{Double, Native, Octo, Precision, Quad, Shooting};
+use multisolver::prec::{max_abs, nan_max, parts, widen};
+use multisolver::NewtonOpts;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];
@@ -39,7 +40,7 @@ fn state_diff<P: Precision<Native>>(a: &[Vec<f64>], b: &[Vec<f64>]) -> f64 {
 
 /// Newton in double-double from z* perturbed by 1e-3, then in quad-double from its result, then in octo-double from
 /// that: the three reports; the octo-double root must lie within 1e-27 of z*
-fn chain(sh: &Shooting<Planted<B>, B>, zs: &[Vec<f64>]) -> [multishoot::NewtonReport; 3] {
+fn chain(sh: &Shooting<Planted<B>, B>, zs: &[Vec<f64>]) -> [multisolver::NewtonReport; 3] {
     let mut z = perturbed(zs, 1e-3);
     let dd = sh.newton::<Double>(&mut z, &opts(1e-28, 10)).unwrap();
     let mut zq = widen(&z, 4);

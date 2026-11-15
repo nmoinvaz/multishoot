@@ -3,8 +3,9 @@
 mod common;
 
 use common::{perturbed, Bessel, PerColumn};
-use multishoot::prec::{nan_max, parts, widen};
-use multishoot::{Double, Native, NewtonOpts, Precision, Quad, Shooting, DD};
+use multishoot::{Double, Native, Precision, Quad, Shooting, DD};
+use multisolver::prec::{nan_max, parts, widen};
+use multisolver::NewtonOpts;
 use std::sync::atomic::Ordering;
 
 const KT: usize = 30;

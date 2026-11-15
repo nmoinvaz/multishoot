@@ -316,11 +316,11 @@ pub fn spectrum(parity: Parity, f: &[DD]) -> Vec<(i64, DD, DD)> {
 /// ([`spectrum`]) over its largest amplitude, in f64, NaN when any is
 pub fn tail(parity: Parity, f: &[DD], top: usize) -> f64 {
     let amp: Vec<f64> = spectrum(parity, f).iter().map(|&(_, a, b)| a.hi.hypot(b.hi)).collect();
-    let big = amp.iter().copied().fold(0.0, crate::prec::nan_max);
+    let big = amp.iter().copied().fold(0.0, multisolver::prec::nan_max);
     let hi = amp[amp.len().saturating_sub(top)..]
         .iter()
         .copied()
-        .fold(0.0, crate::prec::nan_max);
+        .fold(0.0, multisolver::prec::nan_max);
     hi / big
 }
 
@@ -380,7 +380,7 @@ mod tests {
             r.apply(&f)
                 .iter()
                 .map(|&v| (v - DD::new(1.0, 1e-17)).hi.abs())
-                .fold(0.0, crate::prec::nan_max)
+                .fold(0.0, multisolver::prec::nan_max)
         };
         let mut r = Resampler::new(Parity::Full, 24, 48);
         let e = err(&r);
@@ -390,8 +390,8 @@ mod tests {
         assert!(c > 1e-17, "control did not fire: {c:e}");
     }
     use crate::lane::DV;
-    use crate::prec::nan_max;
     use multidouble::field::Fl;
+    use multisolver::prec::nan_max;
 
     /// sin_cos against sin_cos_pi at multiples of pi / 7 and against f64 at random points; pass: 1e-30 and 1e-15
     #[test]

@@ -5,9 +5,9 @@ mod common;
 use common::{as_pointwise, in_pool, perturbed, wave, Fnv, Planted};
 use multishoot::lane::{DMat, Lane};
 use multishoot::periodic::{dmat, Parity};
-use multishoot::prec::parts;
 use multishoot::taylor::taylor_path;
 use multishoot::{Equations, ExtraRow, Fl, Rate, Shooting, State, Work, DD};
+use multisolver::prec::parts;
 
 /// The linear wave: two odd fields u, v on the half grid, with t = theta / omega and omega a global,
 ///
@@ -771,11 +771,11 @@ fn rect(x0: f64, x1: f64, y0: f64, y1: f64) -> Vec<(f64, f64)> {
 /// refined from the mirrored box's moment `mode_zero` reaches the conjugate zero, more than 0.5 from pi / 2L + i omega.
 #[test]
 fn mode_winding_counts_and_locates_the_modes() {
-    use multishoot::winding::WindOpts;
+    use multisolver::winding::WindOpts;
     let (sh, z) = wave_problem(None);
     let opts = WindOpts::default();
     let z0 = std::f64::consts::PI / (2.0 * X_END);
-    let count_ok = |w: &multishoot::winding::Winding, want: i64| (w.turns - want as f64).abs() < 1e-6 && w.resolved;
+    let count_ok = |w: &multisolver::winding::Winding, want: i64| (w.turns - want as f64).abs() < 1e-6 && w.resolved;
     for (poly, want) in [
         (rect(0.3, 1.0, 0.2, 0.8), 1),
         (rect(-0.3, 0.3, -0.3, 0.3), 0),
@@ -818,7 +818,7 @@ fn mode_winding_counts_and_locates_the_modes() {
 /// for bit, on the wave's box (0.3, 1) x (-0.8, 0.8). The control: the box with one corner moved by 1e-3 differs.
 #[test]
 fn mode_winding_is_the_one_by_one_count() {
-    use multishoot::winding::{winding, WindOpts, Winding};
+    use multisolver::winding::{winding, WindOpts, Winding};
     let (sh, z) = wave_problem(None);
     let opts = WindOpts::default();
     let bits = |w: &Winding| -> (Vec<u64>, u64, usize) {

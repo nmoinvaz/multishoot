@@ -9,10 +9,10 @@
 //! ratio of consecutive terms.
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
-use crate::prec::nan_min;
 use multidouble::dd::DD;
 use multidouble::field::{horner, Fl};
 use multidouble::native::V8;
+use multisolver::prec::nan_min;
 
 /// The planner's settings: Taylor order, tolerance on the last terms (absolute), largest step.
 #[derive(Clone, Copy, Debug)]

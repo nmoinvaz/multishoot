@@ -3,8 +3,8 @@
 mod common;
 
 use common::{perturbed, Planted};
-use multishoot::prec::parts;
 use multishoot::{Double, Shooting, DD};
+use multisolver::prec::parts;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];

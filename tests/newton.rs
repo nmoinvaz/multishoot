@@ -3,8 +3,9 @@
 mod common;
 
 use common::{as_pointwise, perturbed, Fnv, Planted};
-use multishoot::prec::{max_abs, nan_max, parts};
-use multishoot::{Double, NewtonOpts, Shooting, DD};
+use multishoot::{Double, Shooting, DD};
+use multisolver::prec::{max_abs, nan_max, parts};
+use multisolver::NewtonOpts;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];

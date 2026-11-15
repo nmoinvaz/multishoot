@@ -137,7 +137,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             .map(|b| {
                 (self.row_block(b)..self.row_block(b) + rows)
                     .map(|i| P::to_dd(f0[i] - f1[i]).hi.abs())
-                    .fold(0.0, crate::prec::nan_max)
+                    .fold(0.0, multisolver::prec::nan_max)
             })
             .collect())
     }

@@ -1,7 +1,7 @@
 //! Taylor stepping and the planner on the linear model `Rotor`, whose solution is known in closed form.
 mod common;
 
-use multishoot::prec::nan_max;
+use multisolver::prec::nan_max;
 
 use common::{in_pool, max_diff, Fnv, Rotor, Wrong};
 use multishoot::lane::DV;
@@ -426,7 +426,7 @@ fn planner_underflow_control_normal_tolerance_plans() {
 /// integration error, the solution being exact
 fn block_errors(sh: &Shooting<common::Planted<B>, B>, zs: &[Vec<f64>]) -> Vec<f64> {
     let f = sh
-        .residual::<multishoot::Double>(&multishoot::prec::parts(zs), false)
+        .residual::<multishoot::Double>(&multisolver::prec::parts(zs), false)
         .unwrap();
     let rows = 2 * Shooting::<common::Planted<B>, B>::M;
     (0..=sh.k())
@@ -448,7 +448,7 @@ fn taylor_check_estimates_the_paths_error() {
     let (mut sh, zs) = common::Planted::<B>::shooting(&NODES, 8, 1e-10);
     let truth = block_errors(&sh, &zs);
     let est = sh
-        .taylor_check::<multishoot::Double>(&multishoot::prec::parts(&zs), false)
+        .taylor_check::<multishoot::Double>(&multisolver::prec::parts(&zs), false)
         .unwrap();
     let show = |v: &[f64]| v.iter().map(|x| format!("{x:.3e}")).collect::<Vec<_>>().join(" ");
     println!("block errors {}\nestimates    {}", show(&truth), show(&est));
@@ -467,7 +467,7 @@ fn taylor_check_estimates_the_paths_error() {
 #[test]
 fn taylor_check_refuses_a_step_it_cannot_halve() {
     let (mut sh, zs) = common::Planted::<B>::shooting(&NODES, 8, 1e-10);
-    let z = multishoot::prec::parts(&zs);
+    let z = multisolver::prec::parts(&zs);
     assert!(
         sh.taylor_check::<multishoot::Double>(&z, false).is_ok(),
         "control did not fire"

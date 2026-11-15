@@ -292,18 +292,18 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 
     /// The winding number of det M(lambda) along the closed polygon through `vertices`, by
-    /// [`crate::winding::winding_batch`]: the modes whose rates lie inside, less any poles of det M there. Each batch
+    /// [`multisolver::winding::winding_batch`]: the modes whose rates lie inside, less any poles of det M there. Each batch
     /// of samples is evaluated by `mode_logdets`, its rates side by side with `par`; the result is the one of
     /// `winding` with `mode_logdet`, bit for bit.
     pub fn mode_winding(
         &self,
         z: &[&[f64]],
-        vertices: &[crate::winding::C64],
-        opts: &crate::winding::WindOpts,
+        vertices: &[multisolver::winding::C64],
+        opts: &multisolver::winding::WindOpts,
         par: bool,
-    ) -> Result<crate::winding::Winding, String> {
-        crate::winding::winding_batch(
-            |ls: &[crate::winding::C64]| {
+    ) -> Result<multisolver::winding::Winding, String> {
+        multisolver::winding::winding_batch(
+            |ls: &[multisolver::winding::C64]| {
                 let rates: Vec<Rate> = ls
                     .iter()
                     .map(|l| Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)))
@@ -315,16 +315,16 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         )
     }
 
-    /// A zero of det M(lambda) near `x0`, a mode's rate, by [`crate::winding::muller`] from x0 - h, x0 + h and x0
+    /// A zero of det M(lambda) near `x0`, a mode's rate, by [`multisolver::winding::muller`] from x0 - h, x0 + h and x0
     pub fn mode_zero(
         &self,
         z: &[&[f64]],
-        x0: crate::winding::C64,
+        x0: multisolver::winding::C64,
         h: f64,
         tol: f64,
         par: bool,
-    ) -> Result<crate::winding::C64, String> {
-        crate::winding::muller(
+    ) -> Result<multisolver::winding::C64, String> {
+        multisolver::winding::muller(
             |l| self.mode_logdet(z, Rate::new(DD::from_f64(l.0), DD::from_f64(l.1)), par),
             x0,
             h,

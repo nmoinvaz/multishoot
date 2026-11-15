@@ -1,8 +1,8 @@
 //! The Fourier coefficients of a field on its periodic grid, and its resolution, on planted fields with exact
 //! coefficients.
 use multishoot::periodic::{sin_cos_grid, spectrum, tail, Parity};
-use multishoot::prec::nan_max;
 use multishoot::DD;
+use multisolver::prec::nan_max;
 
 /// exact unit pairs (cos, sin) for the phases: c^2 + s^2 = 1 in rationals
 const PHASES: [(f64, f64); 4] = [

@@ -20,6 +20,9 @@
 //! * Newton's method runs in double-double, quad-double or octo-double (multidouble's `Precision`), as the
 //!   conditioning requires, and the residual can be expanded as a Taylor series in a parameter of the equations.
 //!
+//! Newton's method and the other solvers of F(z) = 0 are the crate [`multisolver`], written over its [`Problem`]
+//! trait, which [`Shooting`] implements.
+//!
 //! Status: under construction (0.1.0, not published).
 //!
 //! Modules:
@@ -30,15 +33,10 @@
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
-//! * [`solve`]: solvers of F(z) = 0 over any [`Problem`], which [`Shooting`] is one of: [`newton`], the Newton step
-//!   and the damped Newton loop;
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
-//! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant;
-//! * [`winding`]: the zeros of an analytic function such as det M(lambda) counted inside a polygon by the argument
-//!   principle with adaptive sampling, located by the contour's moment and refined by Muller's method;
-//! * [`prec`]: helpers for states held as part arrays in any of multidouble's precisions ([`Precision`]:
-//!   double-double [`Double`], quad-double [`Quad`], octo-double [`Octo`]);
+//! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
+//!   whose zeros in the rate are counted by multisolver's argument principle;
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
 //! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
 //! * [`relayout`]: a solution moved to new node positions or another number of collocation points;
@@ -54,14 +52,11 @@ pub mod jvp;
 pub mod lane;
 pub mod mode;
 pub mod periodic;
-pub mod prec;
 pub mod projected;
 pub mod relayout;
 pub mod residual;
 pub mod shooting;
-pub mod solve;
 pub mod taylor;
-pub mod winding;
 
 pub use equations::{Equations, State, Work};
 pub use fast::{MixedLu, Storage};
@@ -71,10 +66,9 @@ pub use multidouble::dd::DD;
 pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
 pub use multidouble::precision::{Double, Octo, Precision, Quad};
 pub use multidouble::simd::Native;
+pub use multisolver;
+pub use multisolver::{Jvp, Problem, ResidualJet};
 pub use projected::ProjectedRows;
 pub use relayout::Parities;
 pub use shooting::{ExtraRow, Shooting};
-pub use solve::newton::{NewtonOpts, NewtonReport};
-pub use solve::{anm, gcr, lm, newton, predict, singularity, subspace};
-pub use solve::{Jvp, Problem, ResidualJet};
 pub use taylor::Plan;

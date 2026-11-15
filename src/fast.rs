@@ -16,7 +16,6 @@
 use crate::equations::Equations;
 use crate::jacobian::Seed;
 use crate::lane::{Lane, DV};
-use crate::newton::{newton_with, Factored, NewtonOpts, NewtonReport};
 use crate::shooting::Shooting;
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -24,6 +23,7 @@ use multidouble::linalg::{ld_for, ColumnGroup, DDLu, StaircaseControl, Staircase
 use multidouble::native::V8;
 use multidouble::precision::{Double, Precision};
 use multidouble::simd::Native;
+use multisolver::newton::{newton_with, Factored, NewtonOpts, NewtonReport};
 use rayon::prelude::*;
 
 /// Where the f64 Jacobian of a mixed step is kept and factored

@@ -3,8 +3,8 @@
 mod common;
 
 use common::{perturbed, wave, Fnv, Planted};
-use multishoot::prec::{nan_max, parts};
 use multishoot::{Double, Native, Octo, Precision, Quad, Shooting};
+use multisolver::prec::{nan_max, parts};
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];

@@ -22,13 +22,13 @@
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use crate::mode::Rate;
-use crate::newton::{NewtonOpts, NewtonReport, Step};
-use crate::solve::{Jvp, Problem, ResidualJet};
 use crate::taylor::{plan_path, taylor_path, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
+use multisolver::newton::{NewtonOpts, NewtonReport, Step};
+use multisolver::{Jvp, Problem, ResidualJet};
 use rayon::prelude::*;
 
 /// A linear condition on the unknowns, `sum_i w_i z_(idx_i) - rhs = 0`: a phase condition, a normalization, a pinned
@@ -266,7 +266,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 }
 
-/// The layout as a problem for the solvers of [`crate::solve`]: its residual and exact Jacobian in any precision
+/// The layout as a problem for the solvers of [`multisolver`]: its residual and exact Jacobian in any precision
 impl<E: Equations<B>, const B: usize, P: Precision<Native>> Problem<P> for Shooting<E, B> {
     fn len(&self) -> usize {
         Shooting::len(self)
@@ -302,17 +302,17 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> ResidualJet<P> for S
 }
 
 impl<E: Equations<B>, const B: usize> Shooting<E, B> {
-    /// The Newton step at z ([`crate::newton::newton_step`] on this problem)
+    /// The Newton step at z ([`multisolver::newton::newton_step`] on this problem)
     pub fn newton_step<P: Precision<Native>>(&self, z: &[&[f64]], par: bool) -> Result<Step<P>, String> {
-        crate::newton::newton_step::<P, Self>(self, z, par)
+        multisolver::newton::newton_step::<P, Self>(self, z, par)
     }
 
-    /// Newton's method from z, damped by `opts.damping` ([`crate::newton::newton`] on this problem)
+    /// Newton's method from z, damped by `opts.damping` ([`multisolver::newton::newton`] on this problem)
     pub fn newton<P: Precision<Native>>(
         &self,
         z: &mut Vec<Vec<f64>>,
         opts: &NewtonOpts,
     ) -> Result<NewtonReport, String> {
-        crate::newton::newton::<P, Self>(self, z, opts)
+        multisolver::newton::newton::<P, Self>(self, z, opts)
     }
 }

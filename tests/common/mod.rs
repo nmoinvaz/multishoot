@@ -2,8 +2,8 @@
 #![allow(dead_code)]
 use multishoot::lane::{DMat, Lane, DV};
 use multishoot::periodic::{dmat, sin_cos, theta, Parity};
-use multishoot::prec::nan_max;
 use multishoot::{Equations, Fl, State, Work, DD};
+use multisolver::prec::nan_max;
 
 /// a double-double field from its values at the collocation points
 pub fn field<const B: usize>(f: impl Fn(usize) -> DD) -> Fl<DV, B> {
