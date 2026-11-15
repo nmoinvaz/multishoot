@@ -4,8 +4,9 @@ mod common;
 
 use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::lane::{Dtn, Fu, Fun, Lane};
-use multishoot::prec::{max_abs, nan_max, parts, widen};
-use multishoot::{Double, Equations, ExtraRow, MixedLu, NewtonOpts, Quad, Shooting, Storage, DD};
+use multishoot::{Double, Equations, ExtraRow, MixedLu, Quad, Shooting, Storage, DD};
+use multisolver::prec::{max_abs, nan_max, parts, widen};
+use multisolver::NewtonOpts;
 use std::collections::HashMap;
 
 const B: usize = 2;
@@ -157,7 +158,7 @@ fn mixed<T: Lane>(
     zs: &[Vec<f64>],
     s: Storage,
     it: usize,
-) -> (multishoot::NewtonReport, f64) {
+) -> (multisolver::NewtonReport, f64) {
     let mut z = perturbed(zs, 1e-3);
     let rep = sh.newton_mixed::<Double, T>(&mut z, &opts(1e-28, it), s).unwrap();
     (rep, dist(&z, zs))

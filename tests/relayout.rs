@@ -4,8 +4,8 @@ mod common;
 
 use common::{in_pool, Fnv, Planted};
 use multishoot::periodic::{sin_cos_grid, Parity, Resampler};
-use multishoot::prec::nan_max;
 use multishoot::{Parities, Plan, DD};
+use multisolver::prec::nan_max;
 
 /// the field sum over the harmonics ks of (0.3 + 0.1 k) cos k theta + (0.2 - 0.05 k) sin k theta on the grid of m
 /// points of the parity, with a nonzero lo part in every coefficient

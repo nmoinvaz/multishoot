@@ -4,10 +4,11 @@ mod common;
 
 use common::Planted;
 use multishoot::lane::DV;
-use multishoot::newton::Damping;
-use multishoot::prec::{max_abs, parts};
 use multishoot::taylor::{coef_norm, step_size, Plan};
-use multishoot::{Double, Fl, NewtonOpts, Shooting, Work, DD};
+use multishoot::{Double, Fl, Shooting, Work, DD};
+use multisolver::newton::Damping;
+use multisolver::prec::{max_abs, parts};
+use multisolver::NewtonOpts;
 
 const B: usize = 2;
 const NODES: [f64; 5] = [0.0, 0.5, 1.0, 1.5, 2.0];

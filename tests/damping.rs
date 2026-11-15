@@ -4,9 +4,10 @@ mod common;
 
 use common::{as_counted, wave, Planted};
 use multishoot::lane::DV;
-use multishoot::newton::Damping;
-use multishoot::prec::{max_abs, nan_max, parts};
-use multishoot::{Double, NewtonOpts, NewtonReport, Shooting, DD};
+use multishoot::{Double, Shooting, DD};
+use multisolver::newton::Damping;
+use multisolver::prec::{max_abs, nan_max, parts};
+use multisolver::{NewtonOpts, NewtonReport};
 use std::sync::atomic::Ordering;
 
 const B: usize = 2;

@@ -3,8 +3,9 @@
 mod common;
 
 use common::{perturbed, wave, Cylinder, Fnv};
-use multishoot::prec::{max_abs, nan_max, parts, widen};
-use multishoot::{Double, Native, NewtonOpts, Octo, Precision, Quad, Shooting, DD};
+use multishoot::{Double, Native, Octo, Precision, Quad, Shooting, DD};
+use multisolver::prec::{max_abs, nan_max, parts, widen};
+use multisolver::NewtonOpts;
 
 const B: usize = 1;
 const KT: usize = 30;

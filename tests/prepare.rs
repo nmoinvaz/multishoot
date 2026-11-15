@@ -5,10 +5,9 @@ mod common;
 
 use common::{perturbed, wave, Bessel, Planted};
 use multishoot::lane::{Dtn, Fu, Lane};
-use multishoot::prec::{parts, widen};
-use multishoot::{
-    Double, Equations, Fl, Native, NewtonOpts, Precision, Quad, Rate, Shooting, State, Storage, Work, DD,
-};
+use multishoot::{Double, Equations, Fl, Native, Precision, Quad, Rate, Shooting, State, Storage, Work, DD};
+use multisolver::prec::{parts, widen};
+use multisolver::NewtonOpts;
 
 /// E with a fallible preparation: `try_prepare` and `try_prepare_rate` give E's preparation marked as formed by them,
 /// or the error `fail` when it is set. Its infallible `prepare` and `prepare_rate` keep their defaults, an unmarked
