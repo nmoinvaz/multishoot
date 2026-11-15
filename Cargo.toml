@@ -1,6 +1,6 @@
 [package]
 name = "multishoot"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 rust-version = "1.89"
 description = "Multiple-shooting boundary-value solver in double-, quad- and octo-double precision: Taylor-jet stepping between nodes, exact Jacobians and Jacobian-vector products by forward-mode duals, the residual's series in a parameter and the mode matrix"
