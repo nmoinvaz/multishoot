@@ -28,7 +28,7 @@ use multidouble::field::Fl;
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
 use multisolver::newton::{NewtonOpts, NewtonReport, Step};
-use multisolver::{Jvp, Problem, ResidualJet};
+use multisolver::{JetOrders, Jvp, Problem, Recompute, ResidualJet};
 use rayon::prelude::*;
 
 /// A linear condition on the unknowns, `sum_i w_i z_(idx_i) - rhs = 0`: a phase condition, a normalization, a pinned
@@ -297,6 +297,24 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> ResidualJet<P> for S
             n => Err(format!(
                 "residual_jet: at most 32 orders and coefficient vectors, not {n}"
             )),
+        }
+    }
+
+    /// A [`crate::jet::JetSession`] on jets of 8, 16 or 32 coefficients, the smallest that holds orders 0..=order,
+    /// when the equations form one order from the kept ones (`Equations::ORDER_BY_ORDER`); otherwise multisolver's
+    /// `Recompute`, each order by `residual_jet`. Both give `residual_jet`'s bits.
+    fn jet_orders<'a>(&'a self, order: usize) -> Result<Box<dyn JetOrders<P> + 'a>, String>
+    where
+        P: 'a,
+    {
+        if !E::ORDER_BY_ORDER {
+            return Ok(Box::new(Recompute::new(self)));
+        }
+        match order + 1 {
+            0..=8 => Ok(Box::new(self.jet_session::<P, 8>())),
+            9..=16 => Ok(Box::new(self.jet_session::<P, 16>())),
+            17..=32 => Ok(Box::new(self.jet_session::<P, 32>())),
+            n => Err(format!("jet_orders: at most 32 orders, not {n}")),
         }
     }
 }

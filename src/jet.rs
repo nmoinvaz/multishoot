@@ -337,3 +337,12 @@ impl<E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> JetS
         Ok(ok)
     }
 }
+
+/// The session as multisolver's series of a branch takes its orders ([`multisolver::JetOrders`])
+impl<E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> multisolver::JetOrders<P>
+    for JetSession<'_, E, P, N, B>
+{
+    fn next(&mut self, z: &[&[f64]], par: bool) -> Result<Vec<P::Scalar>, String> {
+        JetSession::next(self, z, par)
+    }
+}
