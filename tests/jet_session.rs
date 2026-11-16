@@ -18,8 +18,11 @@ fn coef_vector(l: usize, k: usize) -> Vec<Vec<f64>> {
     vec![(0..l).map(|i| s * wave(i + 31 * k)).collect(), vec![0.0; l]]
 }
 
-/// the number of rows whose parts differ in any bit
+/// the number of rows whose parts differ in any bit; every row of the longer when the lengths differ
 fn bits_differ<P: Precision<Native>>(a: &[P::Scalar], b: &[P::Scalar]) -> usize {
+    if a.len() != b.len() {
+        return a.len().max(b.len());
+    }
     a.iter()
         .zip(b)
         .filter(|(&u, &v)| (0..P::PARTS).any(|q| P::part(u, q).to_bits() != P::part(v, q).to_bits()))
@@ -154,10 +157,49 @@ impl Equations<1> for Recorder {
     }
 }
 
+/// The failures of a recorded call list against the contract: every one of `steps` Taylor steps and both endpoint
+/// maps called for the orders `want` in that sequence, and each endpoint map's kept series holding one entry per call
+/// before it
+fn call_failures(calls: &[(char, u64, usize)], steps: usize, want: &[usize]) -> Vec<String> {
+    let mut by: HashMap<(char, u64), Vec<usize>> = HashMap::new();
+    let mut keeps: HashMap<char, Vec<u64>> = HashMap::new();
+    for &(m, key, k) in calls {
+        if m == 'T' {
+            by.entry((m, key)).or_default().push(k);
+        } else {
+            by.entry((m, 0)).or_default().push(k);
+            keeps.entry(m).or_default().push(key);
+        }
+    }
+    let mut fails = Vec::new();
+    let taylor = by.keys().filter(|(m, _)| *m == 'T').count();
+    if taylor != steps {
+        fails.push(format!("{taylor} of {steps} Taylor steps called"));
+    }
+    for m in ['L', 'R'] {
+        if !by.contains_key(&(m, 0)) {
+            fails.push(format!("no {m} endpoint calls"));
+        }
+    }
+    for (key, seq) in &by {
+        if seq != want {
+            fails.push(format!("{key:?}: orders {seq:?}"));
+        }
+    }
+    let lens: Vec<u64> = (0..want.len() as u64).collect();
+    for (m, l) in &keeps {
+        if l != &lens {
+            fails.push(format!("{m}: kept series lengths {l:?}"));
+        }
+    }
+    fails
+}
+
 /// Pass, written before the first run: after z_0..z_3, every Taylor step and both endpoint maps were called for the
 /// orders 0, 1, 1, 2, 2, 3, 3, 4 in that sequence (order k formed with z_k zero, then again once it is given), each
 /// endpoint map saw its kept series hold one entry per call before it, and the session's orders are still
-/// `residual_jet`'s, bit for bit.
+/// `residual_jet`'s, bit for bit. The controls: the same calls without the right endpoint's, and without one Taylor
+/// step's, fail the contract.
 #[test]
 fn session_calls_the_order_methods_in_sequence() {
     let (cy, z) = cylinder();
@@ -174,35 +216,36 @@ fn session_calls_the_order_methods_in_sequence() {
     let (_, ret, formed) = compare::<_, Double, 1>(&sh, &z, 4, true);
     assert_eq!((ret, formed), (0, 0), "the recorded session is not residual_jet's");
     let calls = sh.eq.calls.lock().unwrap().clone();
-    let want = vec![0, 1, 1, 2, 2, 3, 3, 4];
-    let mut by: HashMap<(char, u64), Vec<usize>> = HashMap::new();
-    let mut keeps: HashMap<char, Vec<u64>> = HashMap::new();
-    for &(m, key, k) in &calls {
-        if m == 'T' {
-            by.entry((m, key)).or_default().push(k);
-        } else {
-            by.entry((m, 0)).or_default().push(k);
-            keeps.entry(m).or_default().push(key);
-        }
-    }
+    let want = [0, 1, 1, 2, 2, 3, 3, 4];
     let steps: usize = cy.segs.iter().map(|s| s.len() - 1).sum();
-    let taylor = by.keys().filter(|(m, _)| *m == 'T').count();
+    let fails = call_failures(&calls, steps, &want);
     println!(
-        "{} calls: {taylor} Taylor steps of {steps}, sequences {:?}",
-        calls.len(),
-        by.values().next()
+        "{} calls on {steps} Taylor steps and two endpoint maps: {fails:?}",
+        calls.len()
     );
-    assert_eq!(taylor, steps, "every Taylor step should be called");
-    for (key, seq) in &by {
-        assert_eq!(seq, &want, "{key:?}: order sequence");
+    assert!(fails.is_empty(), "{fails:?}");
+    let no_right: Vec<_> = calls.iter().copied().filter(|c| c.0 != 'R').collect();
+    let first_step = calls.iter().find(|c| c.0 == 'T').unwrap().1;
+    let no_step: Vec<_> = calls
+        .iter()
+        .copied()
+        .filter(|c| !(c.0 == 'T' && c.1 == first_step))
+        .collect();
+    for (name, cut) in [("no right endpoint", no_right), ("one Taylor step missing", no_step)] {
+        let f = call_failures(&cut, steps, &want);
+        println!("control, {name}: {f:?}");
+        assert!(!f.is_empty(), "control {name} did not fire");
     }
-    for (m, lens) in &keeps {
-        assert_eq!(
-            lens,
-            &(0..want.len() as u64).collect::<Vec<_>>(),
-            "{m}: kept series not kept between orders"
-        );
-    }
+}
+
+/// Pass, written before the first run: the row comparison counts every row of a residual that is missing rows, so a
+/// session order of the wrong length cannot pass as bitwise equal.
+#[test]
+fn bits_differ_counts_missing_rows() {
+    let one = <Double as Precision<Native>>::from_dd(multishoot::DD::ONE);
+    assert_eq!(bits_differ::<Double>(&[], &[one, one]), 2);
+    assert_eq!(bits_differ::<Double>(&[one, one], &[one]), 2);
+    assert_eq!(bits_differ::<Double>(&[one], &[one]), 0);
 }
 
 /// The control of `session_orders_are_residual_jet_bitwise` (feature `mutate`): without the second forming of order
