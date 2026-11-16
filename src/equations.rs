@@ -66,6 +66,12 @@ pub trait Equations<const B: usize>: Sync {
     /// an input field at once. A problem without a periodic direction fills its lanes this way (8 parameter values,
     /// 8 initial data) and sets it; a problem that couples the points must leave it false.
     const POINTWISE: bool = false;
+    /// Whether the order-k methods (`taylor_coeffs_at`, `left_state_at`, `right_state_at`) form one order in the jet
+    /// variable from the orders kept, rather than their defaults' every order. The layout's
+    /// `multisolver::ResidualJet::jet_orders` then gives a [`crate::jet::JetSession`], whose series of order N costs
+    /// about N orders; without it, multisolver's `Recompute` by `residual_jet`, which costs less than a session over
+    /// the defaults.
+    const ORDER_BY_ORDER: bool = false;
 
     /// What the endpoint maps need once per evaluation (of the residual, the Jacobian or the jet) rather than once
     /// per block or column: a series' coefficient table, the factors of a periodic solve. `()` when nothing. A
