@@ -33,4 +33,7 @@ pub enum Control {
     StaircasePivot,
     /// the staircase LU with the copies of the global untied from it (`StaircaseControl::Link`)
     StaircaseLink,
+    /// the jet session ([`crate::jet::JetSession`]) without its second forming of order k once z_k is given: the
+    /// order keeps what it was with z_k zero
+    JetStale,
 }

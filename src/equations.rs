@@ -113,4 +113,45 @@ pub trait Equations<const B: usize>: Sync {
 
     /// The state at the last node x from the right endpoint's data (`NR` fields), as `left_state`.
     fn right_state<T: Lane>(&self, x: f64, data: &[Fl<T, B>], g: &[T], prep: &Self::Prep) -> State<T, B>;
+
+    /// `taylor_coeffs` for the coefficient of order k in the jet variable alone, for the residual's series formed one
+    /// order at a time ([`crate::jet::JetSession`]). On entry `w.c[f][0]` and g hold their coefficients 0..=k, and
+    /// every series of w holds its coefficients below k as this method left them for this step at the orders before
+    /// (the session keeps one `Work` per step). On return coefficient k of every Taylor coefficient 1..=kt is set. A
+    /// call for an order formed before forms it again from its inputs (the session forms order k again once z_k is
+    /// known). By default `taylor_coeffs`, which forms every order.
+    fn taylor_coeffs_at<T: Lane>(&self, x0: f64, g: &[T], w: &mut Work<T, B>, k: usize) {
+        let _ = k;
+        self.taylor_coeffs(x0, g, w)
+    }
+
+    /// `left_state` for the coefficient of order k alone, as `taylor_coeffs_at`: data and g hold their coefficients
+    /// 0..=k, and `keep` holds whatever series the map keeps between orders (empty before the first call, the
+    /// session's from then on). The returned state's coefficient k is read. By default `left_state`.
+    fn left_state_at<T: Lane>(
+        &self,
+        x: f64,
+        data: &[Fl<T, B>],
+        g: &[T],
+        prep: &Self::Prep,
+        keep: &mut Vec<Vec<Fl<T, B>>>,
+        k: usize,
+    ) -> State<T, B> {
+        let _ = (keep, k);
+        self.left_state(x, data, g, prep)
+    }
+
+    /// `right_state` for the coefficient of order k alone, as `left_state_at`. By default `right_state`.
+    fn right_state_at<T: Lane>(
+        &self,
+        x: f64,
+        data: &[Fl<T, B>],
+        g: &[T],
+        prep: &Self::Prep,
+        keep: &mut Vec<Vec<Fl<T, B>>>,
+        k: usize,
+    ) -> State<T, B> {
+        let _ = (keep, k);
+        self.right_state(x, data, g, prep)
+    }
 }
