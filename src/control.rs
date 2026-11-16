@@ -36,4 +36,7 @@ pub enum Control {
     /// the jet session ([`crate::jet::JetSession`]) without its second forming of order k once z_k is given: the
     /// order keeps what it was with z_k zero
     JetStale,
+    /// the multi-tangent Jacobian (`Shooting::jacobian_tangents`) with each evaluation's tangents read in reverse
+    /// order, so that its columns land in one another's places
+    TangentOrder,
 }

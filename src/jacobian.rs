@@ -10,8 +10,9 @@
 //! tangent on every point of an input field and gives that field's M columns at once: point j's tangent reaches only
 //! point j's rows. A column's entries are those of the evaluation seeded on its point alone, lane for lane.
 use crate::equations::{Equations, State};
-use crate::lane::BaseLane;
+use crate::lane::{BaseLane, Lane};
 use crate::shooting::Shooting;
+use multidouble::dual::Tangents;
 use multidouble::field::Fl;
 use multidouble::linalg::ld_for;
 use multidouble::precision::Precision;
@@ -110,9 +111,6 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         if !self.is_square() {
             return Err(format!("jacobian: {} rows for {} unknowns", self.rows(), self.len()));
         }
-        let l = self.len();
-        let m = Self::M;
-        let ld = ld_for(l);
         let g = self.globals::<P>(z);
         let tasks = self.jac_tasks();
         let prep = self.prep(z)?;
@@ -122,6 +120,116 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         } else {
             tasks.iter().map(column).collect()
         };
+        self.assemble::<P>(&tasks, &cols)
+    }
+
+    /// `jacobian`, bit for bit, with dual lanes T that carry `T::NTD` tangents each (multidouble's `Tangents`, such as
+    /// `Oun<N>` for octo-double): one evaluation of a block for up to NTD of its column tasks, the value formed once
+    /// for all of them and each tangent by the operations of its own single-tangent evaluation.
+    pub fn jacobian_tangents<P: Precision<Native>, T: Lane + Tangents<V = P::V>>(
+        &self,
+        z: &[&[f64]],
+        par: bool,
+    ) -> Result<(Vec<Vec<f64>>, usize), String> {
+        self.check_z::<P>(z)?;
+        if !self.is_square() {
+            return Err(format!("jacobian: {} rows for {} unknowns", self.rows(), self.len()));
+        }
+        let n = T::NTD.max(1);
+        let g = self.globals::<P>(z);
+        let tasks = self.jac_tasks();
+        let prep = self.prep(z)?;
+        // consecutive tasks of one block, at most n to an evaluation
+        let mut groups: Vec<(usize, Vec<Seed>)> = Vec::new();
+        for &(b, seed) in &tasks {
+            match groups.last_mut() {
+                Some((gb, seeds)) if *gb == b && seeds.len() < n => seeds.push(seed),
+                _ => groups.push((b, vec![seed])),
+            }
+        }
+        let eval = |(b, seeds): &(usize, Vec<Seed>)| self.jac_columns_tangents::<P, T>(z, &g, &prep, *b, seeds);
+        let cols: Vec<Vec<P::Scalar>> = if par {
+            groups.par_iter().flat_map_iter(eval).collect()
+        } else {
+            groups.iter().flat_map(eval).collect()
+        };
+        self.assemble::<P>(&tasks, &cols)
+    }
+
+    /// The columns of block b's tasks `seeds` from one evaluation with T lanes, tangent k seeded as task k's
+    /// `jac_column` seeds its one tangent; each column NF M values
+    fn jac_columns_tangents<P: Precision<Native>, T: Lane + Tangents<V = P::V>>(
+        &self,
+        z: &[&[f64]],
+        g: &[P::Scalar],
+        prep: &E::Prep,
+        b: usize,
+        seeds: &[Seed],
+    ) -> Vec<Vec<P::Scalar>> {
+        let m = Self::M;
+        let inp: Vec<Fl<T, B>> = self
+            .block_inputs(b)
+            .iter()
+            .enumerate()
+            .map(|(fi, &o)| {
+                let t: Vec<Fl<P::V, B>> = seeds
+                    .iter()
+                    .map(|seed| match *seed {
+                        Seed::Field(f, j) if f == fi => Fl::<P::V, B>::unit(j),
+                        Seed::Points(f) if f == fi => Fl::<P::V, B>::splat(multidouble::dd::DD::ONE),
+                        _ => Fl::zero(),
+                    })
+                    .collect();
+                Fl::<T, B>::from_tangents(&self.load::<P>(z, o), &t)
+            })
+            .collect();
+        let gu: Vec<T> = g
+            .iter()
+            .enumerate()
+            .map(|(i, &gi)| {
+                let t: Vec<P::V> = seeds
+                    .iter()
+                    .map(|seed| {
+                        if *seed == Seed::Global(i) {
+                            P::splat(P::ONE)
+                        } else {
+                            <P::V as BaseLane>::zero()
+                        }
+                    })
+                    .collect();
+                T::from_tangents(P::splat(gi), &t)
+            })
+            .collect();
+        let s: State<T, B> = self.block_state::<T>(b, &inp, &gu, prep);
+        #[cfg(feature = "mutate")]
+        let swap = self.control == crate::control::Control::TangentOrder && seeds.len() > 1;
+        #[cfg(not(feature = "mutate"))]
+        let swap = false;
+        (0..seeds.len())
+            .map(|k| {
+                let k = if swap { seeds.len() - 1 - k } else { k };
+                let mut out = Vec::with_capacity(E::NF * m);
+                for sq in &s {
+                    let t = sq.tangent(k);
+                    for i in 0..m {
+                        out.push(P::field_get(&t, i));
+                    }
+                }
+                out
+            })
+            .collect()
+    }
+
+    /// The Jacobian from its column tasks' columns: the entries, the targets' -1, the projected rows, the extra rows
+    /// and the row scaling, in `jacobian`'s order
+    fn assemble<P: Precision<Native>>(
+        &self,
+        tasks: &[(usize, Seed)],
+        cols: &[Vec<P::Scalar>],
+    ) -> Result<(Vec<Vec<f64>>, usize), String> {
+        let l = self.len();
+        let m = Self::M;
+        let ld = ld_for(l);
         let mut c: Vec<Vec<f64>> = (0..P::PARTS).map(|_| vec![0.0; ld * l]).collect();
         let add = |c: &mut [Vec<f64>], idx: usize, v: P::Scalar| {
             let cur: Vec<f64> = (0..P::PARTS).map(|q| c[q][idx]).collect();
@@ -131,7 +239,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             }
         };
         let nf = E::NF;
-        for (&(b, seed), col) in tasks.iter().zip(&cols) {
+        for (&(b, seed), col) in tasks.iter().zip(cols) {
             let r0 = self.row_block(b);
             for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
                 #[cfg(feature = "mutate")]
