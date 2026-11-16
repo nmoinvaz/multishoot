@@ -14,9 +14,9 @@ exclude = ["/.github", "/.claude", "/CLAUDE.md"]
 [dependencies]
 # 4.1.0: the Precision trait over double-, quad- and octo-double (Double, Quad, Octo); 4.5.0: the blocked complex LU
 # of the mode matrix's determinant
-multidouble = "4.5.0"
+multidouble = "4.7.0"
 # the solvers of F(z) = 0 over the Problem trait, and the argument-principle zero count
-multisolver = "0.1.0"
+multisolver = "0.1.1"
 rayon = "1.10"
 
 [features]
