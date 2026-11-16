@@ -23,8 +23,6 @@
 //! Newton's method and the other solvers of F(z) = 0 are the crate [`multisolver`], written over its [`Problem`]
 //! trait, which [`Shooting`] implements.
 //!
-//! Status: under construction (0.1.0, not published).
-//!
 //! Modules:
 //!
 //! * [`equations`]: the [`Equations`] trait, the state and the Taylor work arrays;
