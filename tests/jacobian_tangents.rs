@@ -4,7 +4,7 @@
 //! off the solution.
 mod common;
 
-use common::{perturbed, Cylinder, Planted};
+use common::{as_pointwise, perturbed, Cylinder, Planted};
 use multishoot::multidouble::native::{Ou, Oun};
 use multishoot::periodic::Parity;
 use multishoot::{Equations, Octo, Shooting};
@@ -49,21 +49,25 @@ fn projected() -> (Shooting<Planted<2>, 2>, Vec<Vec<f64>>) {
     (sh, widen(&perturbed(&z, 1e-3), 8))
 }
 
-/// Pass, written before the first run: on `Cylinder` and on the projected planted problem, at states perturbed by
-/// 1e-3, the octo-double Jacobian with one tangent per evaluation through `jacobian_tangents` (Ou), with four and
-/// with eight (Oun<4>, Oun<8>) is `jacobian::<Octo>`'s, every part of every entry, with and without threads (0
-/// entries differ).
+/// Pass, written before the first run: on `Cylinder`, on the projected planted problem and on the planted problem as a
+/// pointwise one (one evaluation seeding every point of a field, `Seed::Points`), at states perturbed by 1e-3, the
+/// octo-double Jacobian with one tangent per evaluation through `jacobian_tangents` (Ou), with four and with eight
+/// (Oun<4>, Oun<8>) is `jacobian::<Octo>`'s, every part of every entry, with and without threads (0 entries differ).
 #[test]
 fn jacobian_tangents_is_jacobian_bitwise() {
     let (cy, zc) = cylinder();
     let (pr, zp) = projected();
+    let (pl, zl) = Planted::<2>::shooting(&[0.0, 0.5, 1.0, 1.5, 2.0], 30, 1e-32);
+    let pw = as_pointwise(pl);
+    let zw = widen(&perturbed(&zl, 1e-3), 8);
     for par in [false, true] {
         let c = compare(&cy, &zc, par);
         let p = compare(&pr, &zp, par);
-        println!("par {par}: entries that differ (Ou, Oun<4>, Oun<8>): cylinder {c:?}, projected planted {p:?}");
+        let w = compare(&pw, &zw, par);
+        println!("par {par}: entries that differ (Ou, Oun<4>, Oun<8>): cylinder {c:?}, projected planted {p:?}, pointwise planted {w:?}");
         assert_eq!(
-            (c, p),
-            ([0; 3], [0; 3]),
+            (c, p, w),
+            ([0; 3], [0; 3], [0; 3]),
             "par {par}: a multi-tangent Jacobian is not jacobian's"
         );
     }
