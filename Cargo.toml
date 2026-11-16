@@ -27,3 +27,8 @@ mutate = []
 
 [profile.release]
 opt-level = 3
+
+# multidouble's Oun and Tangents (multidouble PR #55), for every crate in the graph, until their release; removed
+# before merging, with the dependency moved to that release
+[patch.crates-io]
+multidouble = { git = "https://github.com/nmoinvaz/multidouble", branch = "feat/oun-lanes" }
