@@ -265,9 +265,13 @@ impl<E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> JetS
                         }
                         sh.eq.taylor_coeffs_at(xs[i], g, w, j);
                         let h = DD::from_f64(xs[i + 1]) - DD::from_f64(xs[i]);
+                        // the step's sum at coefficient j alone: a jet's Horner step multiplies and adds coefficient
+                        // by coefficient, in the value lanes' arithmetic, so this is the full sum's coefficient j
+                        let mut cj = Vec::with_capacity(w.kt + 1);
                         for (f, ef) in rest[0].iter_mut().enumerate() {
-                            let e = horner(&w.c[f][..=w.kt], h);
-                            P::field_set_coef(ef, j, &P::field_coef(&e, j));
+                            cj.clear();
+                            cj.extend(w.c[f][..=w.kt].iter().map(|c| P::field_coef(c, j)));
+                            P::field_set_coef(ef, j, &horner(&cj, h));
                         }
                     }
                     put(ends.last().map_or(inp.as_slice(), |e| e.as_slice()));
