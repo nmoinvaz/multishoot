@@ -12,6 +12,14 @@
 //! ([`Equations::taylor_coeffs_at`], `left_state_at`, `right_state_at`) form order k from the lower orders kept. Their
 //! defaults form every order again, so a session over equations without them gives `residual_jet`'s bits at the cost
 //! of `residual_jet`.
+//!
+//! A session forms order k twice: with z_k zero, for the right-hand side of z_k's solve, and again once z_k is given.
+//! Between the two only the inputs' coefficient k changes, and coefficient k of every series is affine in it, its
+//! linear part the derivative of order 0. With [`JetSession::tangent_from`] the second forming is replaced by that
+//! derivative, taken from a second session on two-coefficient jets `P::J<2>` at z_0: its order 1 formed with the
+//! inputs' coefficient 1 set to the change, less its order 1 with them zero (the parameter's own part), is the change of
+//! every series. The pair's jets carry the parameter in the same arithmetic as the session's (a dual lane would carry it
+//! in double-double), and its order 1 costs two products per term where forming order k again costs k + 1.
 use crate::equations::{Equations, State, Work};
 use crate::lane::{BaseLane, Lane};
 use crate::shooting::Shooting;
@@ -133,15 +141,70 @@ enum Kept<T: Lane, const B: usize> {
 /// a block's index, its kept series and its state, as `JetSession::form` visits them
 type BlockMut<'b, T, const B: usize> = (usize, (&'b mut Kept<T, B>, &'b mut State<T, B>));
 
+/// What a series of the session is to the tangent update
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// set from its source as forming sets it (a Taylor step's start, a segment's state), not moved
+    Copied,
+    /// kept by the equations (`Work::aux`, an endpoint map's `keep`)
+    Own,
+    /// formed by the equations or the session (Taylor coefficients, end states, an endpoint state)
+    Formed,
+}
+
+/// Every series of a session's blocks in a fixed order, with its role: an endpoint map's kept series and its state;
+/// or each Taylor step's start, coefficients, scratch series and end state, then the segment's state
+fn series_of<'b, T: Lane, const B: usize>(
+    kept: &'b mut [Kept<T, B>],
+    states: &'b mut [State<T, B>],
+) -> Vec<(Role, &'b mut [Fl<T, B>])> {
+    let mut out = Vec::new();
+    for (kp, st) in kept.iter_mut().zip(states.iter_mut()) {
+        let state_role = match kp {
+            Kept::End(keep) => {
+                out.extend(keep.iter_mut().map(|x| (Role::Own, &mut x[..])));
+                Role::Formed
+            }
+            Kept::Seg(works, ends) => {
+                for (w, e) in works.iter_mut().zip(ends.iter_mut()) {
+                    for c in w.c.iter_mut() {
+                        let n = c.len().min(1);
+                        let (start, rest) = c.split_at_mut(n);
+                        out.push((Role::Copied, start));
+                        out.push((Role::Formed, rest));
+                    }
+                    out.extend(w.aux.iter_mut().map(|x| (Role::Own, &mut x[..])));
+                    out.push((Role::Formed, &mut e[..]));
+                }
+                Role::Copied
+            }
+        };
+        out.push((state_role, &mut st[..]));
+    }
+    out
+}
+
+/// The two-coefficient session of the tangent update at z_0, and coefficient 1 of each of its series (`series_of`'s
+/// order) as formed with z_1 zero
+struct Pair<'a, E: Equations<B>, P: Precision<Native>, const B: usize> {
+    s: JetSession<'a, E, P, 2, B>,
+    base: Vec<Fl<P::V, B>>,
+}
+
 /// The residual's series in the equations' parameter formed one order at a time on `P::J<N>` lanes
 /// ([`Shooting::jet_session`]): each [`JetSession::next`] takes the next coefficient vector z_k and returns order
 /// k + 1 with z_(k+1) zero, the right-hand side of the next order's solve. Order k was formed with z_k zero by the call
 /// before, so it is formed again with z_k first; each call forms two orders. With the equations' order-k methods each
 /// order costs about one evaluation at one coefficient; with their defaults, one at N. Order j of every block's state
-/// and of the residual is bit for bit `residual_jet`'s with the same coefficient vectors.
+/// and of the residual is bit for bit `residual_jet`'s with the same coefficient vectors, unless
+/// [`JetSession::tangent_from`] moves the orders by their tangents instead of forming them again.
 pub struct JetSession<'a, E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> {
     sh: &'a Shooting<E, B>,
     prep: Option<E::Prep>,
+    /// the first order moved by its tangent once its coefficient vector is given; None: every order formed again
+    tangent: Option<usize>,
+    /// the tangent update's two-coefficient session, made at its first update
+    pair: Option<Box<Pair<'a, E, P, B>>>,
     /// the coefficient vectors given, z_0..z_(k-1)
     zs: Vec<Vec<Vec<f64>>>,
     /// each block's inputs and the globals, with the coefficients given
@@ -173,6 +236,8 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         JetSession {
             sh: self,
             prep: None,
+            tangent: None,
+            pair: None,
             zs: Vec::new(),
             inputs: (0..nb).map(|b| vec![zero; self.block_inputs(b).len()]).collect(),
             g: vec![<P::J<N> as BaseLane>::zero(); E::NG],
@@ -182,10 +247,20 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     }
 }
 
-impl<E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> JetSession<'_, E, P, N, B> {
+impl<'a, E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> JetSession<'a, E, P, N, B> {
     /// the number of coefficient vectors given
     pub fn given(&self) -> usize {
         self.zs.len()
+    }
+
+    /// From order `from` on (at least 1), order k is formed once, with z_k zero, and moved by its tangent once z_k is
+    /// given, in place of being formed again (the module's documentation): each series' coefficient k plus the change
+    /// of order 1 of a session on `P::J<2>` at z_0, seeded with z_k scaled by a power of two toward z_1's size. The
+    /// orders then agree with `residual_jet`'s to rounding, not bit for bit; those below `from` are formed again, and
+    /// None (the default) forms every order again. The update costs about two order-units against k + 1 for forming
+    /// order k again, and the pair session's first orders about three once.
+    pub fn tangent_from(&mut self, from: Option<usize>) {
+        self.tangent = from.map(|f| f.max(1));
     }
 
     /// Takes z_k (k = `given()`, P::PARTS part arrays of length `len()`) and returns order k + 1 of the residual's
@@ -218,10 +293,107 @@ impl<E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> JetS
         #[cfg(not(feature = "mutate"))]
         let stale = false;
         if !stale {
-            self.form(k, par);
+            match self.tangent {
+                Some(from) if k >= from => self.update(k, par)?,
+                _ => self.form(k, par),
+            }
         }
         self.form(k + 1, par);
         self.order(k + 1)
+    }
+
+    /// Moves order j >= 1 of every series by its tangent: the pair session's order 1, formed again with the inputs' and
+    /// the globals' coefficient 1 set to z_j times 2^e, less its order 1 as formed with them zero, times 2^-e. The
+    /// power of two brings z_j toward z_1's size, so that the parameter's part, which the difference removes, is not
+    /// much larger than what it leaves. A step's start and a segment's state are then copied from their sources.
+    fn update(&mut self, j: usize, par: bool) -> Result<(), String> {
+        let sh = self.sh;
+        // the largest part of a vector, NaN if any is
+        let lead = |z: &[Vec<f64>]| {
+            z.iter().flatten().fold(0.0f64, |a, &v| {
+                if a.is_nan() || v.is_nan() {
+                    f64::NAN
+                } else {
+                    a.max(v.abs())
+                }
+            })
+        };
+        let (m1, mj) = (lead(&self.zs[1]), lead(&self.zs[j]));
+        if mj == 0.0 {
+            // z_j zero: order j is as it was formed
+            return Ok(());
+        }
+        let ex = |x: f64| x.log2().floor() as i32;
+        let e = if !(mj.is_finite() && m1.is_finite()) {
+            0
+        } else if m1 > 0.0 {
+            (ex(m1) - ex(mj)).clamp(-960, 960)
+        } else {
+            (-ex(mj)).clamp(-960, 960)
+        };
+        let (up, down) = (2f64.powi(e), 2f64.powi(-e));
+        if self.pair.is_none() {
+            let mut s = sh.jet_session::<P, 2>();
+            let z0: Vec<&[f64]> = self.zs[0].iter().map(|p| p.as_slice()).collect();
+            s.next(&z0, par)?;
+            let base = series_of(&mut s.kept, &mut s.states)
+                .into_iter()
+                .flat_map(|(_, x)| x.iter().map(|f| P::field_coef(f, 1)).collect::<Vec<_>>())
+                .collect();
+            self.pair = Some(Box::new(Pair { s, base }));
+        }
+        let Pair { s: t, base } = &mut **self.pair.as_mut().expect("made above");
+        let zj: Vec<&[f64]> = self.zs[j].iter().map(|p| p.as_slice()).collect();
+        for (b, inp) in t.inputs.iter_mut().enumerate() {
+            for (f, &o) in sh.block_inputs(b).iter().enumerate() {
+                P::field_set_coef(&mut inp[f], 1, &sh.load::<P>(&zj, o).mul_pwr2(up));
+            }
+        }
+        let og = sh.off_global();
+        for (i, gi) in t.g.iter_mut().enumerate() {
+            P::set_coef(gi, 1, P::splat(sh.scalar::<P>(&zj, og + i)).mul_pwr2(up));
+        }
+        t.form(1, par);
+        #[cfg(feature = "mutate")]
+        let own_too = sh.control != crate::control::Control::JetTangentKeep;
+        #[cfg(not(feature = "mutate"))]
+        let own_too = true;
+        let mine = series_of(&mut self.kept, &mut self.states);
+        let pair = series_of(&mut t.kept, &mut t.states);
+        if mine.len() != pair.len()
+            || mine
+                .iter()
+                .zip(&pair)
+                .any(|(a, b)| a.0 != b.0 || a.1.len() != b.1.len())
+        {
+            return Err("JetSession: the tangent's two-coefficient session keeps series of other shapes".to_string());
+        }
+        let mut base = base.iter();
+        for ((role, a), (_, d)) in mine.into_iter().zip(pair) {
+            for (x, y) in a.iter_mut().zip(d.iter()) {
+                let b0 = base.next().expect("one per series entry");
+                if role == Role::Formed || (role == Role::Own && own_too) {
+                    let c = P::field_coef(x, j) + (P::field_coef(y, 1) - *b0).mul_pwr2(down);
+                    P::field_set_coef(x, j, &c);
+                }
+            }
+        }
+        for (b, (kp, st)) in self.kept.iter_mut().zip(self.states.iter_mut()).enumerate() {
+            if let Kept::Seg(works, ends) = kp {
+                let inp = &self.inputs[b];
+                for (i, w) in works.iter_mut().enumerate() {
+                    let src: &[Fl<P::J<N>, B>] = if i == 0 { inp } else { &ends[i - 1] };
+                    for (f, sf) in src.iter().enumerate() {
+                        P::field_set_coef(&mut w.c[f][0], j, &P::field_coef(sf, j));
+                    }
+                }
+                let last = ends.last().map_or(inp.as_slice(), |e| e.as_slice());
+                for (sf, df) in last.iter().zip(st.iter_mut()) {
+                    P::field_set_coef(df, j, &P::field_coef(sf, j));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Forms order j of every block's state from the inputs' and the globals' coefficients 0..=j and the lower
