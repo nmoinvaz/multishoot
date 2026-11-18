@@ -19,7 +19,7 @@ This crate is the engine of that method, generic over the equations, on the arit
 |---|---|
 | equations trait | the problem enters as the Taylor coefficients of its right-hand side, and the series that start the solution at singular endpoints |
 | Taylor stepping | the solution carried between nodes by Taylor series, each step planned so that its truncation term stays below a tolerance |
-| residual series | the residual's Taylor series in a parameter of the equations, whole (`residual_jet`) or one order at a time (`JetSession`), which keeps each block's series between orders so that equations with order-k methods (`taylor_coeffs_at`, `left_state_at`, `right_state_at`) pay for one order per call |
+| residual series | the residual's Taylor series in a parameter of the equations, whole (`residual_jet`) or one order at a time (`JetSession`), which keeps each block's series between orders so that equations with order-k methods (`taylor_coeffs_at`, `left_state_at`, `right_state_at`) pay for one order per call; optionally each order formed once and moved by its tangent once its coefficient vector is given (`JetSession::tangent_from`), equal to rounding |
 | periodic direction | fields that depend on a periodic variable, on collocation points, with exact derivatives in it |
 | layout | node blocks, mismatch rows, global parameters (an eigenvalue), a phase condition, pinned rows, projected rows (a field's high harmonics unmatched and held at zero elsewhere, exact in every precision) |
 | exact Jacobian | forward-mode dual numbers over the code that forms the residual |
