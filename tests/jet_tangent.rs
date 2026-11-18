@@ -458,13 +458,26 @@ fn compare<E: Equations<B>, P: Precision<Native>, const B: usize>(
     from: Option<usize>,
     par: bool,
 ) -> Result<(usize, usize, f64), String> {
+    compare_below::<E, P, B>(sh, z0, n, from, from, par)
+}
+
+/// `compare` with the orders compared bit for bit those below `bitwise` rather than below `from`, for the control
+/// of the bitwise comparison
+fn compare_below<E: Equations<B>, P: Precision<Native>, const B: usize>(
+    sh: &Shooting<E, B>,
+    z0: &[Vec<f64>],
+    n: usize,
+    from: Option<usize>,
+    bitwise: Option<usize>,
+    par: bool,
+) -> Result<(usize, usize, f64), String> {
     let l = sh.len();
     let zs: Vec<Vec<Vec<f64>>> = (0..n)
         .map(|k| widen(&if k == 0 { z0.to_vec() } else { coef_vector(l, k) }, P::PARTS))
         .collect();
     let mut s = sh.jet_session::<P, 8>();
     s.tangent_from(from);
-    let first = from.map_or(usize::MAX, |f| f.max(1));
+    let first = bitwise.map_or(usize::MAX, |f| f.max(1));
     let (mut rows, mut below, mut worst) = (0, 0, 0.0f64);
     for k in 0..n {
         let next = s.next(&parts(&zs[k]), par)?;
@@ -650,6 +663,59 @@ fn tangent_series_is_the_planted_branch() {
     );
     assert!(size > 0.1, "the planted series is trivial");
     assert!(exact <= PLANTED && moved <= PLANTED && moved_o <= PLANTED);
+}
+
+/// Pass, written before the first run: the bitwise comparison of the orders below the first moved one rejects a moved
+/// order. With the tangent from 1, taking orders 1 and 2 as bitwise counts rows that differ, while the same session
+/// with orders below 1 bitwise counts none; and `bits_differ` counts one row for a one-ulp change of one part.
+#[test]
+fn tangent_bitwise_check_rejects_a_moved_order() {
+    let (br, z) = branch_z0();
+    let (_, moved, _) = compare_below::<_, Double, 1>(&br, &z, 4, Some(1), Some(3), true).unwrap();
+    let (_, unmoved, _) = compare_below::<_, Double, 1>(&br, &z, 4, Some(1), Some(1), true).unwrap();
+    let one = <Double as Precision<Native>>::from_dd(DD::ONE);
+    let next = <Double as Precision<Native>>::from_raw(&[1.0, f64::from_bits(1e-17f64.to_bits() + 1)]);
+    let base = <Double as Precision<Native>>::from_raw(&[1.0, 1e-17]);
+    let ulp = bits_differ::<Double>(&[one, base], &[one, next]);
+    println!("orders 1, 2 compared bit for bit: {moved} rows differ; none: {unmoved}; a one-ulp change: {ulp} row");
+    assert!(moved > 0, "the bitwise comparison did not see the moved orders");
+    assert_eq!((unmoved, ulp), (0, 1));
+}
+
+/// rows that differ in any bit, over every order a session on `Double` jets moving orders from 1 on has formed after
+/// each of zs, from `residual_jet`'s on the same vectors
+fn rows_moved(sh: &Shooting<Branch<1>, 1>, zs: &[Vec<Vec<f64>>]) -> usize {
+    let mut s = sh.jet_session::<Double, 8>();
+    s.tangent_from(Some(1));
+    let mut differ = 0;
+    for k in 0..zs.len() {
+        s.next(&parts(&zs[k]), true).unwrap();
+        let refs: Vec<Vec<&[f64]>> = zs[..=k].iter().map(|z| parts(z)).collect();
+        let full = sh.residual_jet::<Double, 8>(&refs, true, k + 2).unwrap();
+        for (j, fj) in full.iter().enumerate() {
+            differ += bits_differ::<Double>(&s.order(j).unwrap(), fj);
+        }
+    }
+    differ
+}
+
+/// Pass, written before the first run: when z_2 is about 2^1000 times z_1, its seed scaled toward z_1's size would
+/// lose its lower parts to underflow, so the session forms order 2 again and every order is `residual_jet`'s bit for
+/// bit. The control: z_1 of z_2's size, whose seed scales back, moves order 2, and its bits differ.
+#[test]
+fn tangent_forms_again_when_the_seed_underflows() {
+    let (br, z0) = branch_z0();
+    let l = br.len();
+    let vector = |s: f64, k: usize| -> Vec<Vec<f64>> {
+        let hi: Vec<f64> = (0..l).map(|i| s * (0.5 + 0.5 * wave(i + 31 * k).abs())).collect();
+        let lo = hi.iter().map(|&h| h * 1e-30).collect();
+        vec![hi, lo]
+    };
+    let underflow = rows_moved(&br, &[z0.clone(), vector(1e-301, 1), vector(1.0, 2)]);
+    let scaled = rows_moved(&br, &[z0, vector(0.1, 1), vector(1.0, 2)]);
+    println!("z_2 2^1000 times z_1: {underflow} rows differ from residual_jet; z_1 of its size: {scaled}");
+    assert_eq!(underflow, 0, "the seed that underflows was not formed again");
+    assert!(scaled > 0, "control: a moved order did not change its bits");
 }
 
 /// The controls of `tangent_orders_agree_with_residual_jet` and `tangent_series_is_the_planted_branch` (feature

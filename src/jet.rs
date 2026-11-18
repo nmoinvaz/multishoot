@@ -332,6 +332,14 @@ impl<'a, E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> 
             (-ex(mj)).clamp(-960, 960)
         };
         let (up, down) = (2f64.powi(e), 2f64.powi(-e));
+        // a seed that overflows or loses a part to underflow cannot be scaled back: form the order again
+        if !self.zs[j].iter().flatten().all(|&p| {
+            let q = p * up;
+            q.is_finite() && q * down == p
+        }) {
+            self.form(j, par);
+            return Ok(());
+        }
         if self.pair.is_none() {
             let mut s = sh.jet_session::<P, 2>();
             let z0: Vec<&[f64]> = self.zs[0].iter().map(|p| p.as_slice()).collect();
@@ -367,6 +375,9 @@ impl<'a, E: Equations<B>, P: Precision<Native>, const N: usize, const B: usize> 
                 .any(|(a, b)| a.0 != b.0 || a.1.len() != b.1.len())
         {
             return Err("JetSession: the tangent's two-coefficient session keeps series of other shapes".to_string());
+        }
+        if base.len() != pair.iter().map(|(_, d)| d.len()).sum::<usize>() {
+            return Err("JetSession: the tangent's two-coefficient session changed its series since z_0".to_string());
         }
         let mut base = base.iter();
         for ((role, a), (_, d)) in mine.into_iter().zip(pair) {
