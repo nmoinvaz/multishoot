@@ -6,6 +6,7 @@ use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::lane::{Dtn, Fu, Fun, Lane};
 use multishoot::{Double, Equations, ExtraRow, MixedLu, Quad, Shooting, Storage, DD};
 use multisolver::prec::{max_abs, nan_max, parts, widen};
+use multisolver::quasi::{QuasiInfo, QuasiOpts};
 use multisolver::NewtonOpts;
 use std::collections::HashMap;
 
@@ -208,6 +209,101 @@ fn mixed_newton_reaches_quad_double() {
         .unwrap();
     println!("mixed Newton in quad-double: max |F| {}", sci(&rep.fnorm));
     assert!(rep.converged, "{:?}", rep.fnorm);
+}
+
+/// `newton_quasi_mixed` in double-double from z* perturbed by 1e-3 with lanes T in the given storage and
+/// `max_updates` updates: (report, info, the final z)
+fn quasi_mixed<T: Lane>(
+    sh: &Shooting<Planted<B>, B>,
+    zs: &[Vec<f64>],
+    s: Storage,
+    max_updates: usize,
+) -> (multisolver::NewtonReport, QuasiInfo, Vec<Vec<f64>>) {
+    let mut z = perturbed(zs, 1e-3);
+    let q = QuasiOpts {
+        max_updates,
+        ..Default::default()
+    };
+    let (rep, info) = sh
+        .newton_quasi_mixed::<Double, T>(&mut z, &opts(1e-28, 20), &q, s)
+        .unwrap();
+    (rep, info, z)
+}
+
+/// the bits of a report's records and of a state, to compare two runs
+fn run_bits(rep: &multisolver::NewtonReport, z: &[Vec<f64>]) -> Vec<u64> {
+    let r = rep.fnorm.iter().chain(&rep.scale).chain(&rep.theta).chain(&rep.dz_bar);
+    r.chain(z.iter().flatten()).map(|v| v.to_bits()).collect()
+}
+
+/// Pass, written before the first run: from z* perturbed by 1e-3, `newton_quasi_mixed` in double-double, with `Fu`
+/// dense and with `Dtn<4>` in staircase storage, reaches max |F| <= 1e-28 with every unknown within 1e-27 of z*, as
+/// `newton_mixed` does, from fewer factorizations than `newton_mixed` takes steps; in quad-double (`Dtn<4>`
+/// staircase, from the double-double root) it reaches max |F| <= 1e-60 within 6 steps from at most 2
+/// factorizations. With `max_updates` 0 it is `newton_mixed` bit for bit. The controls: with 20 updates its run
+/// differs from `newton_mixed`'s; z* moved by 1e-20 in double-double fails the check of |z - z*|; and the state read
+/// in half its parts fails the quad-double check (`controls::half_parts_fail_the_quad_double_quasi_mixed_newton`).
+#[test]
+fn quasi_mixed_newton_converges_from_fewer_factorizations() {
+    let (sh, zs) = planted();
+    for (name, (rep, info, z), (mrep, _)) in [
+        (
+            "Fu dense",
+            quasi_mixed::<Fu>(&sh, &zs, Storage::Dense, 20),
+            mixed::<Fu>(&sh, &zs, Storage::Dense, 20),
+        ),
+        (
+            "Dtn<4> staircase",
+            quasi_mixed::<Dtn<4>>(&sh, &zs, Storage::Staircase, 20),
+            mixed::<Dtn<4>>(&sh, &zs, Storage::Staircase, 20),
+        ),
+    ] {
+        let d = dist(&z, &zs);
+        println!(
+            "quasi mixed Newton, {name}: {info:?}, max |F| {}; theta {}; |z - z*| {d:.2e}; newton_mixed {} steps",
+            sci(&rep.fnorm),
+            sci(&rep.theta),
+            mrep.scale.len()
+        );
+        assert!(rep.converged && d <= 1e-27, "{name}: {:?} {d:e}", rep.fnorm);
+        assert!(info.factorizations < mrep.scale.len(), "{name}: {info:?}");
+    }
+
+    let mut z = perturbed(&zs, 1e-3);
+    sh.newton::<Double>(&mut z, &opts(1e-28, 10)).unwrap();
+    let mut zq = widen(&z, 4);
+    let (rep, info) = sh
+        .newton_quasi_mixed::<Quad, Dtn<4>>(&mut zq, &opts(1e-60, 6), &QuasiOpts::default(), Storage::Staircase)
+        .unwrap();
+    println!(
+        "quasi mixed Newton in quad-double: {info:?}, max |F| {}",
+        sci(&rep.fnorm)
+    );
+    assert!(rep.converged && info.factorizations <= 2, "{:?} {info:?}", rep.fnorm);
+
+    let (q0, _, z0) = quasi_mixed::<Fu>(&sh, &zs, Storage::Dense, 0);
+    let mut zm = perturbed(&zs, 1e-3);
+    let m0 = sh
+        .newton_mixed::<Double, Fu>(&mut zm, &opts(1e-28, 20), Storage::Dense)
+        .unwrap();
+    assert_eq!(
+        run_bits(&q0, &z0),
+        run_bits(&m0, &zm),
+        "max_updates 0 is not newton_mixed"
+    );
+
+    // the controls
+    let (q20, _, z20) = quasi_mixed::<Fu>(&sh, &zs, Storage::Dense, 20);
+    assert_ne!(run_bits(&q20, &z20), run_bits(&m0, &zm), "control, updates");
+    let moved: Vec<Vec<f64>> = {
+        let (mut h, mut l) = (zs[0].clone(), zs[1].clone());
+        for (a, b) in h.iter_mut().zip(l.iter_mut()) {
+            let v = DD::new(*a, *b) + DD::from_f64(1e-20);
+            (*a, *b) = (v.hi, v.lo);
+        }
+        vec![h, l]
+    };
+    assert!(dist(&moved, &zs) > 1e-27, "control, moved root");
 }
 
 /// The planted problem with block 2's u rows projected onto the odd harmonics k <= 3 and node 1's u pinned (in
@@ -817,6 +913,25 @@ mod controls {
             .unwrap();
         println!(
             "control, half parts: quad-double mixed Newton max |F| {}",
+            sci(&rep.fnorm)
+        );
+        assert!(!rep.converged, "control did not fire");
+    }
+
+    /// the state read in half its parts keeps the quad-double quasi-Newton mixed method above the 1e-60 of
+    /// `quasi_mixed_newton_converges_from_fewer_factorizations`, in the same 6 steps
+    #[test]
+    fn half_parts_fail_the_quad_double_quasi_mixed_newton() {
+        let (mut sh, zs) = planted();
+        let mut z = perturbed(&zs, 1e-3);
+        sh.newton::<Double>(&mut z, &opts(1e-28, 10)).unwrap();
+        sh.set_control(Control::HalfParts);
+        let mut zq = widen(&z, 4);
+        let (rep, info) = sh
+            .newton_quasi_mixed::<Quad, Dtn<4>>(&mut zq, &opts(1e-60, 6), &QuasiOpts::default(), Storage::Staircase)
+            .unwrap();
+        println!(
+            "control, half parts: quad-double quasi mixed Newton {info:?}, max |F| {}",
             sci(&rep.fnorm)
         );
         assert!(!rep.converged, "control did not fire");

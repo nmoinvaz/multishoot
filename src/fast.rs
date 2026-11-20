@@ -24,6 +24,7 @@ use multidouble::native::V8;
 use multidouble::precision::{Double, Precision};
 use multidouble::simd::Native;
 use multisolver::newton::{newton_with, Factored, NewtonOpts, NewtonReport};
+use multisolver::quasi::{newton_quasi, QuasiInfo, QuasiOpts};
 use rayon::prelude::*;
 
 /// Where the f64 Jacobian of a mixed step is kept and factored
@@ -422,6 +423,20 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         storage: Storage,
     ) -> Result<NewtonReport, String> {
         newton_with::<P, Self, MixedLu>(self, z, opts, |z| self.mixed_lu::<T>(z, storage, opts.par))
+    }
+
+    /// `newton_mixed` with Broyden's updates between its factorizations (multisolver's `newton_quasi`, Deuflhard's
+    /// QNERR): the f64 Jacobian of lanes T is formed and factored only for the correction rule's damped steps, and each
+    /// step between them costs one residual in P and one solve with the last factors, its update in P correcting the
+    /// f64 factors' mismatch along the steps. With `qopts.max_updates` 0 it is `newton_mixed` bit for bit.
+    pub fn newton_quasi_mixed<P: Precision<Native>, T: Lane>(
+        &self,
+        z: &mut Vec<Vec<f64>>,
+        opts: &NewtonOpts,
+        qopts: &QuasiOpts,
+        storage: Storage,
+    ) -> Result<(NewtonReport, QuasiInfo), String> {
+        newton_quasi::<P, Self, MixedLu>(self, z, opts, qopts, |z| self.mixed_lu::<T>(z, storage, opts.par))
     }
 
     /// The f64 Jacobian of lanes T at z (its double-double parts), factored in the given storage

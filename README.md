@@ -151,6 +151,7 @@ precision reads its leading parts, so the projected rows are exact to the precis
 | `Shooting::jacobian_staircase::<T>` | the same Jacobian built block by block and factored in staircase storage (multidouble's `StaircaseLu`), never dense |
 | `Storage`, `MixedLu` | dense or staircase storage, and the f64 factors, which solve in double-double |
 | `Shooting::newton_mixed::<P, T>`, `newton_step_mixed`, `mixed_lu` | Newton's method with the residual in P and the f64 Jacobian as its matrix |
+| `Shooting::newton_quasi_mixed::<P, T>` | the same with Broyden's updates (multisolver's QNERR) between its factorizations, so that most steps cost a residual and a solve, and no Jacobian |
 
 The mixed Newton method converges linearly to `newton`'s root, each step contracting by about the f64 Jacobian's
 relative error times the conditioning. Staircase storage needs one global and one extra row, with terms on the left
@@ -162,9 +163,13 @@ data, the global and node 0.
 
 | Trait | What it gives | Used by |
 |---|---|---|
-| `Problem<P>` | `len`, `residual` and `jacobian` | Newton, chord, Levenberg-Marquardt, Newton with weak directions removed |
+| `Problem<P>` | `len`, `residual` and `jacobian` | Newton, chord, quasi-Newton (QNERR), Levenberg-Marquardt, Newton with weak directions removed, deflation of known roots |
 | `Jvp<P>` | `jvp`, J v without the Jacobian | the Krylov-refined Newton method |
 | `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
+
+Every Newton solve takes multisolver's `NewtonOpts`, whose `scaling: Scaling::Iterates { floor }` measures each unknown
+relative to its own size (NLEQ-ERR's scaled norms), for layouts whose node states and globals, such as a period or an
+eigenvalue, differ by orders of magnitude.
 
 ## Installation
 
