@@ -29,7 +29,8 @@
 //! * [`taylor`]: Taylor steps, paths, the step planner and the choice of the Taylor order;
 //! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
 //! * [`residual`]: the residual F(z) in any precision;
-//! * [`jacobian`]: its exact Jacobian by forward-mode duals;
+//! * [`jacobian`]: its exact Jacobian by forward-mode duals, with one tangent per evaluation or several (as a
+//!   [`Problem`], [`WithTangents`]);
 //! * [`sub`]: a block of the Jacobian, `J[rows, cols]`, and of the residual, `F[rows]`, from the evaluations that reach
 //!   them;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
@@ -61,6 +62,7 @@ pub mod taylor;
 
 pub use equations::{Equations, State, Work};
 pub use fast::{MixedLu, Storage};
+pub use jacobian::WithTangents;
 pub use mode::{ModeMatrix, Rate};
 pub use multidouble;
 pub use multidouble::dd::DD;

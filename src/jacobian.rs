@@ -15,8 +15,10 @@ use crate::shooting::Shooting;
 use multidouble::dual::Tangents;
 use multidouble::field::Fl;
 use multidouble::linalg::ld_for;
-use multidouble::precision::Precision;
+use multidouble::native::{Ou, Oun};
+use multidouble::precision::{Octo, Precision};
 use multidouble::simd::Native;
+use multisolver::Problem;
 use rayon::prelude::*;
 
 /// A row's factor of the Jacobian's scaling in P and its product by +0
@@ -208,12 +210,20 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let swap = self.control == crate::control::Control::TangentOrder && seeds.len() > 1;
         #[cfg(not(feature = "mutate"))]
         let swap = false;
+        #[cfg(feature = "mutate")]
+        let shift = self.control == crate::control::Control::TangentShift;
+        #[cfg(not(feature = "mutate"))]
+        let shift = false;
         (0..seeds.len())
             .map(|k| {
                 let k = if swap { seeds.len() - 1 - k } else { k };
                 let mut out = Vec::with_capacity(E::NF * m);
                 for sq in &s {
-                    let t = sq.tangent(k);
+                    let t = match (shift, k) {
+                        (true, 0) => sq.value(),
+                        (true, k) => sq.tangent(k - 1),
+                        _ => sq.tangent(k),
+                    };
                     for i in 0..m {
                         out.push(P::field_get(&t, i));
                     }
@@ -321,6 +331,51 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             zs
         } else {
             P::from_raw(cur) * s
+        }
+    }
+
+    /// The layout as an octo-double problem ([`multisolver::Problem`] at [`Octo`]) whose exact Jacobian takes n
+    /// tangents per evaluation: `jacobian_tangents` with multidouble's `Ou` lanes for n = 1 and `Oun<n>` for n = 2,
+    /// 4 or 8; any other n is an error. Its residual is `residual::<Octo>`'s and its Jacobian `jacobian::<Octo>`'s,
+    /// bit for bit, so multisolver's solvers take the same steps on it as on the layout; only the Jacobian's cost
+    /// changes, one evaluation of a block serving up to n of its columns. Octo-double only: multidouble's lanes with
+    /// several tangents in the value's precision (`Tangents`) are `Ou` and `Oun<N>`, octo-double's.
+    pub fn with_tangents(&self, n: usize) -> Result<WithTangents<'_, E, B>, String> {
+        match n {
+            1 | 2 | 4 | 8 => Ok(WithTangents { sh: self, n }),
+            _ => Err(format!("with_tangents: 1, 2, 4 or 8 tangents per evaluation, not {n}")),
+        }
+    }
+}
+
+/// A layout as an octo-double problem whose Jacobian takes several tangents per evaluation
+/// ([`Shooting::with_tangents`])
+pub struct WithTangents<'a, E: Equations<B>, const B: usize> {
+    sh: &'a Shooting<E, B>,
+    n: usize,
+}
+
+impl<E: Equations<B>, const B: usize> WithTangents<'_, E, B> {
+    /// the tangents per evaluation: 1, 2, 4 or 8
+    pub fn tangents(&self) -> usize {
+        self.n
+    }
+}
+
+impl<E: Equations<B>, const B: usize> Problem<Octo> for WithTangents<'_, E, B> {
+    fn len(&self) -> usize {
+        self.sh.len()
+    }
+    fn residual(&self, z: &[&[f64]], par: bool) -> Result<Vec<<Octo as Precision<Native>>::Scalar>, String> {
+        self.sh.residual::<Octo>(z, par)
+    }
+    fn jacobian(&self, z: &[&[f64]], par: bool) -> Result<(Vec<Vec<f64>>, usize), String> {
+        match self.n {
+            1 => self.sh.jacobian_tangents::<Octo, Ou>(z, par),
+            2 => self.sh.jacobian_tangents::<Octo, Oun<2>>(z, par),
+            4 => self.sh.jacobian_tangents::<Octo, Oun<4>>(z, par),
+            8 => self.sh.jacobian_tangents::<Octo, Oun<8>>(z, par),
+            n => Err(format!("with_tangents: 1, 2, 4 or 8 tangents per evaluation, not {n}")),
         }
     }
 }
