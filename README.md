@@ -6,71 +6,63 @@
 [![crates.io](https://img.shields.io/crates/v/multishoot.svg)](https://crates.io/crates/multishoot)
 [![docs.rs](https://docs.rs/multishoot/badge.svg)](https://docs.rs/multishoot)
 
-Multiple shooting for boundary-value problems in double-double, quad-double and octo-double precision, with exact
-Jacobians and the same results, bit for bit, on every SIMD backend.
+Multiple-shooting boundary-value solver for Rust in double-double, quad-double and octo-double precision, with
+**bitwise the same results on every SIMD backend**. Taylor series carry the solution across each segment, forward-mode
+duals give the exact Jacobian and J v, and [multisolver](https://github.com/nmoinvaz/multisolver) solves for the
+unknowns at the nodes.
 
-A boundary-value problem asks for the solution of differential equations that meets conditions at two or more places.
-Multiple shooting splits the interval at nodes, carries the solution across each piece by Taylor series, and lets
-Newton's method adjust the values at the nodes, and any unknown parameters, until every piece ends where the next one
-begins.
-
-This crate is the engine of that method, generic over the equations. The equations are written once over a lane type
-of [multidouble](https://github.com/nmoinvaz/multidouble), and the engine runs that one code with values (the
-residual), dual numbers (the exact Jacobian and its product with a vector), truncated power series (the residual's
-series in a parameter) and complex tangents (the mode matrix). Newton's method and the other solvers of F(z) = 0 are
-the crate [multisolver](https://github.com/nmoinvaz/multisolver).
+The equations are written once over a lane type of [multidouble](https://github.com/nmoinvaz/multidouble) and run on
+values (the residual), dual numbers (the Jacobian and J v), power series (the residual's series in a parameter) and
+complex tangents (the mode matrix).
 
 ## API
 
-The crate root re-exports what most code needs: `Equations`, `State`, `Work`, `Shooting`, `ExtraRow`, `Plan`, `Rate`,
-`ModeMatrix`, `ProjectedRows`, `Parities`, `MixedLu` and `Storage`; multidouble's `DD`, `Fl`, `cs`, `cs_range`, `cs_w`,
-`horner`, `Precision`, `Double`, `Quad`, `Octo` and `Native`; multisolver's `Problem`, `Jvp` and `ResidualJet`; and both
-crates whole, as `multishoot::multidouble` and `multishoot::multisolver`.
+The crate root re-exports the engine's types, multidouble's arithmetic and precisions (`DD`, `Fl`, `cs`, `horner`,
+`Precision`, `Double`, `Quad`, `Octo`, ...), multisolver's `Problem`, `Jvp` and `ResidualJet`, and both crates whole.
 
-A state z in the precision P is held as `P::PARTS` arrays of f64, 2 for `Double`, 4 for `Quad` and 8 for `Octo`, with
-part q of unknown i at `z[q][i]`. multisolver's `prec::parts` borrows a state's slices, `prec::widen` carries it to more
-parts, and `prec::max_abs` gives max |F| of a residual.
+A state z in the precision P is `P::PARTS` arrays of f64 (2, 4 or 8), part q of unknown i at `z[q][i]`.
+multisolver's `prec::parts`, `prec::widen` and `prec::max_abs` borrow its slices, widen it to more parts and give a
+residual's max |F|.
 
-### The problem
+### Equations
 
 | Item | What it does |
 |---|---|
-| `Equations<B>` | the problem: its sizes, the Taylor recursion of its right-hand side, and the maps from the endpoint data to the states at the end nodes |
+| `Equations<B>` | the problem's sizes, the Taylor recursion of its right-hand side, and the maps from endpoint data to the end nodes' states |
 | `Equations::taylor_coeffs` | Taylor coefficients 1..=kt of every field about x0, from order 0 |
-| `Equations::left_state`, `right_state` | the state at the first or last node from that end's data: boundary conditions at a regular end, a series summed to the node at a singular one |
-| `Equations::prepare`, `try_prepare` | what the endpoint maps need once per evaluation, such as a series' coefficient table; the engine forms it through `try_prepare` and returns its error |
-| `Equations::prepare_rate`, `try_prepare_rate` | the same for a mode-matrix evaluation at a growth rate |
-| `Equations::taylor_coeffs_at`, `left_state_at`, `right_state_at` | the same maps for one order k in the parameter, from the orders kept; by default they form every order |
+| `Equations::left_state`, `right_state` | the state at the first or last node: boundary conditions at a regular end, a series summed to the node at a singular one |
+| `Equations::prepare`, `try_prepare` | what the endpoint maps need once per evaluation, such as a series' coefficient table; errors return through `try_prepare` |
+| `Equations::prepare_rate`, `try_prepare_rate` | the same for a mode-matrix evaluation |
+| `Equations::taylor_coeffs_at`, `left_state_at`, `right_state_at` | the same maps for order k in the parameter, from the orders kept; by default they form every order |
 | `State<T, B>` | the `NF` fields at a point, `Vec<Fl<T, B>>` |
-| `Work<T, B>` | one step's Taylor coefficients `c[f][k]`, the recursion's scratch series `aux`, the order `kt` and the growth rate of a mode-matrix evaluation |
-| `lane::Lane` | the lane types the equations are generic over: multidouble's `DV`, `QV`, `OV` (values), `Du`, `Qu`, `Ou` (one tangent), `Dc` (a complex tangent), `Jet<N>`, `QJet<N>`, `OJet<N>` (series) and `Fu`, `Fun<N>`, `Dtn<N>` (f64 tangents) |
+| `Work<T, B>` | one step's coefficients `c[f][k]`, the scratch series `aux`, the order `kt` and a mode-matrix evaluation's rate |
+| `lane::Lane` | the lanes the equations are generic over: values (`DV`, `QV`, `OV`), one tangent (`Du`, `Qu`, `Ou`), a complex tangent (`Dc`), series (`Jet<N>`, `QJet<N>`, `OJet<N>`) and f64 tangents (`Fu`, `Fun<N>`, `Dtn<N>`) |
 
-A problem has `NF` fields, each held on M = 8 B collocation points of a periodic variable θ (`Fl<T, B>`, B lane vectors
-of 8). `NL` fields of data start the solution at the left end and `NR` at the right. `NG` global unknowns, such as an
-eigenvalue or a period, enter every block, and `NAUX` scratch series serve the recursion.
+Each of the `NF` fields is held on M = 8 B collocation points of a periodic variable θ (`Fl<T, B>`). `NL` and `NR`
+fields of data start the solution at the left and right ends, `NG` globals (an eigenvalue, a period) enter every block,
+and `NAUX` scratch series serve the recursion.
 
-`POINTWISE` says that every method acts on each point alone. A problem without a periodic direction sets it and holds
-8 independent problems in its lanes, and one dual evaluation then gives the Jacobian columns of all M points of a field.
-`ORDER_BY_ORDER` says that the order-k methods (`taylor_coeffs_at`, `left_state_at`, `right_state_at`) form one order
-from the orders kept, so that the residual's series of order N costs about N orders instead of N evaluations of
-growing length.
+`POINTWISE` says that every method acts on each point alone, as in a problem without a periodic direction whose
+lanes hold 8 independent problems; one dual evaluation then gives a field's columns at all M points.
+`ORDER_BY_ORDER` marks order-k methods that form one order from the kept ones, so a series of order N costs about N
+orders, not N evaluations.
 
-Constants enter in double-double (`Fl::cst`, `Fl::muls`). A parameter that the residual is expanded in enters through
-the lane's parameter arithmetic (`lane::Param::var`): the constant c on value and dual lanes, the series c + h on a jet.
+Constants enter in double-double (`Fl::cst`, `Fl::muls`). The parameter of the residual's series enters by
+`lane::Param::var`: c on value and dual lanes, c + h on a jet.
 
 ### Taylor steps
 
 | Item | What it does |
 |---|---|
-| `Plan` | the planner's settings: Taylor order `kt`, tolerance `tol` on the last two terms, largest step `hmax` |
-| `taylor::taylor_step`, `taylor_path` | one Taylor step of a state summed by Horner's rule, and a path of steps through given points |
+| `Plan` | the Taylor order `kt`, the tolerance `tol` on the last two terms, the largest step `hmax` |
+| `taylor::taylor_step`, `taylor_path` | one Taylor step summed by Horner's rule, and a path of steps through given points |
 | `taylor::plan_path` | step points between two ends, each step the largest whose terms of orders kt - 1 and kt stay below `tol` |
-| `taylor::step_size`, `kth_root` | that step from one step's coefficients, by a k-th root from IEEE operations alone, the same bits on every platform |
-| `Plan::optimal_kt`, `candidate_orders`, `taylor::step_cost` | the Taylor order of least cost per unit length at `tol` under the step cost k^2 + 20 k, the same on every platform, and the ladder of orders around it to plan |
+| `taylor::step_size`, `kth_root` | that step from one step's coefficients, by a k-th root of IEEE operations alone, the same bits on every platform |
+| `Plan::optimal_kt`, `candidate_orders`, `taylor::step_cost` | the order of least cost at `tol` under the step cost k^2 + 20 k, and the orders around it to plan |
 
-A step from x0 to x1 is exact in double-double, as both points are f64. A step that would leave less than 40% of the
-rest becomes half the rest, so a segment ends in two near-equal steps. `plan_path` panics on a coefficient that is not
-finite and on a step that does not move x.
+A step between f64 points is exact in double-double. A step that would leave less than 40% of the rest becomes half
+the rest, so a segment ends in two near-equal steps. `plan_path` panics on a coefficient that is not finite and on a
+step that does not move x.
 
 ### The layout
 
@@ -78,7 +70,7 @@ finite and on a step that does not move x.
 |---|---|
 | `Shooting<E, B>` | the equations, the nodes, each segment's step points, the extra rows, the row factors and the projected rows |
 | `Shooting::new`, `plan_segments` | a layout on increasing nodes, and every segment's steps planned from a state z, on rayon tasks |
-| `Shooting::plan_segments_auto`, `OrderChoice` | the segments planned at each candidate order, keeping the order whose steps cost least, chosen from step counts alone; `OrderChoice::refined_orders` gives a second pass near the choice |
+| `Shooting::plan_segments_auto`, `OrderChoice` | the segments planned at each candidate order, keeping the cheapest by step counts; `OrderChoice::refined_orders` gives a second pass |
 | `ExtraRow` | a linear condition `sum_i w_i z_i - rhs = 0`: a phase condition, a normalization, a pinned unknown |
 | `Shooting::off_node`, `off_right`, `off_global`, `row_block`, `row_extra` | the offsets of the unknowns and of the residual's rows |
 | `Shooting::block_inputs`, `block_target`, `block_state` | what block b reads, the node it is matched to, and the state it produces |
@@ -90,25 +82,25 @@ With K nodes the unknowns are
 z = [ left data (NL M) | node 0 (NF M) | ... | node K-1 (NF M) | right data (NR M) | globals (NG) ]
 ```
 
-and the residual has K + 1 blocks of NF M rows, then the extra rows. Block 0 is the left end's state at node 0 minus
-node 0, block b is segment b's Taylor path from its source node minus its target node, and block K is the right end's
-state at node K-1 minus node K-1. The system is square when NL + NR = NF and there is one extra row per global.
+and the residual has K + 1 blocks of NF M rows, then the extra rows. Block 0 is the left end's state minus node 0,
+block b is segment b's Taylor path minus its target node, and block K is the right end's state minus node K-1. The
+system is square when NL + NR = NF with one extra row per global.
 
 ### Residual and derivatives
 
 | Item | What it does |
 |---|---|
-| `Shooting::residual::<P>` | F(z) in the precision P, one scalar per row, with each block on its own rayon task under `par` |
+| `Shooting::residual::<P>` | F(z) in the precision P, each block on its own rayon task under `par` |
 | `Shooting::jacobian::<P>` | the exact Jacobian dF/dz by forward-mode duals over the residual's code, as column-major part arrays |
-| `Shooting::jacobian_tangents::<P, T>` | `jacobian`, bit for bit, from lanes with several tangents (multidouble's `Oun<N>`): one evaluation of a block for up to N of its column tasks |
-| `Shooting::with_tangents` | the layout as an octo-double multisolver `Problem` (`WithTangents`) whose Jacobian is `jacobian_tangents` with 1, 2, 4 or 8 tangents per evaluation, the same bits as `jacobian` |
-| `Shooting::jacobian_sub::<P>`, `residual_sub::<P>` | `J[rows, cols]` and `F[rows]`, bit for bit the entries of `jacobian` and `residual`, from only the evaluations that reach them |
+| `Shooting::jacobian_tangents::<P, T>` | `jacobian`, bit for bit, from lanes with N tangents (multidouble's `Oun<N>`): one block evaluation for up to N columns |
+| `Shooting::with_tangents` | the layout as an octo-double `Problem` (`WithTangents`) whose Jacobian is `jacobian_tangents` at 1, 2, 4 or 8 tangents |
+| `Shooting::jacobian_sub::<P>`, `residual_sub::<P>` | `J[rows, cols]` and `F[rows]`, bit for bit, from only the evaluations that reach them |
 | `Shooting::jvp::<P>` | J v and F together, one dual pass per block, without the Jacobian |
-| `Shooting::taylor_check::<P>` | the Taylor paths' truncation error per block, estimated from the residual with every step halved |
+| `Shooting::taylor_check::<P>` | each block's truncation error, estimated from the residual with every step halved |
 | `Shooting::newton::<P>`, `newton_step::<P>` | multisolver's damped Newton method and its step on this layout |
 
-The Jacobian takes one evaluation of a block per column, one per input field for a pointwise problem. A product J v
-costs K + 1 evaluations, about as many as K + 1 columns, so a Krylov solver needs no matrix.
+The Jacobian takes one block evaluation per column, or per input field for a pointwise problem. J v costs K + 1
+evaluations, so a Krylov solver needs no matrix.
 
 ### Series in a parameter
 
@@ -116,24 +108,24 @@ costs K + 1 evaluations, about as many as K + 1 columns, so a Krylov solver need
 |---|---|
 | `Shooting::residual_jet::<P, N>` | the residual's coefficients in the equations' parameter on the jet state `sum_k z_k h^k`, on jets of N coefficients |
 | `Shooting::jet_session::<P, N>`, `jet::JetSession` | the same series one order at a time: `next` takes z_k and returns order k + 1 with z_(k+1) zero, and `order` reads an order formed |
-| `JetSession::tangent_from` | from a given order on, each order moved by its tangent once z_k is given instead of formed again, equal to `residual_jet`'s to rounding |
+| `JetSession::tangent_from` | from a given order on, each order moved by its tangent once z_k is given, equal to `residual_jet`'s to rounding |
 
-Order 0 is the residual, and with z_1 given order 1 is J z_1 + dF/dparameter. A session keeps each block's state, its
-endpoint map's series and each Taylor step's work between orders. With the order-k methods an order costs about one
-evaluation at one coefficient; with their defaults a session gives the bits of `residual_jet` at its cost.
+Order 0 is the residual; with z_1 given, order 1 is J z_1 + dF/dparameter. A session keeps each block's state, its
+endpoint series and each step's work between orders. With the order-k methods an order costs about one evaluation at
+one coefficient; with their defaults a session gives `residual_jet`'s bits at its cost.
 
 ### Mode matrix
 
 | Item | What it does |
 |---|---|
-| `Rate` | the complex growth rate λ of a mode-matrix evaluation, zero otherwise; `Rate::shift` marks a t-derivative in the equations |
+| `Rate` | the complex growth rate λ of a mode-matrix evaluation, zero otherwise; `Rate::shift` marks a t-derivative |
 | `ModeMatrix` | M(λ), the linearization for perturbations growing as exp(λt), in complex double-double; `logdet` gives ln\|det M\| and arg det M |
 | `Shooting::mode_matrix`, `mode_logdet` | M(λ) at a background z from complex tangents (`Dc`), the globals and extra rows held fixed, and its log-determinant |
-| `Shooting::mode_logdets` | `mode_logdet` at many rates, whole rates side by side on rayon tasks, each value that rate's bits |
-| `Shooting::mode_winding`, `mode_zero` | the winding number of det M(λ) along a polygon by multisolver's argument principle (the modes inside, less any poles), and one mode's rate by Muller's method |
+| `Shooting::mode_logdets` | `mode_logdet` at many rates on rayon tasks, each value that rate's bits |
+| `Shooting::mode_winding`, `mode_zero` | the winding number of det M(λ) along a polygon (the modes inside, less any poles), and one mode's rate by Muller's method |
 
-At λ = 0, M is the Jacobian's leading block. det M(λ) vanishes where a mode exp(λt) g solves the linearized problem,
-so its winding number along a closed contour counts the modes inside, when det M has no poles there.
+At λ = 0, M is the Jacobian's leading block. det M(λ) vanishes at each mode exp(λt) g of the linearized problem, so
+its winding number along a closed contour counts the modes inside, when det M has no poles there.
 
 ### Periodic direction and relayout
 
@@ -142,11 +134,11 @@ so its winding number along a closed contour counts the modes inside, when det M
 | `periodic::Parity` | a field's symmetry under θ → θ + π: odd or even harmonics on the half grid, or all of them on the full grid |
 | `periodic::dmat` | d/dθ on the M points of a grid, exact for harmonics below its Nyquist |
 | `periodic::theta`, `sin_cos`, `sin_cos_grid`, `sin_cos_pi`, `sin_cos_pi_od` | the grid points, and sines and cosines in double-double, those of rational multiples of π also in octo-double |
-| `periodic::spectrum`, `tail`, `Resampler` | a field's Fourier coefficients, its resolution, and its trigonometric interpolant on another number of points |
-| `ProjectedRows`, `Shooting::project_rows` | one field's rows of a block replaced by Π (state - target) + Π' y: its high harmonics left unmatched and those of the pinned unknowns y held at zero |
+| `periodic::spectrum`, `tail`, `Resampler` | a field's Fourier coefficients, its resolution, and its interpolant on another number of points |
+| `ProjectedRows`, `Shooting::project_rows` | one field's rows of a block replaced by Π (state - target) + Π' y: its high harmonics unmatched and those of the pinned unknowns y held at zero |
 | `Parities` | each field's parity at the left end, at the nodes and at the right end |
-| `Shooting::renode`, `resample` | a solution moved to new node positions, or to another number of collocation points, as the start of a Newton solve there |
-| `Shooting::split_segments::<P>` | every segment of more than `max_steps` steps split at its own step points into blocks of their own, so the one-task-per-block evaluations balance across threads; the residual keeps its rows bit for bit |
+| `Shooting::renode`, `resample` | a solution moved to new node positions or to another number of collocation points, to start a Newton solve there |
+| `Shooting::split_segments::<P>` | segments of more than `max_steps` steps cut at their step points into blocks of their own, to balance the threads; the residual keeps its rows bit for bit |
 
 The projector Π onto the low harmonics is formed in octo-double from cosines of exact multiples of π, and each
 precision reads its leading parts, so the projected rows are exact to the precision of the solve.
@@ -160,22 +152,19 @@ precision reads its leading parts, so the projected rows are exact to the precis
 | `Storage`, `MixedLu` | dense or staircase storage, and the f64 factors, which solve in double-double |
 | `Shooting::newton_mixed::<P, T>`, `newton_step_mixed`, `mixed_lu` | Newton's method with the residual in P and the f64 Jacobian as its matrix |
 
-The mixed Newton method converges to the root of `newton`, linearly, each step contracting by about the f64 Jacobian's
-relative error times the conditioning. Staircase storage needs one global and one extra row, whose terms lie on the
-left data, the global and node 0.
+The mixed Newton method converges linearly to `newton`'s root, each step contracting by about the f64 Jacobian's
+relative error times the conditioning. Staircase storage needs one global and one extra row, with terms on the left
+data, the global and node 0.
 
 ### Solvers
 
-`Shooting` implements three traits of multisolver, and its solvers run on any problem that does:
+`Shooting` implements three traits of multisolver, whose solvers run on any problem that does:
 
 | Trait | What it gives | Used by |
 |---|---|---|
 | `Problem<P>` | `len`, `residual` and `jacobian` | Newton, chord, Levenberg-Marquardt, Newton with weak directions removed |
 | `Jvp<P>` | `jvp`, J v without the Jacobian | the Krylov-refined Newton method |
 | `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
-
-multisolver also holds the series singularities and the argument-principle zero count; its documentation describes
-them.
 
 ## Installation
 
@@ -192,15 +181,14 @@ or as a dependency in `Cargo.toml`:
 multishoot = "3.3"
 ```
 
-It needs Rust 1.89 or later, as multidouble does. It re-exports multidouble and multisolver, so it needs no other
-dependency. The feature `portable` selects multidouble's plain-array backend on every target, and `mutate` adds the
-deliberate errors of the tests' controls.
+It needs Rust 1.89 or later. It re-exports multidouble and multisolver, so it needs no other dependency. The feature
+`portable` selects multidouble's plain-array backend on every target, and `mutate` adds the tests' deliberate errors.
 
 ## Usage
 
 The example solves y'' = 3/2 y² on [0, 1] with y(0) = 4 / a² and y(1) = 4 / (1 + a)², whose solution is
-y = 4 / (a + x)², for 8 values of a at once. Each lane holds one value of a, so the problem is pointwise. Newton's
-method starts in double-double from the line between the end values, and a quad-double solve then refines the root.
+y = 4 / (a + x)², for 8 values of a, one per lane, so the problem is pointwise. Newton's method starts in double-double
+from the line between the end values, and a quad-double solve refines the root.
 
 ```rust
 use multishoot::lane::{Lane, DV};
@@ -307,8 +295,8 @@ double-double: max |F| 5.6e0, 2.8e-1, 2.0e-3, 8.8e-8, 2.0e-16, 1.7e-31; max |y -
 quad-double: max |F| 5.3e-64
 ```
 
-The steps are planned once, from the start. The quad-double solve finds the root of the same discrete system to
-quad-double rounding. Its end values are double-double constants (`Fl::cst`), so that root stays about 1e-32 from y*.
+The steps are planned once, from the start. The quad-double root is the discrete system's to quad-double rounding, but
+the end values are double-double constants (`Fl::cst`), so it stays about 1e-32 from y*.
 
 ## Building and testing
 
@@ -324,14 +312,13 @@ cargo llvm-cov --release --features mutate                      # coverage (carg
 ```
 
 The tests run in release mode, as the planted problems run Newton's method in quad-double and octo-double. A default
-build on aarch64 is the NEON backend, so that run covers it. CI runs the suite on:
+aarch64 build is the NEON backend. CI runs the suite on:
 
-- the SSE2, AVX2 and portable backends on x86-64 Linux, and the mutation controls;
-- the NEON backend on ARM64 Linux and ARM64 macOS;
-- Windows MSVC on x64.
+- SSE2, AVX2 and portable on x86-64 Linux, and the mutation controls;
+- NEON on ARM64 Linux and macOS;
+- MSVC on Windows x64.
 
-It also runs coverage, rustfmt, clippy on the SSE2, portable and NEON backends, the documentation, and a library
-check at the minimum Rust version.
+It also runs coverage, rustfmt, clippy on three backends, the documentation, and a check at the minimum Rust version.
 
 ## References
 
