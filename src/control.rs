@@ -43,4 +43,7 @@ pub enum Control {
     /// the multi-tangent Jacobian (`Shooting::jacobian_tangents`) with each evaluation's tangents read in reverse
     /// order, so that its columns land in one another's places
     TangentOrder,
+    /// the order choice (`Shooting::plan_segments_auto`) keeping its lowest candidate order whatever the estimates,
+    /// planned in full; the candidates' estimates are reported as without it
+    FirstOrder,
 }
