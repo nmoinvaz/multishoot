@@ -1,8 +1,8 @@
 //! The layout as a family in its global (`Shooting::in_global`) on Bratu's problem, whose branch folds at a known
-//! parameter: the family against the layout's own residual and Jacobian, and multisolver's continuation through the
-//! fold and the fold's location against the closed form.
+//! parameter: the family against the layout's own residual and Jacobian, multisolver's continuation through the fold
+//! and the fold's location against the closed form, and the f64 factors of the corrector's bordered matrix.
 
-use multishoot::lane::{Lane, DV};
+use multishoot::lane::{Dtn, Lane, DV};
 use multishoot::multidouble::dd::split;
 use multishoot::multisolver::arclength::{continuation, locate_fold, start, ArcOpts, Bordered, FoldOpts};
 use multishoot::multisolver::newton::{exact, Factored};
@@ -263,6 +263,85 @@ fn continuation_passes_the_bratu_fold() {
     assert!(dl <= 1e-57 && dp <= 1e-26, "quad-double");
 }
 
+/// The largest difference, relative to the largest entry, between the solves of a bordered matrix by
+/// `bordered_lu::<P, Dtn<4>>` and by the exact LU in P, at an off-branch state with a deterministic unit-norm normal
+/// t and right-hand side
+fn bordered_error<P: Precision<Native>>(sh: &Shooting<Bratu, 1>, z: &[Vec<f64>]) -> f64 {
+    let fam = sh.in_global(0, 0).unwrap();
+    let (zf, p) = fam.family_z::<P>(&parts(z));
+    let n = Family::<P>::len(&fam);
+    let raw: Vec<f64> = (0..=n).map(|i| 1.0 + ((i * 104729) % 97) as f64 / 97.0).collect();
+    let nrm = raw.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let t: Vec<P::Scalar> = raw.iter().map(|x| P::from_dd(DD::from_f64(x / nrm))).collect();
+    let mut w: Vec<Vec<f64>> = zf.clone();
+    for (q, wq) in w.iter_mut().enumerate() {
+        wq.push(P::part(p, q));
+    }
+    let b = Bordered {
+        fam: &fam,
+        t,
+        pred: vec![P::ZERO; n + 1],
+    };
+    let r: Vec<P::Scalar> = (0..=n)
+        .map(|i| P::from_dd(DD::from_f64(((i * 31) % 17) as f64 - 8.0)))
+        .collect();
+    let lu = fam.bordered_lu::<P, Dtn<4>>(&b, &parts(&w), false).unwrap();
+    let x = Factored::<P>::solve_neg(&lu, &r);
+    let y = exact::<P, _>(&b, &parts(&w), false).unwrap().solve_neg(&r);
+    let big = y.iter().map(|&v| P::to_dd(v).hi.abs()).fold(0.0, nan_max);
+    x.iter()
+        .zip(&y)
+        .map(|(&a, &c)| P::to_dd(a - c).hi.abs())
+        .fold(0.0, nan_max)
+        / big
+}
+
+/// Pass, written before the first run: `bordered_lu`'s f64 factors solve the bordered matrix as its exact LU in P
+/// does, to 1e-10 relative, at an off-branch state in double-double; and continuation with them meets the fold
+/// criteria of `continuation_passes_the_bratu_fold` in double-double and quad-double (lambda_c within 1e-27 and
+/// 1e-57, u'(0) within 1e-12 and 1e-26 of 4). The controls: `Control::BorderPin`, the dropped row kept in place of
+/// the tangent, fails the solve check (`controls`); and with these factors the moved fold of
+/// `moved_fold_fails_the_fold_checks` fails both fold checks in both precisions.
+#[test]
+fn bordered_factors_pass_the_fold() {
+    let (sh, z) = bratu::<Double>(36);
+    let e = bordered_error::<Double>(&sh, &off_branch(&sh, &z));
+    let fam = sh.in_global(0, 0).unwrap();
+    let (dl, dp, pts, its) = fold::<Double, _>(&fam, &z, 1e-28, 1e-15, |b, w| {
+        fam.bordered_lu::<Double, Dtn<4>>(b, w, false)
+    });
+    println!(
+        "bordered f64 factors: solve {e:.3e}; double-double fold |lambda - lambda_c| {dl:.3e}, |u'(0) - 4| {dp:.3e}, \
+         {pts} points, {its} corrections"
+    );
+    assert!(e <= 1e-10, "solve");
+    assert!(dl <= 1e-27 && dp <= 1e-12, "double-double");
+
+    let (shq, zq) = bratu::<Quad>(72);
+    let famq = shq.in_global(0, 0).unwrap();
+    let (dl, dp, pts, its) = fold::<Quad, _>(&famq, &zq, 1e-60, 1e-30, |b, w| {
+        famq.bordered_lu::<Quad, Dtn<4>>(b, w, false)
+    });
+    println!("quad-double fold, f64 factors: |lambda - lambda_c| {dl:.3e}, |u'(0) - 4| {dp:.3e}, {pts} points, {its}");
+    assert!(dl <= 1e-57 && dp <= 1e-26, "quad-double");
+
+    // the controls: the moved fold with the same factors
+    let (sh, z) = bratu_with::<Double>(36, true);
+    let fam = sh.in_global(0, 0).unwrap();
+    let (dl, dp, _, _) = fold::<Double, _>(&fam, &z, 1e-28, 1e-15, |b, w| {
+        fam.bordered_lu::<Double, Dtn<4>>(b, w, false)
+    });
+    println!("control, double-double, f64 factors: |lambda - lambda_c| {dl:.3e}, |u'(0) - 4| {dp:.3e}");
+    assert!(dl > 1e-27 && dp > 1e-12, "control did not fire in double-double");
+    let (shq, zq) = bratu_with::<Quad>(72, true);
+    let famq = shq.in_global(0, 0).unwrap();
+    let (dl, dp, _, _) = fold::<Quad, _>(&famq, &zq, 1e-60, 1e-30, |b, w| {
+        famq.bordered_lu::<Quad, Dtn<4>>(b, w, false)
+    });
+    println!("control, quad-double, f64 factors: |lambda - lambda_c| {dl:.3e}, |u'(0) - 4| {dp:.3e}");
+    assert!(dl > 1e-57 && dp > 1e-26, "control did not fire in quad-double");
+}
+
 /// The controls (feature `mutate`), each against the check it breaks.
 #[cfg(feature = "mutate")]
 mod controls {
@@ -278,5 +357,16 @@ mod controls {
         let (r, j, _) = view_check::<Double>(&sh, &zo);
         println!("control, family column: residual {r}, Jacobian {j}");
         assert!(r && !j, "control did not fire");
+    }
+
+    /// the bordered factors with the dropped row kept miss the exact solve by more than 1e-10
+    #[test]
+    fn border_pin_fails_the_solve() {
+        let (mut sh, z) = bratu::<Double>(36);
+        let zo = off_branch(&sh, &z);
+        sh.set_control(Control::BorderPin);
+        let e = bordered_error::<Double>(&sh, &zo);
+        println!("control, border pin: solve {e:.3e}");
+        assert!(e > 1e-10, "control did not fire");
     }
 }

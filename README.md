@@ -171,7 +171,8 @@ that does:
 
 `Shooting::in_global(g, pin)` takes global g as the parameter p and drops the extra row `pin` that fixes it, so that
 F(z, p) is the layout's residual without that row, dF/dz its Jacobian without that row and g's column, and dF/dp one
-J v.
+J v. `InGlobal::bordered_lu::<P, T>` factors the corrector's bordered matrix in f64 from the lanes T, as the layout's
+Jacobian with that row replaced by the tangent; it stays nonsingular at a simple fold, where J alone is singular.
 
 Every Newton solve takes multisolver's `NewtonOpts`, whose `scaling: Scaling::Iterates { floor }` measures each unknown
 relative to its own size (NLEQ-ERR's scaled norms), for layouts whose node states and globals, such as a period or an

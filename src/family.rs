@@ -6,11 +6,20 @@
 //! less the dropped row; dF/dz is the layout's Jacobian less that row and g's column, entry for entry; and dF/dp is one
 //! J v with v the unit vector on g, which needs no Jacobian. A continuation then follows the branch of the layout's
 //! own discrete system.
+//!
+//! The corrector's bordered matrix [[J, F_p], [t^T]] is the layout's Jacobian with the dropped row replaced by the
+//! tangent t, its rows and columns reordered: g's column is F_p, and the row t^T. [`InGlobal::bordered_lu`] factors it
+//! in that form, in f64 from the f64-tangent lanes (`Shooting::jacobian_f64`). At a simple fold J alone is singular
+//! and the bordered matrix is not, so it is factored whole rather than by elimination against factors of J.
 use crate::equations::Equations;
+use crate::lane::Lane;
 use crate::shooting::Shooting;
-use multidouble::linalg::ld_for;
+use multidouble::dd::DD;
+use multidouble::linalg::{ld_for, DDLu};
 use multidouble::precision::Precision;
 use multidouble::simd::Native;
+use multisolver::arclength::Bordered;
+use multisolver::newton::Factored;
 use multisolver::prec::parts;
 use multisolver::Family;
 
@@ -108,6 +117,60 @@ impl<E: Equations<B>, const B: usize> InGlobal<'_, E, B> {
         }
         j + usize::from(j >= skip)
     }
+
+    /// The bordered matrix [[J, F_p], [t^T]] of the corrector `b` at w = (z, p) (P::PARTS part arrays of `len() +
+    /// 1`, p last), in f64 from the lanes T (`Fu`, `Fun<N>`, `Dtn<N>`), factored dense ([`BorderedLu`]): the layout's
+    /// f64 Jacobian (`Shooting::jacobian_f64`, with `row_scale`) at w's layout state, the dropped row replaced by `b.t`
+    /// rounded to f64. For multisolver's `arclength::continuation`, `start`, `step` and `locate_fold`, as `|b, w|
+    /// fam.bordered_lu::<P, T>(b, w, par)`. With f64 factors the corrector converges linearly, each step contracting
+    /// by about the factors' relative error times the conditioning, and the tangent is refined to P's accuracy against
+    /// the bordered matrix in P.
+    pub fn bordered_lu<P: Precision<Native>, T: Lane>(
+        &self,
+        b: &Bordered<'_, P, impl Family<P>>,
+        w: &[&[f64]],
+        par: bool,
+    ) -> Result<BorderedLu, String> {
+        let n = self.n();
+        if b.t.len() != n + 1 || w.len() != P::PARTS || w.iter().any(|q| q.len() != n + 1) {
+            return Err(format!(
+                "bordered_lu: a tangent of {} and w of {} part arrays, not {} and {} of that length",
+                b.t.len(),
+                w.len(),
+                n + 1,
+                P::PARTS
+            ));
+        }
+        let p: Vec<f64> = w.iter().map(|q| q[n]).collect();
+        let z: Vec<&[f64]> = w.iter().map(|q| &q[..n]).collect();
+        let zl = self.layout_z::<P>(&z, P::from_raw(&p))?;
+        let (mut c, ld) = self.sh.jacobian_f64::<T>(&parts(&zl[..2]), par)?;
+        #[allow(unused_mut)]
+        let mut border = true;
+        #[cfg(feature = "mutate")]
+        if self.sh.control == crate::control::Control::BorderPin {
+            border = false;
+        }
+        if border {
+            for j in 0..=n {
+                c[j * ld + self.row] = P::to_dd(b.t[self.w_of(j)]).hi;
+            }
+        }
+        Ok(BorderedLu {
+            lu: DDLu::factor_f64(n + 1, ld, c, par)?,
+            col: self.col,
+            row: self.row,
+        })
+    }
+
+    /// the place in w = (z, p) of the layout's unknown j
+    fn w_of(&self, j: usize) -> usize {
+        match j.cmp(&self.col) {
+            std::cmp::Ordering::Less => j,
+            std::cmp::Ordering::Equal => self.n(),
+            std::cmp::Ordering::Greater => j - 1,
+        }
+    }
 }
 
 /// The family F(z, p): the layout's residual, Jacobian and J v at the layout state of (z, p), re-indexed
@@ -153,5 +216,43 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> Family<P> for InGlob
         let (mut jv, _) = self.sh.jvp::<P>(&parts(&zl), &parts(&v), par)?;
         jv.remove(self.row);
         Ok(jv)
+    }
+}
+
+/// The f64 factors of a corrector's bordered matrix ([`InGlobal::bordered_lu`]): the dense LU of the layout's
+/// Jacobian with the dropped row replaced by the tangent. Solves in double-double.
+pub struct BorderedLu {
+    lu: DDLu,
+    col: usize,
+    row: usize,
+}
+
+impl<P: Precision<Native>> Factored<P> for BorderedLu {
+    /// -M^-1 r in P, r in the bordered rows' order (F's rows, then the tangent's): r rounded to double-double and put
+    /// in the layout's rows (the tangent's in the dropped row's place), solved with the f64 factors in double-double,
+    /// and the solution read in w's order (z, then p from g's place), taken into P exactly
+    fn solve_neg(&self, r: &[P::Scalar]) -> Vec<P::Scalar> {
+        let n = r.len() - 1;
+        let mut b: Vec<DD> = (0..=n)
+            .map(|i| {
+                let ib = match i.cmp(&self.row) {
+                    std::cmp::Ordering::Less => i,
+                    std::cmp::Ordering::Equal => n,
+                    std::cmp::Ordering::Greater => i - 1,
+                };
+                -P::to_dd(r[ib])
+            })
+            .collect();
+        self.lu.solve(&mut b);
+        (0..=n)
+            .map(|jw| {
+                let j = if jw == n {
+                    self.col
+                } else {
+                    jw + usize::from(jw >= self.col)
+                };
+                P::from_dd(b[j])
+            })
+            .collect()
     }
 }

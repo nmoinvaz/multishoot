@@ -36,7 +36,7 @@
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`family`]: the layout as a family in one of its globals ([`InGlobal`], a [`Family`]), for multisolver's
-//!   continuation through folds;
+//!   continuation through folds, and the f64 factors of its corrector's bordered matrix;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
 //!   whose zeros in the rate are counted by multisolver's argument principle;
@@ -64,7 +64,7 @@ pub mod sub;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
-pub use family::InGlobal;
+pub use family::{BorderedLu, InGlobal};
 pub use fast::{MixedLu, Storage};
 pub use jacobian::WithTangents;
 pub use mode::{ModeMatrix, Rate};
