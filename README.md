@@ -15,6 +15,8 @@ The equations are written once over a lane type of [multidouble](https://github.
 values (the residual), dual numbers (the Jacobian and J v), power series (the residual's series in a parameter) and
 complex tangents (the mode matrix).
 
+![One Equations implementation runs on five lane types, each giving the layout one of its products](docs/figures/lanes.svg)
+
 ## API
 
 The crate root re-exports the engine's types, multidouble's arithmetic and precisions (`DD`, `Fl`, `cs`, `horner`,
@@ -64,6 +66,8 @@ A step between f64 points is exact in double-double. A step that would leave les
 the rest, so a segment ends in two near-equal steps. `plan_path` panics on a coefficient that is not finite and on a
 step that does not move x.
 
+![Taylor step lengths near a pole and beyond it, and the cost of a layout at every Taylor order](docs/figures/taylor.svg)
+
 ### The layout
 
 | Item | What it does |
@@ -86,6 +90,8 @@ and the residual has K + 1 blocks of NF M rows, then the extra rows. Block 0 is 
 block b is segment b's Taylor path minus its target node, and block K is the right end's state minus node K-1. The
 system is square when NL + NR = NF with one extra row per global.
 
+![Newton's iterates on the usage example closing the gaps between the segments' Taylor paths, and the blocks of z and F](docs/figures/layout.svg)
+
 ### Residual and derivatives
 
 | Item | What it does |
@@ -102,6 +108,8 @@ system is square when NL + NR = NF with one extra row per global.
 The Jacobian takes one block evaluation per column, or per input field for a pointwise problem. J v costs K + 1
 evaluations, so a Krylov solver needs no matrix.
 
+![The Jacobian's pattern filled one dual evaluation at a time, against J v's one pass per block](docs/figures/jacobian.svg)
+
 ### Series in a parameter
 
 | Item | What it does |
@@ -113,6 +121,8 @@ evaluations, so a Krylov solver needs no matrix.
 Order 0 is the residual; with z_1 given, order 1 is J z_1 + dF/dparameter. A session keeps each block's state, its
 endpoint series and each step's work between orders. With the order-k methods an order costs about one evaluation at
 one coefficient; with their defaults a session gives `residual_jet`'s bits at its cost.
+
+![Partial sums of the branch's series in the parameter converging up to the fold of Bratu's problem](docs/figures/series.svg)
 
 ### Mode matrix
 
@@ -126,6 +136,8 @@ one coefficient; with their defaults a session gives `residual_jet`'s bits at it
 
 At λ = 0, M is the Jacobian's leading block. det M(λ) vanishes at each mode exp(λt) g of the linearized problem, so
 its winding number along a closed contour counts the modes inside, when det M has no poles there.
+
+![The winding number of det M along a contour around two modes, and ln|det M| against its closed form](docs/figures/mode.svg)
 
 ### Periodic direction and relayout
 
@@ -143,6 +155,8 @@ its winding number along a closed contour counts the modes inside, when det M ha
 The projector Π onto the low harmonics is formed in octo-double from cosines of exact multiples of π, and each
 precision reads its leading parts, so the projected rows are exact to the precision of the solve.
 
+![A field on the half grid resampled to 64 points, and segments split into blocks of at most 20 steps](docs/figures/periodic.svg)
+
 ### Fast path
 
 | Item | What it does |
@@ -157,6 +171,8 @@ The mixed Newton method converges linearly to `newton`'s root, each step contrac
 relative error times the conditioning. Staircase storage needs one global and one extra row, with terms on the left
 data, the global and node 0.
 
+![Newton with the exact, the f64 dense and staircase, and the Broyden-updated Jacobians: steps and time](docs/figures/fast.svg)
+
 ### Solvers
 
 `Shooting` implements three traits of multisolver, and its family view a fourth, whose solvers run on any problem
@@ -169,10 +185,14 @@ that does:
 | `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
 | `Family<P>` | `residual_at`, `jacobian_at` and `dp_at` at any parameter, through `Shooting::in_global` (`InGlobal`) | pseudo-arclength continuation through folds, the fold's location |
 
+![Shooting and its family view implement multisolver's traits, which its solvers run on](docs/figures/solvers.svg)
+
 `Shooting::in_global(g, pin)` takes global g as the parameter p and drops the extra row `pin` that fixes it, so that
 F(z, p) is the layout's residual without that row, dF/dz its Jacobian without that row and g's column, and dF/dp one
 J v. `InGlobal::bordered_lu::<P, T>` factors the corrector's bordered matrix in f64 from the lanes T, as the layout's
 Jacobian with that row replaced by the tangent; it stays nonsingular at a simple fold, where J alone is singular.
+
+![Pseudo-arclength continuation through the fold of Bratu's problem, the fold located](docs/figures/continuation.svg)
 
 Every Newton solve takes multisolver's `NewtonOpts`, whose `scaling: Scaling::Iterates { floor }` measures each unknown
 relative to its own size (NLEQ-ERR's scaled norms), for layouts whose node states and globals, such as a period or an
@@ -331,6 +351,8 @@ aarch64 build is the NEON backend. CI runs the suite on:
 - MSVC on Windows x64.
 
 It also runs coverage, rustfmt, clippy on three backends, the documentation, and a check at the minimum Rust version.
+
+![NEON and the portable backend give the same bits for the usage example's roots; on SSE2 and AVX2, CI checks the tests' pinned hashes instead](docs/figures/backends.svg)
 
 ## References
 
