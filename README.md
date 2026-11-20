@@ -66,6 +66,7 @@ the lane's parameter arithmetic (`lane::Param::var`): the constant c on value an
 | `taylor::taylor_step`, `taylor_path` | one Taylor step of a state summed by Horner's rule, and a path of steps through given points |
 | `taylor::plan_path` | step points between two ends, each step the largest whose terms of orders kt - 1 and kt stay below `tol` |
 | `taylor::step_size`, `kth_root` | that step from one step's coefficients, by a k-th root from IEEE operations alone, the same bits on every platform |
+| `Plan::optimal_kt`, `candidate_orders`, `taylor::step_cost` | the Taylor order of least cost per unit length at `tol` under the step cost k^2 + 20 k, the same on every platform, and the ladder of orders around it to plan |
 
 A step from x0 to x1 is exact in double-double, as both points are f64. A step that would leave less than 40% of the
 rest becomes half the rest, so a segment ends in two near-equal steps. `plan_path` panics on a coefficient that is not
@@ -77,6 +78,7 @@ finite and on a step that does not move x.
 |---|---|
 | `Shooting<E, B>` | the equations, the nodes, each segment's step points, the extra rows, the row factors and the projected rows |
 | `Shooting::new`, `plan_segments` | a layout on increasing nodes, and every segment's steps planned from a state z, on rayon tasks |
+| `Shooting::plan_segments_auto`, `OrderChoice` | the segments planned at each candidate order, keeping the order whose steps cost least, chosen from step counts alone; `OrderChoice::refined_orders` gives a second pass near the choice |
 | `ExtraRow` | a linear condition `sum_i w_i z_i - rhs = 0`: a phase condition, a normalization, a pinned unknown |
 | `Shooting::off_node`, `off_right`, `off_global`, `row_block`, `row_extra` | the offsets of the unknowns and of the residual's rows |
 | `Shooting::block_inputs`, `block_target`, `block_state` | what block b reads, the node it is matched to, and the state it produces |
@@ -99,6 +101,8 @@ state at node K-1 minus node K-1. The system is square when NL + NR = NF and the
 | `Shooting::residual::<P>` | F(z) in the precision P, one scalar per row, with each block on its own rayon task under `par` |
 | `Shooting::jacobian::<P>` | the exact Jacobian dF/dz by forward-mode duals over the residual's code, as column-major part arrays |
 | `Shooting::jacobian_tangents::<P, T>` | `jacobian`, bit for bit, from lanes with several tangents (multidouble's `Oun<N>`): one evaluation of a block for up to N of its column tasks |
+| `Shooting::with_tangents` | the layout as an octo-double multisolver `Problem` (`WithTangents`) whose Jacobian is `jacobian_tangents` with 1, 2, 4 or 8 tangents per evaluation, the same bits as `jacobian` |
+| `Shooting::jacobian_sub::<P>`, `residual_sub::<P>` | `J[rows, cols]` and `F[rows]`, bit for bit the entries of `jacobian` and `residual`, from only the evaluations that reach them |
 | `Shooting::jvp::<P>` | J v and F together, one dual pass per block, without the Jacobian |
 | `Shooting::taylor_check::<P>` | the Taylor paths' truncation error per block, estimated from the residual with every step halved |
 | `Shooting::newton::<P>`, `newton_step::<P>` | multisolver's damped Newton method and its step on this layout |
@@ -142,6 +146,7 @@ so its winding number along a closed contour counts the modes inside, when det M
 | `ProjectedRows`, `Shooting::project_rows` | one field's rows of a block replaced by Π (state - target) + Π' y: its high harmonics left unmatched and those of the pinned unknowns y held at zero |
 | `Parities` | each field's parity at the left end, at the nodes and at the right end |
 | `Shooting::renode`, `resample` | a solution moved to new node positions, or to another number of collocation points, as the start of a Newton solve there |
+| `Shooting::split_segments::<P>` | every segment of more than `max_steps` steps split at its own step points into blocks of their own, so the one-task-per-block evaluations balance across threads; the residual keeps its rows bit for bit |
 
 The projector Π onto the low harmonics is formed in octo-double from cosines of exact multiples of π, and each
 precision reads its leading parts, so the projected rows are exact to the precision of the solve.
