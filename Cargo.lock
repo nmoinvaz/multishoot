@@ -53,9 +53,9 @@ dependencies = [
 
 [[package]]
 name = "multisolver"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6310d13cc6846bb174025b87a1bad5b854ce3c7cd8d45a249c898e6d8bb2ae3b"
+checksum = "e37837b1ce13d617d160eade2a9110ac17a7917201f1882cae01a883b11645aa"
 dependencies = [
  "multidouble",
  "rayon",
