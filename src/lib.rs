@@ -26,7 +26,7 @@
 //! Modules:
 //!
 //! * [`equations`]: the [`Equations`] trait, the state and the Taylor work arrays;
-//! * [`taylor`]: Taylor steps, paths and the step planner;
+//! * [`taylor`]: Taylor steps, paths, the step planner and the choice of the Taylor order;
 //! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
@@ -69,4 +69,4 @@ pub use multisolver::{Jvp, Problem, ResidualJet};
 pub use projected::ProjectedRows;
 pub use relayout::Parities;
 pub use shooting::{ExtraRow, Shooting};
-pub use taylor::Plan;
+pub use taylor::{OrderChoice, OrderCost, Plan};

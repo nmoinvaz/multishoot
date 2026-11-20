@@ -22,7 +22,7 @@
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use crate::mode::Rate;
-use crate::taylor::{plan_path, taylor_path, Plan};
+use crate::taylor::{plan_path_within, steps_within, taylor_path, OrderChoice, OrderCost, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::precision::Precision;
@@ -241,6 +241,16 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// segments are independent and are planned on rayon tasks; the points do not depend on it, and a panic is the
     /// first segment's to panic, as in a serial loop.
     pub fn plan_segments(&mut self, zh: &[f64], zl: &[f64], plan: &Plan) {
+        let segs = self.plan_each(zh, zl, plan, usize::MAX);
+        self.segs = segs
+            .into_iter()
+            .map(|s| s.expect("plan_segments: no step limit"))
+            .collect();
+        self.kt = plan.kt;
+    }
+
+    /// Every segment's plan (`plan_path_within`, at most `max_steps` steps each) from z, on rayon tasks
+    fn plan_each(&self, zh: &[f64], zl: &[f64], plan: &Plan, max_steps: usize) -> Vec<Option<Vec<f64>>> {
         assert!(
             zh.len() == self.len() && zl.len() == self.len(),
             "plan_segments: z of length {}",
@@ -249,7 +259,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let m = Self::M;
         let og = self.off_global();
         let g: Vec<DV> = (0..E::NG).map(|i| DV::splat(DD::new(zh[og + i], zl[og + i]))).collect();
-        let segs = (1..self.k())
+        (1..self.k())
             .into_par_iter()
             .map(|b| {
                 let src = self.seg_source(b);
@@ -258,11 +268,93 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 let s0: Vec<Fl<DV, B>> = (0..E::NF)
                     .map(|f| Fl::load(&zh[o + f * m..o + (f + 1) * m], &zl[o + f * m..o + (f + 1) * m]))
                     .collect();
-                plan_path(&self.eq, &s0, self.nodes[src], self.nodes[dst], &g, plan)
+                plan_path_within(&self.eq, &s0, self.nodes[src], self.nodes[dst], &g, plan, max_steps)
             })
-            .collect();
+            .collect()
+    }
+
+    /// Plans the segments as [`Shooting::plan_segments`] does at each candidate order of `orders` (each at least 2,
+    /// last terms below tol, steps at most hmax), and keeps the cheapest: the order of least estimated cost, the sum of
+    /// the steps over the segments times `cost(k)`, the cost of one step at order k ([`crate::taylor::step_cost`] by
+    /// default). A tie goes to the lower order. The order kept becomes `kt`, its points `segs`, and the result lists
+    /// every candidate's steps and cost by increasing order. The default search is two passes, a ladder and the
+    /// orders near its choice:
+    ///
+    /// ```ignore
+    /// let c = sh.plan_segments_auto(&zh, &zl, tol, hmax, &Plan::candidate_orders(tol), step_cost);
+    /// let c = sh.plan_segments_auto(&zh, &zl, tol, hmax, &c.refined_orders(), step_cost);
+    /// ```
+    ///
+    /// The residual, the Jacobian (each column runs every segment) and the other evaluations take one recursion and
+    /// one Horner sum per step, so their cost follows the estimate. The candidates are planned from the highest order
+    /// down; once one segment of a candidate takes more steps than would cost the cheapest estimate so far, the
+    /// candidate is dropped (its `steps` and `cost` are None), so that a low order with many steps is not planned in
+    /// full. The choice depends on step counts and `cost` alone, never on timing, threads or the SIMD backend. It
+    /// panics as `plan_segments` does on any candidate, on an empty `orders` and on a cost that is not positive and
+    /// finite.
+    pub fn plan_segments_auto(
+        &mut self,
+        zh: &[f64],
+        zl: &[f64],
+        tol: f64,
+        hmax: f64,
+        orders: &[usize],
+        cost: impl Fn(usize) -> f64,
+    ) -> OrderChoice {
+        assert!(!orders.is_empty(), "plan_segments_auto: no candidate orders");
+        let mut ks = orders.to_vec();
+        ks.sort_unstable();
+        ks.dedup();
+        // the cheapest so far: its estimate, its order and its points
+        let mut best: Option<(f64, usize, Vec<Vec<f64>>)> = None;
+        let mut candidates = Vec::with_capacity(ks.len());
+        for &kt in ks.iter().rev() {
+            let c = cost(kt);
+            assert!(c > 0.0 && c.is_finite(), "plan_segments_auto: cost {c:e} of order {kt}");
+            let budget = best.as_ref().map_or(f64::INFINITY, |b| b.0);
+            let plan = Plan { kt, tol, hmax };
+            let segs: Option<Vec<Vec<f64>>> = self
+                .plan_each(zh, zl, &plan, steps_within(budget, c))
+                .into_iter()
+                .collect();
+            let Some(segs) = segs else {
+                candidates.push(OrderCost {
+                    kt,
+                    steps: None,
+                    cost: None,
+                });
+                continue;
+            };
+            let steps: Vec<usize> = segs.iter().map(|s| s.len() - 1).collect();
+            let est = steps.iter().sum::<usize>() as f64 * c;
+            // from the highest order down, so `<=` gives a tie to the lower order
+            if est <= budget {
+                best = Some((est, kt, segs));
+            }
+            candidates.push(OrderCost {
+                kt,
+                steps: Some(steps),
+                cost: Some(est),
+            });
+        }
+        candidates.reverse();
+        let (_, kt, segs) = best.expect("the first candidate has no budget");
+        #[cfg(feature = "mutate")]
+        let (kt, segs) = if self.control == crate::control::Control::FirstOrder && kt != ks[0] {
+            let plan = Plan { kt: ks[0], tol, hmax };
+            (
+                ks[0],
+                self.plan_each(zh, zl, &plan, usize::MAX)
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            )
+        } else {
+            (kt, segs)
+        };
         self.segs = segs;
-        self.kt = plan.kt;
+        self.kt = kt;
+        OrderChoice { kt, candidates }
     }
 }
 

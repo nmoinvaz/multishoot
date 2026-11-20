@@ -7,6 +7,12 @@
 //! collocation points, the step is the largest h with `e_(kt-1) h^(kt-1) <= tol` and `e_kt h^kt <= tol`, capped at
 //! `hmax`. For a series whose terms fall geometrically past order kt-1, the dropped tail is then below tol times the
 //! ratio of consecutive terms.
+//!
+//! The order itself can be chosen ([`crate::Shooting::plan_segments_auto`]): a step's length grows like tol^(1/k)
+//! with the order k and its cost like a k^2 + b k, so the cost of a path has a minimum in k, near ln(1/tol) / 2 when
+//! the k^2 term dominates (Jorba and Zou, Experimental Mathematics 14(1), 99-117 (2005)). The choice plans the
+//! segments at each candidate order and keeps the cheapest by a cost model ([`step_cost`]); it counts steps and never
+//! times anything, so it is the same on every machine.
 use crate::equations::{Equations, State, Work};
 use crate::lane::{Lane, DV};
 use multidouble::dd::DD;
@@ -20,6 +26,130 @@ pub struct Plan {
     pub kt: usize,
     pub tol: f64,
     pub hmax: f64,
+}
+
+/// The weight w of the order term in the default step cost k^2 + w k ([`step_cost`])
+pub const STEP_COST_W: usize = 20;
+
+/// The default cost of one Taylor step at order k, k^2 + w k with w = [`STEP_COST_W`], in arbitrary units, for the
+/// order choice of [`crate::Shooting::plan_segments_auto`].
+///
+/// A step forms orders 0..k-1, order j with Cauchy products of j + 1 terms (k^2 / 2 over the step for each product
+/// of two series) and work that does not grow with j (the d/dtheta products, the sources, one term of the Horner
+/// sum), w per order relative to the k^2 term. w = 20 fits the serial octo-double residual of a model problem with
+/// two products and one d/dtheta product on 8 collocation points (thread CPU time at orders 20 to 160 and tolerances
+/// 1e-30 to 1e-100) to 3% on average and 12% at worst, and its least cost is within 1.5% of the least time measured.
+/// The weight depends on the problem and the precision: more collocation points raise it (a d/dtheta product costs
+/// M per point per order), double-double arithmetic raises it (its products cost little against the rest of a
+/// step), and a linear recursion has no k^2 term at all; pass a cost of the problem's own for such cases. The values
+/// are integers below 2^53, so the estimates compare exactly.
+pub fn step_cost(k: usize) -> f64 {
+    (k * k + STEP_COST_W * k) as f64
+}
+
+impl Plan {
+    /// The order of least cost per unit length at tol under the default cost model, a priori: the smallest k >= 2 with
+    /// `k (2k + w) >= L (k + w)`, the root of `d/dk [ln(k^2 + w k) + L / k] = 0`, where the step's length goes as
+    /// tol^(1/k) = exp(-L / k) and L = ln(1 / tol). L is read from the exponent bits of tol, `log2 tol ~ e + (m - 1)`
+    /// for tol = m 2^e, m in [1, 2) (within 0.09 of log2 tol), and the rest is IEEE arithmetic on integers and one
+    /// constant, so the order is the same on every platform. With w = 0 it is Jorba and Zou's L / 2; w moves it up
+    /// toward L, where a step's cost is linear in k.
+    pub fn optimal_kt(tol: f64) -> usize {
+        order_guess(tol, STEP_COST_W)
+    }
+
+    /// Candidate orders for [`crate::Shooting::plan_segments_auto`] at tol: [`Plan::optimal_kt`] times 1/2, 2/3, 5/6, 1,
+    /// 5/4, 3/2 and 2, rounded, at least 2, increasing and distinct. The a-priori order misses the true optimum by the
+    /// scale of the coefficients (the L of a series with terms A r^-k is ln(A / tol)), the cap hmax and the step
+    /// count's rounding to whole steps, so the ladder spans a factor of four; [`OrderChoice::refined_orders`] then
+    /// gives the orders of a second pass near the first pass's choice.
+    pub fn candidate_orders(tol: f64) -> Vec<usize> {
+        let k = Self::optimal_kt(tol);
+        let mut v: Vec<usize> = [(1, 2), (2, 3), (5, 6), (1, 1), (5, 4), (3, 2), (2, 1)]
+            .iter()
+            .map(|&(p, q)| ((k * p + q / 2) / q).max(2))
+            .collect();
+        v.dedup();
+        v
+    }
+}
+
+/// The a-priori order of [`Plan::optimal_kt`] for the step cost k^2 + w k
+pub fn order_guess(tol: f64, w: usize) -> usize {
+    assert!(
+        tol > 0.0 && tol.is_finite(),
+        "order_guess: tol {tol:e} must be positive and finite"
+    );
+    let e = ilog2(tol);
+    let m = scale2(tol, -e);
+    let l = -(e as f64 + (m - 1.0)) * std::f64::consts::LN_2;
+    let mut k = 2usize;
+    while ((k * (2 * k + w)) as f64) < l * (k + w) as f64 {
+        k += 1;
+    }
+    k
+}
+
+/// One candidate of the order choice ([`crate::Shooting::plan_segments_auto`])
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderCost {
+    /// the Taylor order
+    pub kt: usize,
+    /// the steps of each segment at this order (`segs[b-1]`), None when the candidate was dropped as soon as one
+    /// segment's steps cost more than the cheapest candidate before it
+    pub steps: Option<Vec<usize>>,
+    /// the estimated cost, the sum of the steps times the step cost at kt (None when dropped)
+    pub cost: Option<f64>,
+}
+
+/// The result of the order choice: the order kept and every candidate's estimate, by increasing order
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderChoice {
+    pub kt: usize,
+    pub candidates: Vec<OrderCost>,
+}
+
+impl OrderChoice {
+    /// The candidates of a second pass of the choice: every order strictly between the candidates next to the kept
+    /// one, the kept one included; past the lowest or highest candidate, as far as the spacing on the other side (not
+    /// below 2). A path's cost drops at the orders where a segment saves a step and grows between them, so a ladder
+    /// of candidates can land some orders above such a drop (on a cap hmax that every segment reaches in one step,
+    /// the cost grows like k^2 from the lowest order that reaches it); the second pass tries every order near the
+    /// first pass's choice, and its least cost is never more than the first pass's.
+    pub fn refined_orders(&self) -> Vec<usize> {
+        let ks: Vec<usize> = self.candidates.iter().map(|c| c.kt).collect();
+        let i = ks
+            .iter()
+            .position(|&k| k == self.kt)
+            .expect("the kept order is a candidate");
+        let below = (i > 0).then(|| ks[i - 1]);
+        let above = ks.get(i + 1).copied();
+        let (lo, hi) = match (below, above) {
+            (Some(b), Some(a)) => (b + 1, a - 1),
+            (Some(b), None) => (b + 1, 2 * self.kt - b - 1),
+            (None, Some(a)) => ((2 * self.kt + 1).saturating_sub(a).max(2), a - 1),
+            (None, None) => (self.kt, self.kt),
+        };
+        (lo..=hi).collect()
+    }
+}
+
+/// The largest n with `n c <= budget` in f64, for c positive and finite: a path of more steps than that costs more
+/// than the budget. A quotient budget / c of 2^52 or more (an infinite budget among them) gives usize::MAX, no limit.
+pub(crate) fn steps_within(budget: f64, c: f64) -> usize {
+    let q = budget / c;
+    if q >= 4503599627370496.0 {
+        return usize::MAX;
+    }
+    // below 2^52 the counts are exact in f64, so each loop runs at most twice
+    let mut n = q as usize;
+    while ((n + 1) as f64) * c <= budget {
+        n += 1;
+    }
+    while n > 0 && (n as f64) * c > budget {
+        n -= 1;
+    }
+    n
 }
 
 /// One Taylor step of the state s from x0 to x1 (w sized for E's fields and w.kt).
@@ -212,6 +342,19 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
     g: &[DV],
     plan: &Plan,
 ) -> Vec<f64> {
+    plan_path_within(eq, s0, xa, xb, g, plan, usize::MAX).expect("plan_path: no step limit")
+}
+
+/// [`plan_path`] given up once the path would take more than `max_steps` steps: None then, and the points otherwise
+pub(crate) fn plan_path_within<E: Equations<B>, const B: usize>(
+    eq: &E,
+    s0: &[Fl<DV, B>],
+    xa: f64,
+    xb: f64,
+    g: &[DV],
+    plan: &Plan,
+    max_steps: usize,
+) -> Option<Vec<f64>> {
     assert!(
         xa.is_finite() && xb.is_finite(),
         "plan_path: ends {xa} and {xb} must be finite"
@@ -229,6 +372,9 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
     let mut s = s0.to_vec();
     let dir = if xb > xa { 1.0 } else { -1.0 };
     while (xb - x) * dir > 0.0 {
+        if xs.len() > max_steps {
+            return None;
+        }
         for (f, sf) in s.iter().enumerate() {
             w.c[f][0] = *sf;
         }
@@ -253,7 +399,7 @@ pub fn plan_path<E: Equations<B>, const B: usize>(
         x = xn;
         xs.push(x);
     }
-    xs
+    Some(xs)
 }
 
 #[cfg(test)]
@@ -336,5 +482,43 @@ mod tests {
             }
             assert_ne!(kth_root(b, k), kth_root(a, k), "a = {a:e}, k = {k}");
         }
+    }
+
+    /// whether n is the largest step count within the budget at the step cost c: n c <= budget < (n + 1) c
+    fn largest_within(n: usize, budget: f64, c: f64) -> bool {
+        (n as f64) * c <= budget && ((n + 1) as f64) * c > budget
+    }
+
+    /// the (budget, cost) sample: products of the sample's step costs and counts, exact and one ulp to either side,
+    /// and quotients that do not divide evenly
+    fn budgets() -> Vec<(f64, f64)> {
+        let mut v = Vec::new();
+        for c in [1.0, 3.0, 0.1, 1.0 / 3.0, 7.25e5, 1e-300, step_cost(37)] {
+            for n in [0u32, 1, 2, 9, 1000, 123457] {
+                let b = n as f64 * c;
+                v.extend([(b, c), (b.next_up(), c), (b.next_down().max(0.0), c), (b + 0.5 * c, c)]);
+            }
+        }
+        v
+    }
+
+    /// Pass, written before the first run: `steps_within` gives the largest n with n c <= budget (exact in f64) on
+    /// every sample point, and no limit (usize::MAX) for an infinite budget or a quotient of 2^52 or more. The control:
+    /// n + 1 fails `largest_within`.
+    #[test]
+    fn steps_within_is_the_largest_count() {
+        for (b, c) in budgets() {
+            let n = steps_within(b, c);
+            assert!(largest_within(n, b, c), "budget {b:e}, cost {c:e}: {n}");
+            assert!(
+                !largest_within(n + 1, b, c),
+                "control did not fire at budget {b:e}, cost {c:e}"
+            );
+        }
+        assert_eq!(steps_within(f64::INFINITY, 3.0), usize::MAX);
+        assert_eq!(steps_within(1e300, 1e-300), usize::MAX);
+        assert_eq!(steps_within(2f64.powi(52), 1.0), usize::MAX);
+        let n = steps_within(2f64.powi(52) - 1.0, 1.0);
+        assert!(largest_within(n, 2f64.powi(52) - 1.0, 1.0));
     }
 }
