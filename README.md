@@ -39,6 +39,13 @@ cargo test --release --features portable
 cargo clippy --all-targets --features mutate -- -D warnings
 ```
 
+## Related crates
+
+- [multidouble](https://github.com/nmoinvaz/multidouble) is the double-, quad- and octo-double arithmetic this crate
+  is written over, with the dual numbers that give its exact Jacobians.
+- [multisolver](https://github.com/nmoinvaz/multisolver) holds the nonlinear solvers that this crate's layout is
+  solved with, from Newton's method to the argument-principle zero count.
+
 ## License
 
 BSD 3-Clause, see [LICENSE](LICENSE).
