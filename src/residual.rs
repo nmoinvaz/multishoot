@@ -148,30 +148,58 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         let m = Self::M;
         let states = self.try_block_states::<P>(z, par)?;
         let mut f = vec![P::ZERO; self.rows()];
+        let nb = E::NF * m;
         for (b, s) in states.iter().enumerate() {
-            let t = self.block_target(b);
             let r0 = self.row_block(b);
-            for q in 0..E::NF {
-                let d = s[q] - self.load::<P>(z, t + q * m);
-                for i in 0..m {
-                    f[r0 + q * m + i] = P::field_get(&d, i);
-                }
-                #[cfg(feature = "mutate")]
-                if let crate::control::Control::ShiftRow(r) = self.control {
-                    if r >= r0 + q * m && r < r0 + (q + 1) * m {
-                        let i = r - r0 - q * m;
-                        f[r] = P::field_get(&s[q], i) - self.scalar::<P>(z, t + q * m + i + 1);
-                    }
-                }
-            }
+            f[r0..r0 + nb].copy_from_slice(&self.block_rows::<P>(z, b, s));
         }
-        self.project_residual::<P>(&mut f, |p| (0..m).map(|j| self.scalar::<P>(z, p.pin + j)).collect());
+        self.project_residual::<P>(&mut f, |p| self.pinned::<P>(z, p));
         let re = self.row_extra();
         for r in 0..self.extra.len() {
             f[re + r] = self.extra_row::<P>(z, r);
         }
         self.scale_rows::<P>(&mut f)?;
         Ok(f)
+    }
+
+    /// Block b's NF M rows of the residual from its state s: the state minus its target node's fields (row r matched
+    /// to the unknown after its target under `Control::ShiftRow(r)`)
+    pub(crate) fn block_rows<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        b: usize,
+        s: &State<P::V, B>,
+    ) -> Vec<P::Scalar> {
+        let m = Self::M;
+        let t = self.block_target(b);
+        let mut f = Vec::with_capacity(E::NF * m);
+        for (q, sq) in s.iter().enumerate().take(E::NF) {
+            let d = *sq - self.load::<P>(z, t + q * m);
+            f.extend((0..m).map(|i| P::field_get(&d, i)));
+            #[cfg(feature = "mutate")]
+            if let crate::control::Control::ShiftRow(r) = self.control {
+                let r0 = self.row_block(b);
+                if r >= r0 + q * m && r < r0 + (q + 1) * m {
+                    let i = r - r0 - q * m;
+                    f[q * m + i] = P::field_get(sq, i) - self.scalar::<P>(z, t + q * m + i + 1);
+                }
+            }
+        }
+        f
+    }
+
+    /// The values in z of a projection's M pinned unknowns, as the residual's projected rows read them
+    pub(crate) fn pinned<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        p: &crate::projected::ProjectedRows,
+    ) -> Vec<P::Scalar> {
+        (0..Self::M).map(|j| self.scalar::<P>(z, p.pin + j)).collect()
+    }
+
+    /// The residual's factor of a row whose `row_scale` entry is s
+    pub(crate) fn row_factor<P: Precision<Native>>(s: f64) -> P::Scalar {
+        P::from_dd(multidouble::dd::DD::from_f64(s))
     }
 
     /// Each row times its `row_scale` factor (nothing when there are none)
@@ -187,7 +215,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             ));
         }
         for (v, &s) in f.iter_mut().zip(&self.row_scale) {
-            *v = *v * P::from_dd(multidouble::dd::DD::from_f64(s));
+            *v = *v * Self::row_factor::<P>(s);
         }
         Ok(())
     }

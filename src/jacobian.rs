@@ -19,6 +19,9 @@ use multidouble::precision::Precision;
 use multidouble::simd::Native;
 use rayon::prelude::*;
 
+/// A row's factor of the Jacobian's scaling in P and its product by +0
+pub(crate) type RowFactor<P> = (<P as Precision<Native>>::Scalar, <P as Precision<Native>>::Scalar);
+
 /// What a Jacobian column task differentiates along: point j of a block's input field f, every point of input
 /// field f at once (pointwise problems), or global i
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,29 +276,16 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 add(&mut c, i * ld + re + r, P::from_dd(w));
             }
         }
-        if !self.row_scale.is_empty() {
-            if self.row_scale.len() != l {
-                return Err(format!("row_scale has {} factors for {l} rows", self.row_scale.len()));
-            }
-            let s: Vec<P::Scalar> = self
-                .row_scale
-                .iter()
-                .map(|&sr| P::from_dd(multidouble::dd::DD::from_f64(sr)))
-                .collect();
-            // an entry of +0 parts scales to the same bits in every column, so its product is formed once per row
-            let zs: Vec<P::Scalar> = s.iter().map(|&sr| P::ZERO * sr).collect();
+        let scale = self.jac_row_factors::<P>()?;
+        if !scale.is_empty() {
             let mut cur = vec![0.0; P::PARTS];
             for j in 0..l {
-                for r in 0..l {
+                for (r, &sr) in scale.iter().enumerate() {
                     let idx = j * ld + r;
                     for q in 0..P::PARTS {
                         cur[q] = c[q][idx];
                     }
-                    let v = if cur.iter().all(|x| x.to_bits() == 0) {
-                        zs[r]
-                    } else {
-                        P::from_raw(&cur) * s[r]
-                    };
+                    let v = Self::jac_scaled::<P>(&cur, sr);
                     for (q, cq) in c.iter_mut().enumerate() {
                         cq[idx] = P::part(v, q);
                     }
@@ -303,5 +293,34 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             }
         }
         Ok((c, ld))
+    }
+
+    /// The Jacobian's row factors (`row_scale`) in P, each with its product by +0; empty without a scaling. An entry
+    /// of +0 parts scales to the same bits in every column, so that product is formed once per row.
+    pub(crate) fn jac_row_factors<P: Precision<Native>>(&self) -> Result<Vec<RowFactor<P>>, String> {
+        let l = self.len();
+        if self.row_scale.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.row_scale.len() != l {
+            return Err(format!("row_scale has {} factors for {l} rows", self.row_scale.len()));
+        }
+        Ok(self
+            .row_scale
+            .iter()
+            .map(|&sr| {
+                let s = P::from_dd(multidouble::dd::DD::from_f64(sr));
+                (s, P::ZERO * s)
+            })
+            .collect())
+    }
+
+    /// A Jacobian entry of parts `cur` times its row's factor (s, +0 s) from `jac_row_factors`
+    pub(crate) fn jac_scaled<P: Precision<Native>>(cur: &[f64], (s, zs): RowFactor<P>) -> P::Scalar {
+        if cur.iter().all(|x| x.to_bits() == 0) {
+            zs
+        } else {
+            P::from_raw(cur) * s
+        }
     }
 }

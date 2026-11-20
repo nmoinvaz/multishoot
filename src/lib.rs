@@ -30,6 +30,8 @@
 //! * [`shooting`]: the layout ([`Shooting`]): nodes, segments, the unknown vector and the residual's blocks;
 //! * [`residual`]: the residual F(z) in any precision;
 //! * [`jacobian`]: its exact Jacobian by forward-mode duals;
+//! * [`sub`]: a block of the Jacobian, `J[rows, cols]`, and of the residual, `F[rows]`, from the evaluations that reach
+//!   them;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
@@ -54,6 +56,7 @@ pub mod projected;
 pub mod relayout;
 pub mod residual;
 pub mod shooting;
+pub mod sub;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
