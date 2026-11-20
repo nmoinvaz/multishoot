@@ -83,9 +83,7 @@ fn newton_nan_control_old_fold_scores_zero() {
 /// a Taylor work array of order 4 with every coefficient 0.5 but one value of order 4, NaN when `nan`
 fn work(nan: bool) -> Work<DV, 1> {
     let mut w = Work::<DV, 1>::new(1, 0, 4);
-    for k in 0..=4 {
-        w.c[0][k] = Fl::splat(DD::from_f64(0.5));
-    }
+    w.c[0][..=4].fill(Fl::splat(DD::from_f64(0.5)));
     if nan {
         let v: Vec<f64> = (0..8).map(|j| if j == 6 { f64::NAN } else { 0.5 }).collect();
         w.c[0][4] = Fl::load(&v, &[0.0; 8]);
