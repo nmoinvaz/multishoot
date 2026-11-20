@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="667" height="376" viewBox="0 0 667 376" font-family="system-ui, sans-serif">
+<style>@media (prefers-color-scheme: dark){[fill="#fcfcfb"]{fill:#201f1d}[stroke="#fcfcfb"]{stroke:#201f1d}[fill="#0b0b0b"]{fill:#e8e6e3}[stroke="#0b0b0b"]{stroke:#e8e6e3}[fill="#52514e"]{fill:#a8a49d}[stroke="#52514e"]{stroke:#a8a49d}[fill="#e7e6e2"]{fill:#343230}[stroke="#e7e6e2"]{stroke:#343230}[fill="#c98500"]{fill:#d69a2d}[stroke="#c98500"]{stroke:#d69a2d}[fill="#eb6834"]{fill:#dd5c26}[stroke="#eb6834"]{stroke:#dd5c26}[fill="#eda100"]{fill:#c08800}[stroke="#eda100"]{stroke:#c08800}[fill="#e87ba4"]{fill:#d1678f}[stroke="#e87ba4"]{stroke:#d1678f}[fill="#4a3aa7"]{fill:#7263cf}[stroke="#4a3aa7"]{stroke:#7263cf}[fill="#a6339a"]{fill:#c257b5}[stroke="#a6339a"]{stroke:#c257b5}[fill="#7a7668"]{fill:#948e82}[stroke="#7a7668"]{stroke:#948e82}}</style>
+<rect width="667" height="376" fill="#fcfcfb"/>
+<rect x="200.0" y="20.0" width="164.0" height="336.0" rx="10" fill="#e7e6e2" fill-opacity="0.45"/>
+<text x="212.0" y="40.0" font-size="11" fill="#52514e" text-anchor="start" font-weight="600">multidouble backends</text>
+<rect x="420.0" y="20.0" width="227.0" height="336.0" rx="10" fill="#e7e6e2" fill-opacity="0.45"/>
+<text x="432.0" y="40.0" font-size="11" fill="#52514e" text-anchor="start" font-weight="600">fingerprints</text>
+<polyline points="86.0,138.0 86.0,71.0 246.0,71.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="254.0,71.0 246.0,75.0 246.0,67.0" fill="#52514e"/>
+<polyline points="152.0,155.0 232.0,155.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="240.0,155.0 232.0,159.0 232.0,151.0" fill="#52514e"/>
+<polyline points="64.0,172.0 64.0,239.0 208.0,239.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="216.0,239.0 208.0,243.0 208.0,235.0" fill="#52514e"/>
+<polyline points="108.0,172.0 108.0,323.0 246.0,323.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="254.0,323.0 246.0,327.0 246.0,319.0" fill="#52514e"/>
+<polyline points="310.0,71.0 431.5,71.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="439.5,71.0 431.5,75.0 431.5,67.0" fill="#52514e"/>
+<polyline points="324.0,155.0 533.5,155.0 533.5,96.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="533.5,88.0 537.5,96.0 529.5,96.0" fill="#52514e"/>
+<polyline points="348.0,239.0 533.5,239.0 533.5,298.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polygon points="533.5,306.0 529.5,298.0 537.5,298.0" fill="#52514e"/>
+<polyline points="310.0,323.0 428.0,323.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polygon points="436.0,323.0 428.0,327.0 428.0,319.0" fill="#52514e"/>
+<g><title>Equations&lt;B&gt; and the engine, no per-backend code</title>
+<rect x="20.0" y="138.0" width="132.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#7a7668" stroke-width="1.5"/>
+<text x="86.0" y="159.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">the same source</text>
+</g>
+<rect x="254.0" y="54.0" width="56.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="282.0" y="75.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">NEON</text>
+<rect x="240.0" y="138.0" width="84.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="282.0" y="159.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">portable</text>
+<rect x="216.0" y="222.0" width="132.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="282.0" y="243.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">SSE2 · MSVC x64</text>
+<rect x="254.0" y="306.0" width="56.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="282.0" y="327.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">AVX2</text>
+<g><title>FNV-1a of every part of the README example's double- and quad-double roots, run here</title>
+<rect x="439.5" y="54.0" width="188.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="533.5" y="75.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">roots: 983b7216fe9b7bb1</text>
+</g>
+<g><title>CI runs the suite on each backend and compares bit for bit</title>
+<rect x="436.0" y="306.0" width="195.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="533.5" y="327.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">the tests' pinned hashes</text>
+</g>
+<text x="374.8" y="66.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal">here</text>
+<text x="428.8" y="150.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal">here</text>
+<text x="440.8" y="234.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal">in CI</text>
+<text x="373.0" y="318.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal">in CI</text>
+</svg>

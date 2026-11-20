@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="582" viewBox="0 0 760 582" font-family="system-ui, sans-serif">
+<style>@media (prefers-color-scheme: dark){[fill="#fcfcfb"]{fill:#201f1d}[stroke="#fcfcfb"]{stroke:#201f1d}[fill="#0b0b0b"]{fill:#e8e6e3}[stroke="#0b0b0b"]{stroke:#e8e6e3}[fill="#52514e"]{fill:#a8a49d}[stroke="#52514e"]{stroke:#a8a49d}[fill="#e7e6e2"]{fill:#343230}[stroke="#e7e6e2"]{stroke:#343230}[fill="#c98500"]{fill:#d69a2d}[stroke="#c98500"]{stroke:#d69a2d}[fill="#eb6834"]{fill:#dd5c26}[stroke="#eb6834"]{stroke:#dd5c26}[fill="#eda100"]{fill:#c08800}[stroke="#eda100"]{stroke:#c08800}[fill="#e87ba4"]{fill:#d1678f}[stroke="#e87ba4"]{stroke:#d1678f}[fill="#4a3aa7"]{fill:#7263cf}[stroke="#4a3aa7"]{stroke:#7263cf}[fill="#a6339a"]{fill:#c257b5}[stroke="#a6339a"]{stroke:#c257b5}[fill="#7a7668"]{fill:#948e82}[stroke="#7a7668"]{stroke:#948e82}}</style>
+<rect width="760" height="582" fill="#fcfcfb"/>
+<text x="16.0" y="22.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="normal">The f64 Jacobian takes the same steps for a fraction of the time</text>
+<text x="16.0" y="38.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="normal">Planted (B = 2, 193 unknowns) from z* perturbed by 1e-3 to max |F| ≤ 1.0e-28 in double-double, one thread</text>
+<line x1="70.0" y1="68.0" x2="70.0" y2="298.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="70.0" y="313.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">0</text>
+<line x1="316.2" y1="68.0" x2="316.2" y2="298.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="316.2" y="313.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">5</text>
+<line x1="562.3" y1="68.0" x2="562.3" y2="298.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="562.3" y="313.0" font-size="11" fill="#52514e" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">10</text>
+<line x1="70.0" y1="282.7" x2="710.0" y2="282.7" stroke="#e7e6e2" stroke-width="1"/>
+<text x="64.0" y="286.7" font-size="11" fill="#52514e" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">1e-30</text>
+<line x1="70.0" y1="206.0" x2="710.0" y2="206.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="64.0" y="210.0" font-size="11" fill="#52514e" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">1e-20</text>
+<line x1="70.0" y1="129.3" x2="710.0" y2="129.3" stroke="#e7e6e2" stroke-width="1"/>
+<text x="64.0" y="133.3" font-size="11" fill="#52514e" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">1e-10</text>
+<line x1="70.0" y1="298.0" x2="710.0" y2="298.0" stroke="#52514e" stroke-width="1"/>
+<line x1="70.0" y1="68.0" x2="70.0" y2="298.0" stroke="#52514e" stroke-width="1"/>
+<text x="390.0" y="332.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Newton step</text>
+<text x="20.1" y="183.0" font-size="12" fill="#0b0b0b" text-anchor="middle" transform="rotate(-90 20.1 183.0)">max |F|</text>
+<path d="M70.0 72.7 L119.2 90.6 L168.5 122.3 L217.7 184.8 L266.9 291.6" fill="none" stroke="#7a7668" stroke-width="2.0" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="0"><animate attributeName="stroke-dashoffset" values="1;1;0;0" keyTimes="0;0.0500;0.2167;1" dur="6.0s" repeatCount="indefinite"/></path>
+<path d="M70.0 72.7 L119.2 90.6 L168.5 122.3 L217.7 184.8 L266.9 291.6" fill="none" stroke="#2a78d6" stroke-width="2.0" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="0"><animate attributeName="stroke-dashoffset" values="1;1;0;0" keyTimes="0;0.2500;0.4167;1" dur="6.0s" repeatCount="indefinite"/></path>
+<path d="M70.0 72.7 L119.2 90.6 L168.5 122.3 L217.7 184.8 L266.9 291.3" fill="none" stroke="#eb6834" stroke-width="2.0" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="0"><animate attributeName="stroke-dashoffset" values="1;1;0;0" keyTimes="0;0.4500;0.6167;1" dur="6.0s" repeatCount="indefinite"/></path>
+<path d="M70.0 72.7 L119.2 90.6 L168.5 100.5 L217.7 115.5 L266.9 130.4 L316.2 147.1 L365.4 162.0 L414.6 177.7 L463.8 195.3 L513.1 209.9 L562.3 227.0 L611.5 244.0 L660.8 260.1 L710.0 276.7" fill="none" stroke="#1baf7a" stroke-width="2.0" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="0"><animate attributeName="stroke-dashoffset" values="1;1;0;0" keyTimes="0;0.6500;0.8167;1" dur="6.0s" repeatCount="indefinite"/></path>
+<g><rect x="55.5" y="67.2" width="11.0" height="11.0" fill="#7a7668" stroke="#fcfcfb" stroke-width="2"/><title>newton, step 0: 2.5e-3</title></g>
+<g><rect x="104.7" y="85.1" width="11.0" height="11.0" fill="#7a7668" stroke="#fcfcfb" stroke-width="2"/><title>newton, step 1: 1.1e-5</title></g>
+<g><rect x="157.0" y="116.8" width="11.0" height="11.0" fill="#7a7668" stroke="#fcfcfb" stroke-width="2"/><title>newton, step 2: 8.2e-10</title></g>
+<g><rect x="206.2" y="179.3" width="11.0" height="11.0" fill="#7a7668" stroke="#fcfcfb" stroke-width="2"/><title>newton, step 3: 5.8e-18</title></g>
+<g><rect x="255.4" y="286.1" width="11.0" height="11.0" fill="#7a7668" stroke="#fcfcfb" stroke-width="2"/><title>newton, step 4: 6.8e-32</title></g>
+<g><circle cx="67.0" cy="72.7" r="5.5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, dense, step 0: 2.5e-3</title></g>
+<g><circle cx="116.2" cy="90.6" r="5.5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, dense, step 1: 1.1e-5</title></g>
+<g><circle cx="168.5" cy="122.3" r="5.5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, dense, step 2: 8.2e-10</title></g>
+<g><circle cx="217.7" cy="184.8" r="5.5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, dense, step 3: 5.8e-18</title></g>
+<g><circle cx="266.9" cy="291.6" r="5.5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, dense, step 4: 6.9e-32</title></g>
+<g><polygon points="73.0,66.2 79.5,72.7 73.0,79.2 66.5,72.7" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, staircase, step 0: 2.5e-3</title></g>
+<g><polygon points="122.2,84.1 128.7,90.6 122.2,97.1 115.7,90.6" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, staircase, step 1: 1.1e-5</title></g>
+<g><polygon points="174.5,115.8 181.0,122.3 174.5,128.8 168.0,122.3" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, staircase, step 2: 8.2e-10</title></g>
+<g><polygon points="223.7,178.3 230.2,184.8 223.7,191.3 217.2,184.8" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, staircase, step 3: 5.8e-18</title></g>
+<g><polygon points="272.9,284.8 279.4,291.3 272.9,297.8 266.4,291.3" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/><title>newton_mixed, staircase, step 4: 7.4e-32</title></g>
+<g><polygon points="79.0,66.2 85.5,78.2 72.5,78.2" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 0: 2.5e-3</title></g>
+<g><polygon points="128.2,84.1 134.7,96.1 121.7,96.1" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 1: 1.1e-5</title></g>
+<g><polygon points="168.5,94.0 175.0,106.0 162.0,106.0" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 2: 5.7e-7</title></g>
+<g><polygon points="217.7,109.0 224.2,121.0 211.2,121.0" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 3: 6.5e-9</title></g>
+<g><polygon points="266.9,123.9 273.4,135.9 260.4,135.9" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 4: 7.2e-11</title></g>
+<g><polygon points="316.2,140.6 322.7,152.6 309.7,152.6" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 5: 4.7e-13</title></g>
+<g><polygon points="365.4,155.5 371.9,167.5 358.9,167.5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 6: 5.5e-15</title></g>
+<g><polygon points="414.6,171.2 421.1,183.2 408.1,183.2" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 7: 4.9e-17</title></g>
+<g><polygon points="463.8,188.8 470.3,200.8 457.3,200.8" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 8: 2.5e-19</title></g>
+<g><polygon points="513.1,203.4 519.6,215.4 506.6,215.4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 9: 3.1e-21</title></g>
+<g><polygon points="562.3,220.5 568.8,232.5 555.8,232.5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 10: 1.8e-23</title></g>
+<g><polygon points="611.5,237.5 618.0,249.5 605.0,249.5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 11: 1.1e-25</title></g>
+<g><polygon points="660.8,253.6 667.3,265.6 654.3,265.6" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 12: 8.8e-28</title></g>
+<g><polygon points="710.0,270.2 716.5,282.2 703.5,282.2" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/><title>newton_quasi_mixed, step 13: 6.1e-30</title></g>
+<circle cx="710.0" cy="276.7" r="10" fill="none" stroke="#0b0b0b" stroke-width="1.5"/>
+<line x1="702.9" y1="269.6" x2="670.0" y2="236.7" stroke="#0b0b0b" stroke-width="1"/>
+<text x="666.0" y="240.7" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="bold">1 factorization, Broyden updates</text>
+<text x="710.0" y="58.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_quasi_mixed</text>
+<circle cx="585.2" cy="54" r="4.5" fill="#1baf7a"/>
+<text x="569.2" y="58.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_mixed, staircase</text>
+<circle cx="412.4" cy="54" r="4.5" fill="#eb6834"/>
+<text x="396.4" y="58.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_mixed, dense</text>
+<circle cx="265.2" cy="54" r="4.5" fill="#2a78d6"/>
+<text x="249.2" y="58.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton</text>
+<circle cx="200.9" cy="54" r="4.5" fill="#7a7668"/>
+<g opacity="0.35"><line x1="728.0" y1="98.0" x2="728.0" y2="154.0" stroke="#52514e" stroke-width="2"/><polygon points="728.0,160.0 724.0,151.0 732.0,151.0" fill="#52514e"/><text x="728.0" y="122.0" font-size="11" fill="#52514e" text-anchor="middle" transform="rotate(90.0 728.0 129.0)">smaller</text></g>
+<text x="16.0" y="360.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="normal">Time to the root</text>
+<text x="16.0" y="376.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="normal">median of 5 solves, the change against newton</text>
+<text x="192.0" y="420.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton</text>
+<rect x="200.0" y="406.00" width="410.0" height="20.00" rx="2" fill="#7a7668"><title>newton: 348.3 ms</title></rect>
+<text x="618.0" y="420.0" font-size="11" fill="#0b0b0b" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">348.3 ms · 4 Jacobians</text>
+<text x="192.0" y="448.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_mixed, dense</text>
+<rect x="200.0" y="434.00" width="80.2" height="20.00" rx="2" fill="#2a78d6"><title>newton_mixed, dense: 68.1 ms</title></rect>
+<text x="288.2" y="448.0" font-size="11" fill="#0b0b0b" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">68.1 ms (-80.4%) · 4 Jacobians</text>
+<text x="192.0" y="476.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_mixed, staircase</text>
+<rect x="200.0" y="462.00" width="114.4" height="20.00" rx="2" fill="#eb6834"><title>newton_mixed, staircase: 97.2 ms</title></rect>
+<text x="322.4" y="476.0" font-size="11" fill="#0b0b0b" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">97.2 ms (-72.1%) · 4 Jacobians</text>
+<text x="192.0" y="504.0" font-size="11" fill="#0b0b0b" text-anchor="end" font-weight="normal">newton_quasi_mixed</text>
+<rect x="200.0" y="490.00" width="36.3" height="20.00" rx="2" fill="#1baf7a"><title>newton_quasi_mixed: 30.8 ms</title></rect>
+<text x="244.3" y="504.0" font-size="11" fill="#0b0b0b" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">30.8 ms (-91.2%) · 1 Jacobian</text>
+<g opacity="0.35"><line x1="264.0" y1="532.0" x2="206.0" y2="532.0" stroke="#52514e" stroke-width="2"/><polygon points="200.0,532.0 209.0,528.0 209.0,536.0" fill="#52514e"/><text x="232.0" y="525.0" font-size="11" fill="#52514e" text-anchor="middle" transform="rotate(360.0 232.0 532.0)">faster</text></g>
+<text x="16.0" y="570.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="normal">multishoot 4.1.0 (ed6b2b2)  ·  model: Planted (tests/common)  ·  Apple M5, 32 GB, macOS 27.0.1</text>
+<a href="https://github.com/nmoinvaz/multishoot"><text x="744" y="570" font-size="10" fill="#52514e" text-anchor="end" text-decoration="underline">github.com/nmoinvaz/multishoot</text></a>
+</svg>
