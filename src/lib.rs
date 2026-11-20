@@ -35,6 +35,8 @@
 //!   them;
 //! * [`jvp`]: the Jacobian-vector product J v by one forward-mode pass per block, without the Jacobian;
 //! * [`fast`]: the f64 Jacobian from f64-tangent lanes, dense or in staircase storage, and the mixed-precision Newton;
+//! * [`family`]: the layout as a family in one of its globals ([`InGlobal`], a [`Family`]), for multisolver's
+//!   continuation through folds;
 //! * [`jet`]: the residual's Taylor series in a parameter of the equations;
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
 //!   whose zeros in the rate are counted by multisolver's argument principle;
@@ -46,6 +48,7 @@
 #[cfg(feature = "mutate")]
 pub mod control;
 pub mod equations;
+pub mod family;
 pub mod fast;
 pub mod jacobian;
 pub mod jet;
@@ -61,6 +64,7 @@ pub mod sub;
 pub mod taylor;
 
 pub use equations::{Equations, State, Work};
+pub use family::InGlobal;
 pub use fast::{MixedLu, Storage};
 pub use jacobian::WithTangents;
 pub use mode::{ModeMatrix, Rate};
@@ -70,7 +74,7 @@ pub use multidouble::field::{cs, cs_range, cs_w, horner, Fl};
 pub use multidouble::precision::{Double, Octo, Precision, Quad};
 pub use multidouble::simd::Native;
 pub use multisolver;
-pub use multisolver::{Jvp, Problem, ResidualJet};
+pub use multisolver::{Family, Jvp, Problem, ResidualJet};
 pub use projected::ProjectedRows;
 pub use relayout::Parities;
 pub use shooting::{ExtraRow, Shooting};

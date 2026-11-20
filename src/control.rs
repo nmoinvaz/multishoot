@@ -52,4 +52,7 @@ pub enum Control {
     /// the sub-Jacobian (`Shooting::jacobian_sub`) without the first column task it needs, and the sub-residual
     /// (`Shooting::residual_sub`) without the first block it needs: their entries read as if no evaluation wrote them
     SubSkip,
+    /// the family view (`Shooting::in_global`) with its Jacobian's columns read past the column before the
+    /// parameter's instead of past the parameter's, so that dF/dp stands among dF/dz
+    FamilyColumn,
 }

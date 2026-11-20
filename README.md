@@ -159,13 +159,19 @@ data, the global and node 0.
 
 ### Solvers
 
-`Shooting` implements three traits of multisolver, whose solvers run on any problem that does:
+`Shooting` implements three traits of multisolver, and its family view a fourth, whose solvers run on any problem
+that does:
 
 | Trait | What it gives | Used by |
 |---|---|---|
 | `Problem<P>` | `len`, `residual` and `jacobian` | Newton, chord, quasi-Newton (QNERR), Levenberg-Marquardt, Newton with weak directions removed, deflation of known roots |
 | `Jvp<P>` | `jvp`, J v without the Jacobian | the Krylov-refined Newton method |
 | `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
+| `Family<P>` | `residual_at`, `jacobian_at` and `dp_at` at any parameter, through `Shooting::in_global` (`InGlobal`) | pseudo-arclength continuation through folds, the fold's location |
+
+`Shooting::in_global(g, pin)` takes global g as the parameter p and drops the extra row `pin` that fixes it, so that
+F(z, p) is the layout's residual without that row, dF/dz its Jacobian without that row and g's column, and dF/dp one
+J v.
 
 Every Newton solve takes multisolver's `NewtonOpts`, whose `scaling: Scaling::Iterates { floor }` measures each unknown
 relative to its own size (NLEQ-ERR's scaled norms), for layouts whose node states and globals, such as a period or an
