@@ -16,7 +16,7 @@ exclude = ["/.github", "/.claude", "/CLAUDE.md"]
 # of the mode matrix's determinant
 multidouble = "5.0.0"
 # the solvers of F(z) = 0 over the Problem trait, and the argument-principle zero count
-multisolver = "0.1.1"
+multisolver = "0.2.0"
 rayon = "1.10"
 
 [features]
