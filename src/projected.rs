@@ -134,10 +134,13 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// whether the projectors are read in double-double, under `Control::ProjectorDD`
     pub(crate) fn projector_dd(&self) -> bool {
         #[cfg(feature = "mutate")]
-        if self.control == crate::control::Control::ProjectorDD {
-            return true;
+        {
+            self.control == crate::control::Control::ProjectorDD
         }
-        false
+        #[cfg(not(feature = "mutate"))]
+        {
+            false
+        }
     }
 
     /// Projects field `field`'s rows of block `block` ([`crate::projected`]): Pi onto the harmonics k <= kmax of

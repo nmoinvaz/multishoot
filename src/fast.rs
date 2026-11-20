@@ -187,10 +187,13 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
     /// whether the Jacobian's column c is dropped by `Control::DropColumn`
     fn dropped(&self, _c: usize) -> bool {
         #[cfg(feature = "mutate")]
-        if self.control == crate::control::Control::DropColumn(_c) {
-            return true;
+        {
+            self.control == crate::control::Control::DropColumn(_c)
         }
-        false
+        #[cfg(not(feature = "mutate"))]
+        {
+            false
+        }
     }
 
     /// The Jacobian in f64 at z (2 part arrays, double-double) from the lanes T (`Fu`, `Fun<N>`, `Dtn<N>`): the same
