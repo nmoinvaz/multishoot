@@ -55,4 +55,7 @@ pub enum Control {
     /// the family view (`Shooting::in_global`) with its Jacobian's columns read past the column before the
     /// parameter's instead of past the parameter's, so that dF/dp stands among dF/dz
     FamilyColumn,
+    /// the corrector's bordered factors (`InGlobal::bordered_lu`) with the layout's dropped row kept in place of the
+    /// tangent
+    BorderPin,
 }
