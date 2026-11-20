@@ -330,10 +330,10 @@ pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
 }
 
 /// Step points from xa to xb (either direction) for the state s0, both ends included and the last exactly xb: each
-/// step from [`step_size`] at the state reached so far; a step that would leave less than 40% of the rest is halved,
-/// so the segment ends in two near-equal steps instead of a sliver. It panics on an end that is not finite, a plan
-/// with tol or hmax not positive, a Taylor coefficient that is not finite (every order 0..=kt, both parts, as
-/// Horner's rule uses them all), and a step that is not positive or does not move x (a singularity at x).
+/// step from [`step_size`] at the state reached so far; a step that would leave less than 40% of the rest becomes
+/// half the rest, so the segment ends in two near-equal steps instead of a sliver. It panics on an end that is not
+/// finite, a plan with tol or hmax not positive, a Taylor coefficient that is not finite (every order 0..=kt, both
+/// parts, as Horner's rule uses them all), and a step that is not positive or does not move x (a singularity at x).
 pub fn plan_path<E: Equations<B>, const B: usize>(
     eq: &E,
     s0: &[Fl<DV, B>],
