@@ -305,48 +305,6 @@ quad-double: max |F| 5.3e-64
 The steps are planned once, from the start. The quad-double solve finds the root of the same discrete system to
 quad-double rounding. Its end values are double-double constants (`Fl::cst`), so that root stays about 1e-32 from y*.
 
-## Accuracy
-
-Three rules govern the tests.
-
-- Every check can fail. Each accuracy check comes with a control that feeds it a wrong result, either a test that
-  asserts the failure or a deliberate error in the engine behind the feature `mutate` (`control::Control`, set by
-  `Shooting::set_control`), such as a Jacobian column without its block derivative, a residual row matched to the
-  wrong unknown, a state read in half its parts, or a mode matrix without its rate. Each control is run once to see
-  it fire.
-- Planted truth first. The engine is tested on problems with a known solution, an analytic boundary-value problem or
-  a manufactured one, through the same code path real problems use. Each test states its pass criterion in its doc
-  comment, written before its first run.
-- Results do not depend on multidouble's SIMD backend. Fingerprints of the bits of the results (FNV-1a), of the Taylor
-  steps and plans, the residual, J v, the jets, the mode matrix and the f64 Jacobians among them, must equal fixed
-  references on every backend, so a difference of one bit fails.
-
-Non-finite values never pass a check: max |F| and the planner's coefficient norms propagate NaN, and Newton's method
-never reports a NaN residual as converged.
-
-The engine knows nothing of any one problem. The tests use model problems:
-
-| Problem | Known solution | What it checks |
-|---|---|---|
-| `Rotor` | two odd fields shifted in θ, rotated into each other and decaying, in closed form | Taylor steps, the planner's bound against the true error |
-| `Planted` | a manufactured solution: sources that make chosen fields solve the collocation system to rounding | the residual, the Jacobian, Newton in every precision, J v, the fast path, projected rows, relayout |
-| `Cylinder` | the lowest mode sin(πx) cos θ / π of an eigenproblem, with eigenvalue π² + μ | two globals with amplitude and phase rows, the series in μ, the asymptotic numerical method |
-| `Bessel` | 2^ν ν! J_ν(x) for ν = 0..7, one order per lane | a singular endpoint started from its Frobenius series, the pointwise Jacobian |
-| `Wave` | det M(λ) as a product of cosines, for every complex λ | the mode matrix, the winding count of its zeros |
-| `Branch` | a solution branch whose series in the parameter is known | the order-by-order series and its tangent update |
-
-Some of the pass criteria:
-
-| Check | Problem | Pass |
-|---|---|---|
-| Taylor paths against the closed form | `Rotor` | every node within 1e-28 |
-| the planner's bound | `Rotor` | every step's error at most `tol`, the largest at least 1e-3 `tol` |
-| Jacobian against central differences | `Planted` | every column within 1e-13, relative |
-| Newton in double-double | `Planted` | max \|F\| at most 1e-28 in 10 steps, every unknown within 1e-27 |
-| Newton in quad-double, octo-double | `Planted` | max \|F\| below 1e-60 and 1e-110 |
-| jets across precisions | `Cylinder` | `Jet` against `QJet` within 1e-28, `QJet` against `OJet` within 1e-60 |
-| det M(λ) against the closed form | `Wave` | ln\|det\| within 1e-10, arg det within 1e-10 modulo π |
-
 ## Building and testing
 
 ```sh
