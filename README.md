@@ -190,7 +190,7 @@ or as a dependency in `Cargo.toml`:
 
 ```toml
 [dependencies]
-multishoot = "3.3"
+multishoot = "4.0"
 ```
 
 It needs Rust 1.89 or later. It re-exports multidouble and multisolver, so it needs no other dependency. The feature
