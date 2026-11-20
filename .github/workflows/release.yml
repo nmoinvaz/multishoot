@@ -23,8 +23,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # a RELEASE_TOKEN is needed only if main gets a protection the default token cannot pass
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
       - name: Normalize version
         id: version
