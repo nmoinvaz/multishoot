@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="716" height="460" viewBox="0 0 716 460" font-family="system-ui, sans-serif">
+<style>@media (prefers-color-scheme: dark){[fill="#fcfcfb"]{fill:#201f1d}[stroke="#fcfcfb"]{stroke:#201f1d}[fill="#0b0b0b"]{fill:#e8e6e3}[stroke="#0b0b0b"]{stroke:#e8e6e3}[fill="#52514e"]{fill:#a8a49d}[stroke="#52514e"]{stroke:#a8a49d}[fill="#e7e6e2"]{fill:#343230}[stroke="#e7e6e2"]{stroke:#343230}[fill="#c98500"]{fill:#d69a2d}[stroke="#c98500"]{stroke:#d69a2d}[fill="#eb6834"]{fill:#dd5c26}[stroke="#eb6834"]{stroke:#dd5c26}[fill="#eda100"]{fill:#c08800}[stroke="#eda100"]{stroke:#c08800}[fill="#e87ba4"]{fill:#d1678f}[stroke="#e87ba4"]{stroke:#d1678f}[fill="#4a3aa7"]{fill:#7263cf}[stroke="#4a3aa7"]{stroke:#7263cf}[fill="#a6339a"]{fill:#c257b5}[stroke="#a6339a"]{stroke:#c257b5}[fill="#7a7668"]{fill:#948e82}[stroke="#7a7668"]{stroke:#948e82}}</style>
+<rect width="716" height="460" fill="#fcfcfb"/>
+<rect x="180.0" y="20.0" width="241.0" height="420.0" rx="10" fill="#e7e6e2" fill-opacity="0.45"/>
+<text x="192.0" y="40.0" font-size="11" fill="#52514e" text-anchor="start" font-weight="600">lane types</text>
+<rect x="469.0" y="20.0" width="227.0" height="420.0" rx="10" fill="#e7e6e2" fill-opacity="0.45"/>
+<text x="481.0" y="40.0" font-size="11" fill="#52514e" text-anchor="start" font-weight="600">what Shooting forms</text>
+<polyline points="57.3,222.0 57.3,71.0 236.5,71.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="244.5,71.0 236.5,75.0 236.5,67.0" fill="#52514e"/>
+<polyline points="356.5,71.0 515.5,71.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="523.5,71.0 515.5,75.0 515.5,67.0" fill="#52514e"/>
+<polyline points="94.7,222.0 94.7,155.0 205.5,155.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="213.5,155.0 205.5,159.0 205.5,151.0" fill="#52514e"/>
+<polyline points="387.5,155.0 515.5,155.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="523.5,155.0 515.5,159.0 515.5,151.0" fill="#52514e"/>
+<polyline points="132.0,239.0 188.0,239.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="196.0,239.0 188.0,243.0 188.0,235.0" fill="#52514e"/>
+<polyline points="405.0,239.0 477.0,239.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="485.0,239.0 477.0,243.0 477.0,235.0" fill="#52514e"/>
+<polyline points="57.3,256.0 57.3,323.0 271.5,323.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="279.5,323.0 271.5,327.0 271.5,319.0" fill="#52514e"/>
+<polyline points="321.5,323.0 477.0,323.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="485.0,323.0 477.0,327.0 477.0,319.0" fill="#52514e"/>
+<polyline points="94.7,256.0 94.7,407.0 209.0,407.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="217.0,407.0 209.0,411.0 209.0,403.0" fill="#52514e"/>
+<polyline points="384.0,407.0 480.5,407.0" fill="none" stroke="#52514e" stroke-width="1.25" stroke-linejoin="round"/>
+<polygon points="488.5,407.0 480.5,411.0 480.5,403.0" fill="#52514e"/>
+<g><title>taylor_coeffs, left_state, right_state: written once over a generic lane T</title>
+<rect x="20.0" y="222.0" width="112.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#7a7668" stroke-width="1.5"/>
+<text x="76.0" y="243.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Equations&lt;B&gt;</text>
+</g>
+<g><title>values in double-, quad- and octo-double</title>
+<rect x="244.5" y="54.0" width="112.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="300.5" y="75.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">DV · QV · OV</text>
+</g>
+<rect x="523.5" y="54.0" width="118.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="582.5" y="75.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">residual F(z)</text>
+<g><title>one or N forward-mode tangents</title>
+<rect x="213.5" y="138.0" width="174.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="300.5" y="159.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Du · Qu · Ou · Oun&lt;N&gt;</text>
+</g>
+<rect x="523.5" y="138.0" width="118.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="582.5" y="159.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Jacobian, J v</text>
+<g><title>power series in the parameter</title>
+<rect x="196.0" y="222.0" width="209.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="300.5" y="243.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Jet&lt;N&gt; · QJet&lt;N&gt; · OJet&lt;N&gt;</text>
+</g>
+<rect x="485.0" y="222.0" width="195.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="582.5" y="243.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">residual_jet, JetSession</text>
+<g><title>a complex tangent, the rate of exp(λ t)</title>
+<rect x="279.5" y="306.0" width="42.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="300.5" y="327.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Dc</text>
+</g>
+<rect x="485.0" y="306.0" width="195.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="582.5" y="327.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">mode_matrix, mode_logdet</text>
+<g><title>f64 tangents</title>
+<rect x="217.0" y="390.0" width="167.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="300.5" y="411.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">Fu · Fun&lt;N&gt; · Dtn&lt;N&gt;</text>
+</g>
+<rect x="488.5" y="390.0" width="188.0" height="34.0" rx="6" fill="#fcfcfb" stroke="#eb6834" stroke-width="1.5"/>
+<text x="582.5" y="411.0" font-size="12" fill="#0b0b0b" text-anchor="middle" font-weight="normal">jacobian_f64, staircase</text>
+</svg>

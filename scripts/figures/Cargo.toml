@@ -1,0 +1,19 @@
+[package]
+name = "figure-data"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The data of the README's figures, from runs of multishoot on model problems"
+
+[dependencies]
+multishoot = { path = "../.." }
+multidouble = "5.1.0"
+multisolver = "0.2.2"
+rayon = "1.10"
+
+[features]
+# the plain-array SIMD backend of multidouble, for the backend figure's second hash
+portable = ["multishoot/portable"]
+
+[profile.release]
+opt-level = 3
