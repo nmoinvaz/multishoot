@@ -678,9 +678,9 @@ mod tests {
         for parity in [Parity::Odd, Parity::Even, Parity::Full] {
             let d = dmat::<B>(parity);
             for i in 0..m {
-                for j in 0..m {
+                for (j, col) in d.cols.iter().enumerate() {
                     let (a, b) = (
-                        d.cols[j].get(i),
+                        col.get(i),
                         if transposed {
                             direct(parity, m, j, i)
                         } else {

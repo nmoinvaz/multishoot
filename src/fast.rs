@@ -71,8 +71,8 @@ impl<P: Precision<Native>> Factored<P> for MixedLu {
 
 /// The f64 values of a field's f64 tangent k
 fn tangent<T: Lane, const B: usize>(f: &Fl<T, B>, k: usize, out: &mut Vec<f64>) {
-    for b in 0..B {
-        out.extend_from_slice(&f.0[b].tan64(k).to_array());
+    for lane in &f.0 {
+        out.extend_from_slice(&lane.tan64(k).to_array());
     }
 }
 
