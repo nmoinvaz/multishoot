@@ -46,6 +46,9 @@ pub enum Control {
     /// the order choice (`Shooting::plan_segments_auto`) keeping its lowest candidate order whatever the estimates,
     /// planned in full; the candidates' estimates are reported as without it
     FirstOrder,
+    /// the multi-tangent Jacobian with each evaluation's columns read one tangent early: the first from the value,
+    /// column k from tangent k - 1 (with one tangent too, unlike `TangentOrder`)
+    TangentShift,
     /// the sub-Jacobian (`Shooting::jacobian_sub`) without the first column task it needs, and the sub-residual
     /// (`Shooting::residual_sub`) without the first block it needs: their entries read as if no evaluation wrote them
     SubSkip,
