@@ -1075,27 +1075,72 @@ fn wave_quad_determinant_is_planted() {
     assert!(e.iter().all(|&x| x <= 1e-10), "{e:?}");
 }
 
-/// A real rate on quad- and octo-double tangents: pass, the tangent at the point that x's tangent seeds moves by the
-/// rate times it, the tangent dx seeds keeps its value, and every value keeps its parts.
-#[test]
-fn shift_real_rate_moves_quad_and_octo_tangents() {
+/// x with the tangent e_3 and dx with the tangent e_5, in quad-double and in octo-double, for the shift checks
+fn shift_inputs() -> (
+    (Fl<multishoot::lane::Qu, 1>, Fl<multishoot::lane::Qu, 1>),
+    (Fl<multishoot::lane::Ou, 1>, Fl<multishoot::lane::Ou, 1>),
+) {
     use multishoot::lane::{Ou, Qu, OV, QV};
-    let r = Rate::new(DD::from_f64(0.5), DD::ZERO);
-    let xq = Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(0.7)), &Fl::<QV, 1>::unit(3));
-    let dq = Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(-1.3)), &Fl::<QV, 1>::unit(5));
-    let sq = r.shift(&xq, dq);
-    let xo = Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(0.7)), &Fl::<OV, 1>::unit(3));
-    let do_ = Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(-1.3)), &Fl::<OV, 1>::unit(5));
-    let so = r.shift(&xo, do_);
+    let q = |v: f64, j: usize| Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(v)), &Fl::<QV, 1>::unit(j));
+    let o = |v: f64, j: usize| Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(v)), &Fl::<OV, 1>::unit(j));
+    ((q(0.7, 3), q(-1.3, 5)), (o(0.7, 3), o(-1.3, 5)))
+}
+
+/// (tangent entries of s other than 0.5 at point 3, 1 at point 5 and 0 elsewhere, entries whose value parts differ
+/// from dx's), for s the shift by 0.5 of `shift_inputs`' dx, in quad-double and in octo-double
+fn shift_errors(sq: &Fl<multishoot::lane::Qu, 1>, so: &Fl<multishoot::lane::Ou, 1>) -> [(usize, usize); 2] {
+    let ((_, dq), (_, do_)) = shift_inputs();
+    let want = |j: usize| [(3, 0.5), (5, 1.0)].iter().find(|w| w.0 == j).map_or(0.0, |w| w.1);
     let qd = |x: f64| multishoot::multidouble::qd::QD::from_dd(DD::from_f64(x));
     let od = |x: f64| multishoot::multidouble::od::OD::from_dd(DD::from_f64(x));
-    for j in 0..8 {
-        let want = [(3, 0.5), (5, 1.0)].iter().find(|w| w.0 == j).map_or(0.0, |w| w.1);
-        assert_eq!(sq.coef_qd(1).get(j), qd(want), "quad tangent {j}");
-        assert_eq!(so.coef_od(1).get(j), od(want), "octo tangent {j}");
-        assert_eq!(sq.coef_qd(0).get(j).x, dq.coef_qd(0).get(j).x, "quad value {j}");
-        assert_eq!(so.coef_od(0).get(j).x, do_.coef_od(0).get(j).x, "octo value {j}");
-    }
+    let count = |f: &dyn Fn(usize) -> bool| (0..8).filter(|&j| f(j)).count();
+    [
+        (
+            count(&|j| sq.coef_qd(1).get(j) != qd(want(j))),
+            count(&|j| sq.coef_qd(0).get(j).x != dq.coef_qd(0).get(j).x),
+        ),
+        (
+            count(&|j| so.coef_od(1).get(j) != od(want(j))),
+            count(&|j| so.coef_od(0).get(j).x != do_.coef_od(0).get(j).x),
+        ),
+    ]
+}
+
+/// A real rate on quad- and octo-double tangents: pass, the tangent at the point that x's tangent seeds moves by the
+/// rate times it, the tangent dx seeds keeps its value, and every value keeps its parts (`shift_errors` all zero).
+#[test]
+fn shift_real_rate_moves_quad_and_octo_tangents() {
+    let r = Rate::new(DD::from_f64(0.5), DD::ZERO);
+    let ((xq, dq), (xo, do_)) = shift_inputs();
+    let e = shift_errors(&r.shift(&xq, dq), &r.shift(&xo, do_));
+    println!("shift by 0.5 on quad and octo tangents (tangent, value errors): {e:?}");
+    assert_eq!(e, [(0, 0); 2]);
+}
+
+/// The controls of `shift_real_rate_moves_quad_and_octo_tangents`: the unshifted dx must fail the tangent check, and
+/// the shifted result with one value's third part moved by one ulp must fail the value check, in both precisions.
+#[test]
+fn shift_quad_and_octo_controls_differ() {
+    let r = Rate::new(DD::from_f64(0.5), DD::ZERO);
+    let ((xq, dq), (xo, do_)) = shift_inputs();
+    let unshifted = shift_errors(&dq, &do_);
+    let (mut sq, mut so) = (r.shift(&xq, dq), r.shift(&xo, do_));
+    // the third part of every point's value, its lowest bit up (a zero part becomes the least normal number)
+    let bump = |v: multishoot::multidouble::native::V8| {
+        multishoot::multidouble::native::V8::from_array(v.to_array().map(|x| {
+            if x == 0.0 {
+                f64::MIN_POSITIVE
+            } else {
+                f64::from_bits(x.to_bits() + 1)
+            }
+        }))
+    };
+    sq.0[0].v.c[2] = bump(sq.0[0].v.c[2]);
+    so.0[0].v.c[2] = bump(so.0[0].v.c[2]);
+    let moved = shift_errors(&sq, &so);
+    println!("controls (tangent, value errors): unshifted {unshifted:?}, a value part moved {moved:?}");
+    assert!(unshifted.iter().all(|e| e.0 > 0), "tangent control did not fire");
+    assert!(moved.iter().all(|e| e.1 > 0), "value control did not fire");
 }
 
 /// A complex rate on quad-double tangents cannot be carried: pass, it panics.
