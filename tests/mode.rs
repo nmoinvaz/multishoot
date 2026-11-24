@@ -848,3 +848,330 @@ fn mode_winding_is_the_one_by_one_count() {
     let w = in_pool(6, || sh.mode_winding(&parts(&z), &moved, &opts, true).unwrap());
     assert!(bits(&w) != want, "control did not fire");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// the mode matrix at a real rate in any precision (`mode_matrix_real`)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// the rates of the real-rate checks: zero, and real rates of both signs
+const REAL_RATES: [f64; 4] = [0.0, 0.3, -0.45, 1.1];
+
+/// (entries of `real.mode_matrix_real::<Double>` at lr_real that differ in the bits of either part from the real part
+/// of `mode.mode_matrix` at lr, entries of the latter's imaginary part not zero)
+fn double_differs<E: Equations<B>, const B: usize>(
+    mode: &Shooting<E, B>,
+    real: &Shooting<E, B>,
+    z: &[Vec<f64>],
+    lr: f64,
+    lr_real: f64,
+) -> (usize, usize) {
+    let mm = mode
+        .mode_matrix(&parts(z), Rate::new(DD::from_f64(lr), DD::ZERO), true)
+        .unwrap();
+    let (c, ld) = real
+        .mode_matrix_real::<multishoot::Double>(&parts(z), DD::from_f64(lr_real), true)
+        .unwrap();
+    assert_eq!((c.len(), ld), (2, mm.ld));
+    let (mut differ, mut nonzero) = (0, 0);
+    for j in 0..mm.n {
+        for i in 0..mm.n {
+            let k = j * ld + i;
+            if (0..2).any(|q| mm.re[q][k].to_bits() != c[q][k].to_bits()) {
+                differ += 1;
+            }
+            if mm.im[0][k] != 0.0 || mm.im[1][k] != 0.0 {
+                nonzero += 1;
+            }
+        }
+    }
+    (differ, nonzero)
+}
+
+/// The double-double comparison (`double_differs`) on three layouts: the planted problem plain and with projected
+/// and scaled rows (`project_and_scale`), at z* perturbed by 1e-2, and the wave, whose preparation carries the rate.
+/// `planted` and `wave` change the real-rate layout of each pair (a control).
+fn double_layouts_differ(
+    lr: f64,
+    lr_real: f64,
+    planted: impl Fn(&mut Shooting<Planted<PB>, PB>),
+    wave: impl Fn(&mut Shooting<Wave<WB>, WB>),
+) -> Vec<(&'static str, (usize, usize))> {
+    let (plain, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    let z = perturbed(&zs, 1e-2);
+    let (mut plain2, _) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    planted(&mut plain2);
+    let (mut proj, _) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    project_and_scale(&mut proj);
+    let (mut proj2, _) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    project_and_scale(&mut proj2);
+    planted(&mut proj2);
+    let (w, wz) = wave_problem(None);
+    let (mut w2, _) = wave_problem(None);
+    wave(&mut w2);
+    vec![
+        ("planted", double_differs(&plain, &plain2, &z, lr, lr_real)),
+        (
+            "planted, projected and scaled",
+            double_differs(&proj, &proj2, &z, lr, lr_real),
+        ),
+        ("wave", double_differs(&w, &w2, &wz, lr, lr_real)),
+    ]
+}
+
+/// The real-rate mode matrix in double-double (`mode_matrix_real::<Double>`, `Du` lanes) against the real part of
+/// `mode_matrix` (`Dc` lanes) at the same rate, on the three layouts of `double_layouts_differ` and the rates
+/// `REAL_RATES`. Pass: every entry equal in the bits of both parts, and `mode_matrix`'s imaginary part zero.
+#[test]
+fn real_rate_matrix_is_mode_matrix_at_double() {
+    for lr in REAL_RATES {
+        for (name, (differ, nonzero)) in double_layouts_differ(lr, lr, |_| {}, |_| {}) {
+            println!("rate {lr}, {name}: {differ} entries differ, {nonzero} imaginary parts nonzero");
+            assert_eq!((differ, nonzero), (0, 0), "rate {lr}, {name}");
+        }
+    }
+}
+
+/// The control of `real_rate_matrix_is_mode_matrix_at_double`: the real-rate matrix at 0.3 moved by one ulp must
+/// differ from `mode_matrix`'s at 0.3 on every layout.
+#[test]
+fn real_rate_matrix_control_one_ulp_differs() {
+    let lr = 0.3f64;
+    let up = f64::from_bits(lr.to_bits() + 1);
+    for (name, (differ, _)) in double_layouts_differ(lr, up, |_| {}, |_| {}) {
+        println!("control, rate one ulp up, {name}: {differ} entries differ");
+        assert!(differ > 0, "{name}: control did not fire");
+    }
+}
+
+/// max |a - b| / max |b| over the n x n entries of two matrices of column-major part arrays (leading dimension ld),
+/// each entry read in P from its first PARTS parts at most (`P::new`), the difference formed in P
+fn rel_gap<P: multishoot::Precision<multishoot::Native>>(a: &[Vec<f64>], b: &[Vec<f64>], n: usize, ld: usize) -> f64 {
+    let at = |c: &[Vec<f64>], k: usize| P::new(&c.iter().take(P::PARTS).map(|q| q[k]).collect::<Vec<_>>());
+    let ks: Vec<usize> = (0..n).flat_map(|j| (0..n).map(move |i| j * ld + i)).collect();
+    let d: Vec<P::Scalar> = ks.iter().map(|&k| at(a, k) - at(b, k)).collect();
+    let s: Vec<P::Scalar> = ks.iter().map(|&k| at(b, k)).collect();
+    multisolver::prec::max_abs::<P>(&d) / multisolver::prec::max_abs::<P>(&s)
+}
+
+/// the planted problem at z* perturbed by 1e-2, its layout changed by `set`, and that z in `parts` parts
+fn planted_real(
+    parts_n: usize,
+    set: impl Fn(&mut Shooting<Planted<PB>, PB>),
+) -> (Shooting<Planted<PB>, PB>, Vec<Vec<f64>>) {
+    let (mut sh, zs) = Planted::<PB>::shooting(&NODES, 30, 1e-32);
+    set(&mut sh);
+    (sh, multisolver::prec::widen(&perturbed(&zs, 1e-2), parts_n))
+}
+
+/// rel_gap of the planted problem's real-rate mode matrix in P (rate lr + i 0, the double-double lr = (lr, lo)) against
+/// the one in Q at lr, the gap formed in the lower precision G of the two; P's layout changed by `set`
+fn planted_gap<P, Q, G>(lr: f64, lo: f64, set: impl Fn(&mut Shooting<Planted<PB>, PB>)) -> f64
+where
+    P: multishoot::Precision<multishoot::Native>,
+    Q: multishoot::Precision<multishoot::Native>,
+    G: multishoot::Precision<multishoot::Native>,
+{
+    let (sp, zp) = planted_real(P::PARTS, set);
+    let (sq, zq) = planted_real(Q::PARTS, |_| {});
+    let (a, ld) = sp.mode_matrix_real::<P>(&parts(&zp), DD { hi: lr, lo }, true).unwrap();
+    let (b, _) = sq.mode_matrix_real::<Q>(&parts(&zq), DD::from_f64(lr), true).unwrap();
+    rel_gap::<G>(&a, &b, sp.off_global(), ld)
+}
+
+/// The planted problem's real-rate mode matrix in quad-double against double-double, a well-conditioned case: the
+/// Taylor steps, the truncation and the inputs are the same, so the two differ by double-double's rounding of the
+/// entries. Pass: max |M_qd - M_dd| / max |M_dd| at most 1e-28 at the rates `REAL_RATES`. The control: the
+/// quad-double matrix at the rate 0.3 + 1e-24 (a double-double rate) must exceed it.
+#[test]
+fn real_rate_matrix_quad_agrees_with_double() {
+    use multishoot::{Double, Quad};
+    for lr in REAL_RATES {
+        let g = planted_gap::<Quad, Double, Quad>(lr, 0.0, |_| {});
+        println!("rate {lr}: quad-double against double-double, relative gap {g:.2e}");
+        assert!(g <= 1e-28, "rate {lr}: {g:e}");
+    }
+    let g = planted_gap::<Quad, Double, Quad>(0.3, 1e-24, |_| {});
+    println!("control, quad-double at 0.3 + 1e-24: relative gap {g:.2e}");
+    assert!(g > 1e-28, "control did not fire");
+}
+
+/// The planted problem's real-rate mode matrix in octo-double against quad-double: the two differ by quad-double's
+/// rounding, so the quad-double entries carry no double-double rounding. Pass: max |M_od - M_qd| / max |M_qd| at most
+/// 1e-58 at the rates `REAL_RATES`. The control: the quad-double matrix at the rate 0.3 + 1e-50 must exceed it.
+#[test]
+fn real_rate_matrix_octo_agrees_with_quad() {
+    use multishoot::{Octo, Quad};
+    for lr in REAL_RATES {
+        let g = planted_gap::<Octo, Quad, Quad>(lr, 0.0, |_| {});
+        println!("rate {lr}: octo-double against quad-double, relative gap {g:.2e}");
+        assert!(g <= 1e-58, "rate {lr}: {g:e}");
+    }
+    let g = planted_gap::<Quad, Octo, Quad>(0.3, 1e-50, |_| {});
+    println!("control, quad-double at 0.3 + 1e-50: relative gap {g:.2e}");
+    assert!(g > 1e-58, "control did not fire");
+}
+
+/// (entries of the wave's real-rate mode matrix in P at the rate mu that differ in any part from the leading block
+/// of the Jacobian in P of the wave carrying mu_explicit as values)
+fn explicit_differs<P: multishoot::Precision<multishoot::Native>>(mu: f64, mu_explicit: f64) -> usize {
+    let (sh, z) = wave_problem(None);
+    let zp = multisolver::prec::widen(&z, P::PARTS);
+    let (mm, ld) = sh.mode_matrix_real::<P>(&parts(&zp), DD::from_f64(mu), true).unwrap();
+    let (ex, z) = wave_problem(Some(DD::from_f64(mu_explicit)));
+    let zp = multisolver::prec::widen(&z, P::PARTS);
+    let (c, ldj) = ex.jacobian::<P>(&parts(&zp), true).unwrap();
+    let n = sh.off_global();
+    (0..n)
+        .flat_map(|j| (0..n).map(move |i| (i, j)))
+        .filter(|&(i, j)| (0..P::PARTS).any(|q| mm[q][j * ld + i].to_bits() != c[q][j * ldj + i].to_bits()))
+        .count()
+}
+
+/// The real-rate mode matrix in quad- and octo-double against the Jacobian in the same precision of the wave that
+/// carries the rate as values (`explicit` = Some(mu)), as `real_rate_is_the_explicit_shift` checks `mode_matrix`:
+/// `Rate::shift` on `Qu` and `Ou` lanes against the explicit mu u, the same operations on the tangents. Pass: every
+/// entry equal in the bits of every part at mu = 0.37. The control: the Jacobian with mu = 0.38 must differ.
+#[test]
+fn real_rate_is_the_explicit_shift_in_quad_and_octo() {
+    use multishoot::{Octo, Quad};
+    let (q, o) = (
+        explicit_differs::<Quad>(0.37, 0.37),
+        explicit_differs::<Octo>(0.37, 0.37),
+    );
+    let (qc, oc) = (
+        explicit_differs::<Quad>(0.37, 0.38),
+        explicit_differs::<Octo>(0.37, 0.38),
+    );
+    println!("real rate against the explicit shift: quad {q}, octo {o} entries differ; controls (mu 0.38) {qc}, {oc}");
+    assert_eq!((q, o), (0, 0));
+    assert!(qc > 0 && oc > 0, "control did not fire");
+}
+
+/// For each real rate of `REAL_RATES`: |ln|det M| - ln|det|_planted| of the wave's real-rate mode matrix in
+/// quad-double, factored by multidouble's `QDLu`
+fn quad_determinant_errors(sh: &Shooting<Wave<WB>, WB>, z: &[Vec<f64>]) -> Vec<f64> {
+    let zq = multisolver::prec::widen(z, 4);
+    REAL_RATES
+        .iter()
+        .map(|&lr| {
+            let (c, ld) = sh
+                .mode_matrix_real::<multishoot::Quad>(&parts(&zq), DD::from_f64(lr), true)
+                .unwrap();
+            let n = sh.off_global();
+            let lu = multishoot::multidouble::linalg::QDLu::factor(n, ld, c.try_into().unwrap(), true).unwrap();
+            (lu.logdet().1 - planted_logdet(lr, 0.0).0).abs()
+        })
+        .collect()
+}
+
+/// The wave's det M(lambda) in quad-double against its closed form at the real rates `REAL_RATES`. Pass:
+/// |ln|det M| - ln|det|| at most 1e-10 (the f64 sums of the pivots' and the closed form's logarithms).
+#[test]
+fn wave_quad_determinant_is_planted() {
+    let (sh, z) = wave_problem(None);
+    let e = quad_determinant_errors(&sh, &z);
+    let shown: Vec<String> = e.iter().map(|x| format!("{x:.1e}")).collect();
+    println!("quad-double det M against the closed form (ln): {}", shown.join(" "));
+    assert!(e.iter().all(|&x| x <= 1e-10), "{e:?}");
+}
+
+/// A real rate on quad- and octo-double tangents: pass, the tangent at the point that x's tangent seeds moves by the
+/// rate times it, the tangent dx seeds keeps its value, and every value keeps its parts.
+#[test]
+fn shift_real_rate_moves_quad_and_octo_tangents() {
+    use multishoot::lane::{Ou, Qu, OV, QV};
+    let r = Rate::new(DD::from_f64(0.5), DD::ZERO);
+    let xq = Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(0.7)), &Fl::<QV, 1>::unit(3));
+    let dq = Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(-1.3)), &Fl::<QV, 1>::unit(5));
+    let sq = r.shift(&xq, dq);
+    let xo = Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(0.7)), &Fl::<OV, 1>::unit(3));
+    let do_ = Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(-1.3)), &Fl::<OV, 1>::unit(5));
+    let so = r.shift(&xo, do_);
+    let qd = |x: f64| multishoot::multidouble::qd::QD::from_dd(DD::from_f64(x));
+    let od = |x: f64| multishoot::multidouble::od::OD::from_dd(DD::from_f64(x));
+    for j in 0..8 {
+        let want = [(3, 0.5), (5, 1.0)].iter().find(|w| w.0 == j).map_or(0.0, |w| w.1);
+        assert_eq!(sq.coef_qd(1).get(j), qd(want), "quad tangent {j}");
+        assert_eq!(so.coef_od(1).get(j), od(want), "octo tangent {j}");
+        assert_eq!(sq.coef_qd(0).get(j).x, dq.coef_qd(0).get(j).x, "quad value {j}");
+        assert_eq!(so.coef_od(0).get(j).x, do_.coef_od(0).get(j).x, "octo value {j}");
+    }
+}
+
+/// A complex rate on quad-double tangents cannot be carried: pass, it panics.
+#[test]
+#[should_panic(expected = "a complex one Dc lanes")]
+fn complex_rate_on_quad_tangents_panics() {
+    use multishoot::lane::{Qu, QV};
+    let x = Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::ONE), &Fl::<QV, 1>::unit(0));
+    Rate::new(DD::ZERO, DD::ONE).shift(&x, x);
+}
+
+/// The controls of the real-rate checks (feature `mutate`), each run once against the check it breaks.
+#[cfg(feature = "mutate")]
+mod real_controls {
+    use super::*;
+    use multishoot::control::Control;
+
+    /// the real-rate matrix with its Taylor steps at rate zero: it differs from `mode_matrix`'s real part on the
+    /// planted layouts at the rate 0.3
+    #[test]
+    fn rate_not_in_steps_fails_the_double_identity() {
+        let r = double_layouts_differ(0.3, 0.3, |sh| sh.set_control(Control::RateNotInSteps), |_| {});
+        for (name, (differ, _)) in &r[..2] {
+            println!("control, real-rate matrix with its steps at rate zero, {name}: {differ} entries differ");
+            assert!(*differ > 0, "{name}: control did not fire");
+        }
+    }
+
+    /// the real-rate matrix prepared without the rate: on the wave, whose right endpoint map steps at the
+    /// preparation's rate, it differs from `mode_matrix`'s real part at 0.3
+    #[test]
+    fn rate_not_prepared_fails_the_double_identity() {
+        let r = double_layouts_differ(0.3, 0.3, |_| {}, |sh| sh.set_control(Control::RateNotPrepared));
+        let (name, (differ, _)) = r[2];
+        println!("control, real-rate matrix not prepared, {name}: {differ} entries differ");
+        assert!(differ > 0, "control did not fire");
+    }
+
+    /// the quad-double matrix with its Taylor steps at rate zero: its gap to double-double at 0.3 exceeds 1e-28
+    #[test]
+    fn rate_not_in_steps_fails_the_quad_agreement() {
+        use multishoot::{Double, Quad};
+        let g = planted_gap::<Quad, Double, Quad>(0.3, 0.0, |sh| sh.set_control(Control::RateNotInSteps));
+        println!("control, quad-double steps at rate zero: relative gap {g:.2e}");
+        assert!(g > 1e-28, "control did not fire");
+    }
+
+    /// the wave's quad-double matrix prepared without the rate: the closed form fails at the nonzero rates
+    #[test]
+    fn rate_not_prepared_fails_the_quad_determinant() {
+        let (mut sh, z) = wave_problem(None);
+        sh.set_control(Control::RateNotPrepared);
+        let worst = quad_determinant_errors(&sh, &z).iter().fold(0.0f64, |a, &e| a.max(e));
+        println!("control, quad-double not prepared: worst determinant error {worst:.3e}");
+        assert!(worst > 1e-10, "control did not fire");
+    }
+
+    /// the quad-double matrix with the rate's shift dropped from the Taylor steps: the explicit-shift identity fails
+    #[test]
+    fn rate_not_in_steps_fails_the_quad_explicit_shift() {
+        use multishoot::Quad;
+        let (mut sh, z) = wave_problem(None);
+        sh.set_control(Control::RateNotInSteps);
+        let zq = multisolver::prec::widen(&z, 4);
+        let (mm, ld) = sh
+            .mode_matrix_real::<Quad>(&parts(&zq), DD::from_f64(0.37), true)
+            .unwrap();
+        let (ex, z) = wave_problem(Some(DD::from_f64(0.37)));
+        let zq = multisolver::prec::widen(&z, 4);
+        let (c, ldj) = ex.jacobian::<Quad>(&parts(&zq), true).unwrap();
+        let n = sh.off_global();
+        let differ = (0..n)
+            .flat_map(|j| (0..n).map(move |i| (i, j)))
+            .filter(|&(i, j)| (0..4).any(|q| mm[q][j * ld + i].to_bits() != c[q][j * ldj + i].to_bits()))
+            .count();
+        println!("control, quad-double steps at rate zero against the explicit shift: {differ} entries differ");
+        assert!(differ > 0, "control did not fire");
+    }
+}

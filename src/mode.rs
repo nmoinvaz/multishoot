@@ -7,7 +7,9 @@
 //! the background's values are unchanged. The equations mark their t-derivatives with [`Rate::shift`], in the Taylor
 //! recursion through `Work::rate` and in the endpoint maps through their preparation
 //! ([`Equations::prepare_rate`]). The engine evaluates the linearization with complex tangents (multidouble's
-//! `Dc`), so lambda may be complex.
+//! `Dc`), so lambda may be complex; at a real lambda also with the real tangents of any precision
+//! ([`Shooting::mode_matrix_real`]: `Du`, `Qu`, `Ou`), for a determinant whose near-null direction lies below
+//! double-double's rounding of the entries.
 //!
 //! The mode matrix M(lambda) is that linearization over the block rows and the unknowns that are not globals: the
 //! globals (an eigenvalue, a period) and the extra rows (phase conditions) belong to the background and are held
@@ -16,12 +18,15 @@
 //! modes inside it (the argument principle).
 use crate::equations::{Equations, State};
 use crate::jacobian::Seed;
-use crate::lane::{BaseLane, Dc, Du, Lane, DV};
+use crate::lane::{BaseLane, Dc, Du, Lane, Ou, Qu, DV, OV, QV};
 use crate::shooting::Shooting;
 use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::linalg::{clu_logdet, ld_for};
-use multidouble::precision::Double;
+use multidouble::od::OD;
+use multidouble::precision::{Double, Precision};
+use multidouble::qd::QD;
+use multidouble::simd::Native;
 use rayon::prelude::*;
 use std::any::{Any, TypeId};
 
@@ -50,9 +55,10 @@ impl Rate {
     }
 
     /// The t-derivative dx of the field x, shifted for the rate: dx plus lambda times x's tangent, its value
-    /// unchanged. It is dx itself on lanes without a tangent and at rate zero, bit for bit. A real rate shifts a
-    /// double-double tangent (`Du`) and a complex one a complex tangent (`Dc`: re += lr re - li im,
-    /// im += lr im + li re). Every other lane with a nonzero rate panics: the mode matrix is in double-double.
+    /// unchanged. It is dx itself on lanes without a tangent and at rate zero, bit for bit. A real rate shifts the
+    /// tangent of a dual in double-, quad- or octo-double (`Du`, `Qu`, `Ou`: d += lr d in the lane's precision, the
+    /// rate entering exactly) and a complex one a complex tangent (`Dc`: re += lr re - li im, im += lr im + li re).
+    /// Every other lane with a nonzero rate panics.
     pub fn shift<T: Lane, const B: usize>(&self, x: &Fl<T, B>, dx: Fl<T, B>) -> Fl<T, B> {
         if self.is_zero() || !T::TANGENT {
             return dx;
@@ -70,9 +76,33 @@ impl Rate {
             }
             return out;
         }
+        let real = self.im.hi == 0.0;
+        if real {
+            // the tangent alone: adding a zero to the value could renormalize its parts
+            if let Some(oq) = (&mut out as &mut dyn Any).downcast_mut::<Fl<Qu, B>>() {
+                let xq = (x as &dyn Any)
+                    .downcast_ref::<Fl<Qu, B>>()
+                    .expect("x and dx have one lane type");
+                let a = QV::splat(QD::from_dd(self.re));
+                for k in 0..B {
+                    oq.0[k].d = oq.0[k].d + xq.0[k].d * a;
+                }
+                return out;
+            }
+            if let Some(oo) = (&mut out as &mut dyn Any).downcast_mut::<Fl<Ou, B>>() {
+                let xo = (x as &dyn Any)
+                    .downcast_ref::<Fl<Ou, B>>()
+                    .expect("x and dx have one lane type");
+                let a = OV::splat(OD::from_dd(self.re));
+                for k in 0..B {
+                    oo.0[k].d = oo.0[k].d + xo.0[k].d * a;
+                }
+                return out;
+            }
+        }
         assert!(
-            TypeId::of::<T>() == TypeId::of::<Du>() && self.im.hi == 0.0,
-            "Rate::shift: a real rate needs Du lanes and a complex one Dc lanes"
+            TypeId::of::<T>() == TypeId::of::<Du>() && real,
+            "Rate::shift: a real rate needs Du, Qu or Ou lanes and a complex one Dc lanes"
         );
         out + Fl::from_vt(&Fl::zero(), &x.tan().muls(self.re))
     }
@@ -259,6 +289,118 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             }
         }
         Ok(ModeMatrix { n, ld, re, im })
+    }
+
+    /// The mode matrix at a real growth rate in the precision P: (PARTS column-major part arrays, ld), n x n with
+    /// n = `off_global()` and ld = `ld_for(n)`, part q of entry (i, j) at `c[q][j ld + i]`; row i is residual row i
+    /// and column j unknown j, as in [`Shooting::mode_matrix`]. Each column is one evaluation with P's dual lanes
+    /// (`P::U`: `Du`, `Qu`, `Ou`) seeded as the Jacobian's (`jac_column_at`), the globals held at z, the Taylor steps
+    /// given the rate (`Work::rate`) and the endpoint maps the preparation of `Equations::try_prepare_rate` at z's
+    /// double-double parts, whose error it returns. The targets' -1, the projected rows and `row_scale` act as in
+    /// `mode_matrix`, in P. The rate is double-double and enters the lanes exactly. At `Double` the matrix is
+    /// `mode_matrix`'s real part at the same rate, bit for bit; at `Quad` and `Octo` every operation on the
+    /// tangents, the rate's shift among them (`Rate::shift`), is in that precision. It needs as many block rows as
+    /// such unknowns (NL + NR = NF).
+    pub fn mode_matrix_real<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        rate: DD,
+        par: bool,
+    ) -> Result<(Vec<Vec<f64>>, usize), String> {
+        self.check_z::<P>(z)?;
+        let n = self.off_global();
+        if self.row_extra() != n {
+            return Err(format!(
+                "mode_matrix_real: {} block rows for {n} unknowns before the globals",
+                self.row_extra()
+            ));
+        }
+        let m = Self::M;
+        let ld = ld_for(n);
+        let rate = self.rate_used(Rate::new(rate, DD::ZERO));
+        let g = self.globals::<P>(z);
+        #[cfg(feature = "mutate")]
+        let prep = if self.control == crate::control::Control::RateNotPrepared {
+            self.prep(z)?
+        } else {
+            self.prep_rate(z, rate)?
+        };
+        #[cfg(not(feature = "mutate"))]
+        let prep = self.prep_rate(z, rate)?;
+        #[cfg(feature = "mutate")]
+        let steps = if self.control == crate::control::Control::RateNotInSteps {
+            Rate::ZERO
+        } else {
+            rate
+        };
+        #[cfg(not(feature = "mutate"))]
+        let steps = rate;
+        let tasks: Vec<(usize, Seed)> = self
+            .jac_tasks()
+            .into_iter()
+            .filter(|t| !matches!(t.1, Seed::Global(_)))
+            .collect();
+        let column = |t: &(usize, Seed)| self.jac_column_at::<P>(z, &g, &prep, steps, *t);
+        let cols: Vec<Vec<P::Scalar>> = if par {
+            tasks.par_iter().map(column).collect()
+        } else {
+            tasks.iter().map(column).collect()
+        };
+        let mut c: Vec<Vec<f64>> = (0..P::PARTS).map(|_| vec![0.0; ld * n]).collect();
+        let at = |c: &[Vec<f64>], k: usize| P::from_raw(&c.iter().map(|cq| cq[k]).collect::<Vec<_>>());
+        let put = |c: &mut [Vec<f64>], k: usize, v: P::Scalar| {
+            for (q, cq) in c.iter_mut().enumerate() {
+                cq[k] = P::part(v, q);
+            }
+        };
+        let nf = E::NF;
+        for (&(b, seed), col) in tasks.iter().zip(&cols) {
+            let r0 = self.row_block(b);
+            for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
+                #[cfg(feature = "mutate")]
+                if self.control == crate::control::Control::DropColumn(cj) {
+                    continue;
+                }
+                // a pointwise task's column jj has point jj of every output field; any other task's column is whole
+                let rows: Vec<usize> = if let Seed::Points(_) = seed {
+                    (0..nf).map(|q| q * m + jj).collect()
+                } else {
+                    (0..nf * m).collect()
+                };
+                for r in rows {
+                    put(&mut c, cj * ld + r0 + r, col[r]);
+                }
+            }
+        }
+        for b in 0..self.k() + 1 {
+            let t = self.block_target(b);
+            let r0 = self.row_block(b);
+            for r in 0..nf * m {
+                let k = (t + r) * ld + r0 + r;
+                let v = at(&c, k) - P::ONE;
+                put(&mut c, k, v);
+            }
+        }
+        // projected rows: Pi on the block's columns, -Pi on the target, Pi' on the pinned unknowns
+        self.project_columns::<P>(&mut c, ld, n, true);
+        if !self.row_scale.is_empty() {
+            if self.row_scale.len() != self.rows() {
+                return Err(format!(
+                    "row_scale has {} factors for {} rows",
+                    self.row_scale.len(),
+                    self.rows()
+                ));
+            }
+            for (i, &sr) in self.row_scale.iter().enumerate().take(n) {
+                let s = P::from_dd(DD::from_f64(sr));
+                for j in 0..n {
+                    let k = j * ld + i;
+                    let v = at(&c, k) * s;
+                    put(&mut c, k, v);
+                }
+            }
+        }
+        Ok((c, ld))
     }
 
     /// (ln|det M(lambda)|, arg det M(lambda)) of [`Shooting::mode_matrix`], by [`ModeMatrix::logdet`]
