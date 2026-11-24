@@ -11,6 +11,7 @@
 //! point j's rows. A column's entries are those of the evaluation seeded on its point alone, lane for lane.
 use crate::equations::{Equations, State};
 use crate::lane::{BaseLane, Lane};
+use crate::mode::Rate;
 use crate::shooting::Shooting;
 use multidouble::dual::Tangents;
 use multidouble::field::Fl;
@@ -71,6 +72,19 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         z: &[&[f64]],
         g: &[P::Scalar],
         prep: &E::Prep,
+        task: (usize, Seed),
+    ) -> Vec<P::Scalar> {
+        self.jac_column_at::<P>(z, g, prep, Rate::ZERO, task)
+    }
+
+    /// `jac_column` with the Taylor steps at a real growth rate (`block_state_at`; the endpoint maps take theirs from
+    /// the preparation): a column of [`Shooting::mode_matrix_real`]. At rate zero it is `jac_column`.
+    pub fn jac_column_at<P: Precision<Native>>(
+        &self,
+        z: &[&[f64]],
+        g: &[P::Scalar],
+        prep: &E::Prep,
+        rate: Rate,
         (b, seed): (usize, Seed),
     ) -> Vec<P::Scalar> {
         let m = Self::M;
@@ -99,7 +113,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 P::dual(P::splat(gi), d)
             })
             .collect();
-        let s: State<P::U, B> = self.block_state::<P::U>(b, &inp, &gu, prep);
+        let s: State<P::U, B> = self.block_state_at::<P::U>(b, &inp, &gu, prep, rate);
         let mut out = Vec::with_capacity(E::NF * m);
         for sq in &s {
             let t = P::field_coef(sq, 1);

@@ -131,6 +131,7 @@ one coefficient; with their defaults a session gives `residual_jet`'s bits at it
 | `Rate` | the complex growth rate λ of a mode-matrix evaluation, zero otherwise; `Rate::shift` marks a t-derivative |
 | `ModeMatrix` | M(λ), the linearization for perturbations growing as exp(λt), in complex double-double; `logdet` gives ln\|det M\| and arg det M |
 | `Shooting::mode_matrix`, `mode_logdet` | M(λ) at a background z from complex tangents (`Dc`), the globals and extra rows held fixed, and its log-determinant |
+| `Shooting::mode_matrix_real::<P>` | M(λ) at a real λ in any precision, from P's real tangents (`Du`, `Qu`, `Ou`), as column-major part arrays; at `Double` it is `mode_matrix`'s real part, bit for bit |
 | `Shooting::mode_logdets` | `mode_logdet` at many rates on rayon tasks, each value that rate's bits |
 | `Shooting::mode_winding`, `mode_zero` | the winding number of det M(λ) along a polygon (the modes inside, less any poles), and one mode's rate by Muller's method |
 
