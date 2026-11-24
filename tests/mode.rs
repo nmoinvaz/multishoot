@@ -1075,11 +1075,12 @@ fn wave_quad_determinant_is_planted() {
     assert!(e.iter().all(|&x| x <= 1e-10), "{e:?}");
 }
 
+/// a quad-double and an octo-double dual field of 8 values
+type QField = Fl<multishoot::lane::Qu, 1>;
+type OField = Fl<multishoot::lane::Ou, 1>;
+
 /// x with the tangent e_3 and dx with the tangent e_5, in quad-double and in octo-double, for the shift checks
-fn shift_inputs() -> (
-    (Fl<multishoot::lane::Qu, 1>, Fl<multishoot::lane::Qu, 1>),
-    (Fl<multishoot::lane::Ou, 1>, Fl<multishoot::lane::Ou, 1>),
-) {
+fn shift_inputs() -> ((QField, QField), (OField, OField)) {
     use multishoot::lane::{Ou, Qu, OV, QV};
     let q = |v: f64, j: usize| Fl::<Qu, 1>::from_vt_qd(&Fl::<QV, 1>::splat(DD::from_f64(v)), &Fl::<QV, 1>::unit(j));
     let o = |v: f64, j: usize| Fl::<Ou, 1>::from_vt_od(&Fl::<OV, 1>::splat(DD::from_f64(v)), &Fl::<OV, 1>::unit(j));
@@ -1088,7 +1089,7 @@ fn shift_inputs() -> (
 
 /// (tangent entries of s other than 0.5 at point 3, 1 at point 5 and 0 elsewhere, entries whose value parts differ
 /// from dx's), for s the shift by 0.5 of `shift_inputs`' dx, in quad-double and in octo-double
-fn shift_errors(sq: &Fl<multishoot::lane::Qu, 1>, so: &Fl<multishoot::lane::Ou, 1>) -> [(usize, usize); 2] {
+fn shift_errors(sq: &QField, so: &OField) -> [(usize, usize); 2] {
     let ((_, dq), (_, do_)) = shift_inputs();
     let want = |j: usize| [(3, 0.5), (5, 1.0)].iter().find(|w| w.0 == j).map_or(0.0, |w| w.1);
     let qd = |x: f64| multishoot::multidouble::qd::QD::from_dd(DD::from_f64(x));
