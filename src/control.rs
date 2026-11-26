@@ -58,4 +58,20 @@ pub enum Control {
     /// the corrector's bordered factors (`InGlobal::bordered_lu`) with the layout's dropped row kept in place of the
     /// tangent
     BorderPin,
+    /// the periodic solve ([`crate::series::PeriodicLu::solve`]) with the derivative of its matrix dropped from the
+    /// right-hand side of a tangent and of a jet's orders past 0: A_0 f_d = r_d in place of A_0 f_d = r_d - A_d f_v
+    PeriodicCoupling,
+    /// the periodic solve at a nonzero rate with its tangents solved by the factors at rate zero
+    RateUnshifted,
+    /// the periodic solve at a nonzero rate with the refinement residual of its quad- and octo-double tangents formed
+    /// without the rate's shift, so that the refinement converges to the tangent of the system at rate zero
+    RateResidual,
+    /// the Moebius variable ([`crate::mobius::Mobius`]) with the sign of a flipped in w(tau) and in the products with
+    /// w, its derivative polynomials unchanged
+    MobiusSign,
+    /// the products with w ([`crate::mobius::Mobius::mul_w`]) with the recurrence's coefficient a t_l times 1 + 2^-60
+    MobiusRecurrence,
+    /// the Moebius variable's constants rounded to double-double, so that a quad- or octo-double lane reads them to
+    /// 2^-106 only
+    MobiusConstDD,
 }

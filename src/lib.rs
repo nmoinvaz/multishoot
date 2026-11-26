@@ -41,9 +41,11 @@
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
 //!   whose zeros in the rate are counted by multisolver's argument principle;
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
+//! * [`series`]: the periodic solves of a series at a singular end, one per order, in every lane type;
+//! * [`mobius`]: the Moebius variable of a series about a singular end, which keeps a far singularity far;
 //! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
 //! * [`relayout`]: a solution moved to new node positions or another number of collocation points;
-//! * [`lane`]: the lane types the engine is generic over;
+//! * [`lane`]: the lane types the engine is generic over, and constants in each lane's own precision;
 //! * `control` (feature `mutate`): deliberate errors, the controls of the accuracy checks.
 #[cfg(feature = "mutate")]
 pub mod control;
@@ -54,11 +56,13 @@ pub mod jacobian;
 pub mod jet;
 pub mod jvp;
 pub mod lane;
+pub mod mobius;
 pub mod mode;
 pub mod periodic;
 pub mod projected;
 pub mod relayout;
 pub mod residual;
+pub mod series;
 pub mod shooting;
 pub mod sub;
 pub mod taylor;
@@ -67,6 +71,8 @@ pub use equations::{Equations, State, Work};
 pub use family::{BorderedLu, InGlobal};
 pub use fast::{MixedLu, Storage};
 pub use jacobian::WithTangents;
+pub use lane::LaneConst;
+pub use mobius::Mobius;
 pub use mode::{ModeMatrix, Rate};
 pub use multidouble;
 pub use multidouble::dd::DD;
@@ -77,5 +83,6 @@ pub use multisolver;
 pub use multisolver::{Family, Jvp, Problem, ResidualJet};
 pub use projected::ProjectedRows;
 pub use relayout::Parities;
+pub use series::{series_lus, PeriodicLu, Refine};
 pub use shooting::{ExtraRow, Shooting};
 pub use taylor::{OrderChoice, OrderCost, Plan};
