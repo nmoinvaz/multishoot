@@ -159,6 +159,40 @@ precision reads its leading parts, so the projected rows are exact to the precis
 
 ![A field on the half grid resampled to 64 points, and segments split into blocks of at most 20 steps](docs/figures/periodic.svg)
 
+### Singular ends
+
+| Item | What it does |
+|---|---|
+| `PeriodicLu` | the factors of ω D + diag κ at the double-double values, the preconditioner of one order of a series at a singular end, with those of a mode matrix's rate |
+| `PeriodicLu::solve` | that order's system in the lane's own arithmetic: refined in quad- and octo-double, a tangent (one, several, complex or f64) by the differentiated system, a jet order by order, the t-derivative ω D shifted by the rate |
+| `PeriodicLu::solve_at`, `Refine` | `solve` for one jet order alone, bit for bit, for a series formed one order at a time; the refinement steps |
+| `series_lus` | the factors of every order's ω D + diag κ_k, k = 0..=K, from ω D formed once |
+| `Mobius` | the variable τ = t / t_l, t = (1 - w) / (1 + a w), of a series about w = 1 summed at w_l (τ = 1): w's coefficients, the products with w by a two-term recurrence, w^j d/dw (j = 0, 1, 2) as polynomials in τ, the sum at the node |
+| `LaneConst` | a constant held in octo-double and applied in each lane's own precision; `LaneConst::recip(k)` is 1/k rounded part by part |
+
+At a regular singular point x = 0, a field that the equations slave meets at order k the periodic system
+(ω D + diag κ_k) f_k = r_k: κ_k holds the indicial k and the field's own coefficient, r_k the orders below.
+The equations factor every order once per evaluation in `prepare`, from the state's double-double values, and solve
+each order in `left_state` or `right_state`, so one code serves the residual, the Jacobian, the jets and the mode
+matrix:
+
+```rust,ignore
+// prepare: the factors of every order at the state's omega
+let kap = |k: usize| kappa_dd.iter().map(|&c| c + DD::from_f64(k as f64)).collect();
+let lus = series_lus(&d, omega_dd, order, kap, Rate::ZERO, true)?;
+// left_state, in the lane T: order k from the orders below, then the sum at the node
+for k in 0..=order {
+    let r = /* order k's right-hand side from f[..k] */;
+    f.push(lus[k].solve(&d, omega, &kappa.adds(DD::from_f64(k as f64)), &r));
+}
+horner(&f, x)
+```
+
+The Moebius variable keeps a singularity at w = 0 far from the node. With a > 0, a series about w = 1 converges in τ
+where its affine series in 1 - w does not, and the coefficients of a solution regular at w = 0, which the affine
+recurrence loses digits on as a minimal solution, stay of order one. Its constants are not exact in double-double, so
+they are `LaneConst`s: a double-double constant caps a quad- or octo-double lane at 2^-106.
+
 ### Fast path
 
 | Item | What it does |
@@ -365,6 +399,9 @@ It also runs coverage, rustfmt, clippy on three backends, the documentation, and
    refined periodic solves of endpoint maps.
 3. L. N. Trefethen, *Spectral Methods in MATLAB*, SIAM, Philadelphia, 2000, ch. 3,
    [doi:10.1137/1.9780898719598](https://doi.org/10.1137/1.9780898719598). The derivative matrix of the periodic grid.
+4. W. Gautschi, "Computational aspects of three-term recurrence relations", SIAM Rev. 9(1), 24–82, 1967,
+   [doi:10.1137/1009002](https://doi.org/10.1137/1009002). Minimal solutions of a recurrence, which forward recursion
+   loses, and which a singular end's series in the Moebius variable no longer is.
 
 ## Related crates
 

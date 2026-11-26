@@ -56,7 +56,7 @@ fn kappa<T: Lane>(d: &DMat<B>, e: &Fl<T, B>, omega: T) -> Fl<T, B> {
 fn factors(d: &DMat<B>, omega: DD, shift: usize) -> Vec<PeriodicLu> {
     let e = Fl::<DV, B>::cst(&e_field());
     let kv = kappa::<DV>(d, &e, DV::splat(omega));
-    let lus = series_lus(
+    series_lus(
         d,
         omega,
         ORDER,
@@ -68,8 +68,7 @@ fn factors(d: &DMat<B>, omega: DD, shift: usize) -> Vec<PeriodicLu> {
         Rate::ZERO,
         true,
     )
-    .unwrap();
-    lus
+    .unwrap()
 }
 
 /// the series' orders (u_k, v_k), k = 0..=ORDER, in the lane from v_0 and omega: v_k by the recursion, then u_k by
