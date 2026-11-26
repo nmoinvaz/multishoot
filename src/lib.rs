@@ -41,6 +41,8 @@
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
 //!   whose zeros in the rate are counted by multisolver's argument principle;
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
+//! * [`interp`]: trigonometric interpolation in any precision, between uniform grids or at any points, and grids
+//!   mapped by Boyd's periodic arctan map with their derivative matrices;
 //! * [`series`]: the periodic solves of a series at a singular end, one per order, in every lane type;
 //! * [`mobius`]: the Moebius variable of a series about a singular end, which keeps a far singularity far;
 //! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
@@ -52,6 +54,7 @@ pub mod control;
 pub mod equations;
 pub mod family;
 pub mod fast;
+pub mod interp;
 pub mod jacobian;
 pub mod jet;
 pub mod jvp;
