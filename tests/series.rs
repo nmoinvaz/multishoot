@@ -6,7 +6,7 @@ mod common;
 use common::field;
 use common::probe::{rel_err, Probe};
 use multidouble::native::Oun;
-use multishoot::lane::{Dc, Dtn, Du, Fu, Fun, Jet, OJet, Ou, QJet, Qu, DV, OV, QV};
+use multishoot::lane::{BaseLane, Dc, Dtn, Du, Fu, Fun, Jet, OJet, Ou, QJet, Qu, DV, OV, QV};
 use multishoot::periodic::{dmat, sin_cos_grid, Parity};
 use multishoot::series::{PeriodicLu, Refine};
 use multishoot::{Fl, Rate, DD};
@@ -138,6 +138,18 @@ fn periodic_solve_is_planted_at_a_rate() {
     assert!(r.iter().chain(&c).all(|x| x.1), "a lane type fails at a rate");
 }
 
+/// the parts of an octo-double field at each point
+fn parts_of(f: &Fl<OV, B>) -> Vec<[f64; 8]> {
+    (0..M).map(|i| f.get(i).x).collect()
+}
+
+/// whether two fields' parts have the same bits at every point (a zero's sign included)
+fn same_bits(a: &[[f64; 8]], b: &[[f64; 8]]) -> bool {
+    a.iter()
+        .zip(b)
+        .all(|(x, y)| x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits()))
+}
+
 /// The order-by-order solve of a jet (`solve_at`) against `solve`: (coefficients that differ in any part, of all)
 fn solve_at_differs<T: Probe>(setup: &dyn Fn(&mut PeriodicLu)) -> (usize, usize) {
     let parity = Parity::Even;
@@ -162,10 +174,7 @@ fn solve_at_differs<T: Probe>(setup: &dyn Fn(&mut PeriodicLu)) -> (usize, usize)
         lu_at.solve_at(&d, &omega, &kappa, &rhs, &mut f, j);
     }
     let differ = (0..T::NJ)
-        .filter(|&j| {
-            let (a, b) = (whole.coef_od(j), f.coef_od(j));
-            (0..M).any(|i| a.get(i).x != b.get(i).x)
-        })
+        .filter(|&j| !same_bits(&parts_of(&whole.coef_od(j)), &parts_of(&f.coef_od(j))))
         .count();
     (differ, T::NJ)
 }
@@ -192,6 +201,63 @@ fn solve_at_control_fewer_steps_differs() {
     let r = [solve_at_differs::<QJet<4>>(&fewer), solve_at_differs::<OJet<4>>(&fewer)];
     println!("control, one step fewer: coefficients that differ (QJet, OJet): {r:?}");
     assert!(r.iter().all(|x| x.0 > 0), "control did not fire: {r:?}");
+}
+
+/// The control of the comparison of `solve_at_is_solve_bitwise`: a double-double jet coefficient read in octo-double,
+/// whose parts past the second are zeros, against itself with one zero's sign flipped, must differ, where f64 equality
+/// sees the two as equal.
+#[test]
+fn same_bits_control_zero_sign_differs() {
+    let d = dmat::<B>(Parity::Even);
+    let kd = vec![DD::from_f64(2.0); M];
+    let lu = PeriodicLu::factor(&d, DD::from_f64(0.9), &kd).unwrap();
+    let rhs = <Jet<4> as Probe>::make(&field::<B>(|j| DD::from_f64(1.0 + j as f64)), &[Fl::splat(DD::ONE)]);
+    let kappa = Fl::<Jet<4>, B>::splat(DD::from_f64(2.0));
+    let f = lu.solve(&d, <Jet<4> as BaseLane>::splat(DD::from_f64(0.9)), &kappa, &rhs);
+    let a = parts_of(&f.coef_od(1));
+    let mut b = a.clone();
+    let (i, q) = (0..M)
+        .flat_map(|i| (0..8).map(move |q| (i, q)))
+        .find(|&(i, q)| a[i][q] == 0.0)
+        .expect("a zero part");
+    b[i][q] = -b[i][q];
+    assert!(a == b, "the flipped zero is not equal as an f64");
+    assert!(!same_bits(&a, &b), "control did not fire");
+    assert!(same_bits(&a, &a.clone()));
+}
+
+/// one solve of omega D + 2 in the lane with the factors at the rate, the right-hand side a field with unit tangents
+/// (formed without `Rate::shift`, which admits neither an f64 lane at a rate nor `Du` at a complex one)
+fn solve_at_rate<T: Probe>(rate: Rate) -> Fl<T, B> {
+    let d = dmat::<B>(Parity::Odd);
+    let lu = PeriodicLu::factor_rate(&d, DD::from_f64(0.9), &vec![DD::from_f64(2.0); M], rate).unwrap();
+    let np = T::parts().len();
+    let rhs = T::make(
+        &field::<B>(|j| DD::from_f64(1.0 + j as f64)),
+        &vec![Fl::splat(DD::ONE); np],
+    );
+    lu.solve(&d, T::splat(DD::from_f64(0.9)), &Fl::splat(DD::from_f64(2.0)), &rhs)
+}
+
+/// An f64 lane at a nonzero rate panics: its f64 tangents carry no rate, and the solve would return the tangent of
+/// another system. The check fails if the solve returns; at rate zero it returns (the first call).
+#[test]
+#[should_panic(expected = "an f64 lane at a nonzero rate")]
+fn f64_lane_at_a_rate_panics() {
+    solve_at_rate::<Fu>(Rate::ZERO);
+    solve_at_rate::<Fu>(Rate::new(DD::from_f64(0.37), DD::ZERO));
+}
+
+/// A real tangent (`Du`) at a complex rate panics: its tangent cannot carry the imaginary part, and the solve would
+/// return the tangent at rate zero. The check fails if the solve returns; at a real rate it returns, and `Dc` at the
+/// complex rate (the first calls).
+#[test]
+#[should_panic(expected = "a complex rate needs complex tangents")]
+fn real_tangent_at_a_complex_rate_panics() {
+    let complex = Rate::new(DD::from_f64(0.37), DD::from_f64(0.81));
+    solve_at_rate::<Du>(Rate::new(DD::from_f64(0.37), DD::ZERO));
+    solve_at_rate::<Dc>(complex);
+    solve_at_rate::<Du>(complex);
 }
 
 /// The controls of the periodic solve's derivative parts (feature `mutate`), each against the check it breaks.
