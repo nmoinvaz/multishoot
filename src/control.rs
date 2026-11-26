@@ -75,3 +75,25 @@ pub enum Control {
     /// 2^-106 only
     MobiusConstDD,
 }
+
+/// A deliberate error of the plane stepper ([`crate::plane::Plane::set_control`])
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaneControl {
+    /// none
+    None,
+    /// the Taylor sum of every step cut at order m while the coefficients are formed to the plan's order
+    LowSum(usize),
+    /// the reciprocals 1 / m of the recursion formed in double-double and widened to the lane
+    RecipDD,
+    /// no orthogonalization between steps: each column only scaled to unit length after a step, its `ln` of the
+    /// length added to the log-volume, and one orthonormalization at the end of `advance` with its `ln R_ii`
+    ScaleOnly,
+    /// the volume of the starting basis left out of `ln_vol`
+    NoGram,
+    /// the last column's `ln R_kk` left out of every step's term of `ln_vol`
+    LogDrop,
+    /// no orthonormalization after the steps i, i + 1, ..., i + m - 1 (counted from 0; never after the last step of
+    /// the advance), and so no `ln R_ii` of them: in exact arithmetic the next orthonormalization carries what these
+    /// left, and `SkipQr(i, 1)` skips one
+    SkipQr(usize, usize),
+}
