@@ -59,7 +59,7 @@ Constants enter in double-double (`Fl::cst`, `Fl::muls`). The parameter of the r
 | `Plan` | the Taylor order `kt`, the tolerance `tol` on the last two terms, the largest step `hmax` |
 | `taylor::taylor_step`, `taylor_path` | one Taylor step summed by Horner's rule, and a path of steps through given points |
 | `taylor::plan_path` | step points between two ends, each step the largest whose terms of orders kt - 1 and kt stay below `tol` |
-| `taylor::step_size`, `kth_root` | that step from one step's coefficients, by a k-th root of IEEE operations alone, the same bits on every platform |
+| `taylor::step_size`, `step_from_norms`, `kth_root` | that step from one step's coefficients, or from the two largest norms alone, by a k-th root of IEEE operations alone, the same bits on every platform |
 | `Plan::optimal_kt`, `candidate_orders`, `taylor::step_cost` | the order of least cost at `tol` under the step cost k^2 + 20 k, and the orders around it to plan |
 
 A step between f64 points is exact in double-double. A step that would leave less than 40% of the rest becomes half
@@ -67,6 +67,20 @@ the rest, so a segment ends in two near-equal steps. `plan_path` panics on a coe
 step that does not move x.
 
 ![Taylor step lengths near a pole and beyond it, and the cost of a layout at every Taylor order](docs/figures/taylor.svg)
+
+### Plane stepper
+
+A k-plane of solutions of a linear system y' = J(x) y, carried through Taylor steps and orthonormalized after each, for
+modes that grow at rates a plain integration cannot keep apart. The caller supplies the jets of J's nonzero entries; the
+module knows nothing of the problem.
+
+| Item | What it does |
+|---|---|
+| `plane::Real` | the scalar: `f64`, `DD`, `QD` or `OD` (`Precision`'s scalars lack division, square root and logarithm, and `f64` is none) |
+| `plane::JetSource`, `Jets`, `Entry` | J's nonzero pattern and its Taylor coefficients about any point, from the caller |
+| `plane::Plane::new`, `advance` | the plane from a basis (its volume recorded), carried from xa to xb by steps of the planner's rule (`Plan`), orthonormalized after each (positive diagonal) |
+| `Plane::columns`, `ln_vol` | the orthonormal basis, and the log of the volume gained: `sum ln R_ii` of every step, so `(g_1 + ... + g_k) x` for the k fastest modes and `int tr J dx` for k = n |
+| `plane::orthonormalize` | Gram-Schmidt of the columns of a column-major matrix, twice per column, the diagonal of R positive |
 
 ### The layout
 
