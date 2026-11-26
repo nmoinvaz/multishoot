@@ -146,6 +146,7 @@ its winding number along a closed contour counts the modes inside, when det M ha
 |---|---|
 | `periodic::Parity` | a field's symmetry under θ → θ + π: odd or even harmonics on the half grid, or all of them on the full grid |
 | `periodic::dmat` | d/dθ on the M points of a grid, exact for harmonics below its Nyquist |
+| `periodic::dmat_c`, `dmat_od`, `DMatC` | d/dθ with the f64 remainder of each double-double entry, applied by the quad- and octo-double lanes (about 2⁻¹⁵⁹ per entry), and its entries in octo-double |
 | `periodic::theta`, `sin_cos`, `sin_cos_grid`, `sin_cos_pi`, `sin_cos_pi_od` | the grid points, and sines and cosines in double-double, those of rational multiples of π also in octo-double |
 | `periodic::spectrum`, `tail`, `Resampler` | a field's Fourier coefficients, its resolution, and its interpolant on another number of points |
 | `ProjectedRows`, `Shooting::project_rows` | one field's rows of a block replaced by Π (state - target) + Π' y: its high harmonics unmatched and those of the pinned unknowns y held at zero |

@@ -9,8 +9,14 @@
 //! The derivative matrix of the N-point grid (N even) is D_ij = (-1)^(i-j) cot((i-j) pi / N) / 2, i != j, and zero
 //! on the diagonal: the derivative of the trigonometric interpolant, exact for harmonics below N/2 (Trefethen,
 //! Spectral Methods in MATLAB, SIAM 2000, ch. 3).
-use crate::lane::DMat;
+//!
+//! [`dmat`] holds it in double-double, to about 2^-106 relative per entry. The quad- and octo-double lanes then apply
+//! a fixed perturbation of the operator of that size, which near-null directions of a solve can amplify. [`dmat_c`]
+//! forms the entries in octo-double and keeps the f64 remainder of each beside its nearest double-double
+//! ([`DMatC`]): those lanes apply hi + lo + c, good to about 2^-159.
+use crate::lane::{DMat, Lane, DV, OV, QV};
 use multidouble::dd::DD;
+use multidouble::field::Fl;
 use multidouble::od::OD;
 
 /// pi in double-double
@@ -365,6 +371,172 @@ pub fn dmat<const B: usize>(parity: Parity) -> DMat<B> {
         }
     }
     DMat::<B>::from_rows(&hi, &lo)
+}
+
+/// A constant (8 B) x (8 B) matrix A as a double-double matrix and the f64 remainders of its entries,
+/// c = RN(A - (hi + lo)): with the nearest double-double, hi + lo + c holds each entry to about 2^-159 relative where
+/// hi + lo holds it to 2^-106. [`DMatC::apply`] adds c f on the quad- and octo-double lanes and applies hi + lo alone
+/// on the others, whose arithmetic does not see c.
+#[derive(Clone)]
+pub struct DMatC<const B: usize> {
+    /// the double-double matrix, the matrix to factor
+    pub d: DMat<B>,
+    /// the remainders, as a matrix with zero lo parts
+    pub c: DMat<B>,
+}
+
+impl<const B: usize> DMatC<B> {
+    /// from the entries in octo-double, row-major (8 B)^2: hi = RN(A), lo = RN(A - hi), c = RN(A - hi - lo)
+    pub fn from_od(a: &[OD]) -> Self {
+        let m = 8 * B;
+        assert_eq!(a.len(), m * m, "DMatC::from_od: entries for M = {m}");
+        let (mut hi, mut lo) = (vec![0.0; m * m], vec![0.0; m * m]);
+        for (k, x) in a.iter().enumerate() {
+            hi[k] = x.to_f64();
+            lo[k] = (*x - OD::from_f64(hi[k])).to_f64();
+        }
+        Self::with_remainder(DMat::<B>::from_rows(&hi, &lo), a)
+    }
+
+    /// the double-double matrix d as it is, with the remainders c = RN(A - (hi + lo)) of its entries against the
+    /// entries A in octo-double, row-major: for a double-double matrix formed elsewhere whose bits are to be kept
+    pub fn with_remainder(d: DMat<B>, a: &[OD]) -> Self {
+        let m = 8 * B;
+        assert_eq!(a.len(), m * m, "DMatC::with_remainder: entries for M = {m}");
+        let mut c = vec![0.0; m * m];
+        for i in 0..m {
+            for j in 0..m {
+                c[i * m + j] = (a[i * m + j] - OD::from_dd(d.cols[j].get(i))).to_f64();
+            }
+        }
+        DMatC {
+            d,
+            c: DMat::<B>::from_rows(&c, &vec![0.0; m * m]),
+        }
+    }
+
+    /// whether the lane T applies the remainders: its values are in quad- or octo-double
+    #[inline(always)]
+    pub fn wide<T: Lane>() -> bool {
+        T::VAL_QD || T::VAL_OD
+    }
+
+    /// A f in the lane T: `d.apply(f)` on the f64 and double-double lanes, `d.apply(f) + c.apply(f)` on the quad- and
+    /// octo-double lanes, each product in the lane's arithmetic (`MatLane::dmat_apply`)
+    #[inline(always)]
+    pub fn apply<T: Lane>(&self, f: &Fl<T, B>) -> Fl<T, B> {
+        if Self::wide::<T>() {
+            self.d.apply(f) + self.c.apply(f)
+        } else {
+            self.d.apply(f)
+        }
+    }
+
+    /// coefficient j of A x into coefficient j of out, on a jet lane (`Lane::NJ` > 0): [`DMatC::apply`] on the
+    /// coefficient's values in the jet's own coefficient arithmetic (octo-, quad- or double-double), bitwise
+    /// coefficient j of `apply(x)`; the other coefficients of out are left as they are
+    pub fn apply_at<T: Lane>(&self, x: &Fl<T, B>, j: usize, out: &mut Fl<T, B>) {
+        assert!(T::NJ > 0, "DMatC::apply_at: a lane without jet coefficients");
+        if T::VAL_OD {
+            let r = self.apply(&Fl::<OV, B>(std::array::from_fn(|b| x.0[b].coef_od(j))));
+            for b in 0..B {
+                out.0[b].set_coef_od(j, r.0[b]);
+            }
+        } else if T::VAL_QD {
+            let r = self.apply(&Fl::<QV, B>(std::array::from_fn(|b| x.0[b].coef_qd(j))));
+            for b in 0..B {
+                out.0[b].set_coef_qd(j, r.0[b]);
+            }
+        } else {
+            let r = self.apply(&Fl::<DV, B>(std::array::from_fn(|b| x.0[b].coef(j))));
+            for b in 0..B {
+                out.0[b].set_coef(j, r.0[b]);
+            }
+        }
+    }
+
+    /// A 1, the row sums of the matrix as the lane T applies it ([`DMatC::apply`] of the constant 1). For a matrix
+    /// meant to annihilate constants they are its entries' rounding, unless its entries cancel in pairs as
+    /// [`dmat_c`]'s do, so a solve split as f = 1 + X, (A + K) X = r - (A + K) 1, is exact for the matrix applied
+    /// only with this A 1 on the right side.
+    pub fn row_sums<T: Lane>(&self) -> Fl<T, B> {
+        self.apply(&Fl::<T, B>::splat(DD::ONE))
+    }
+}
+
+/// below this fraction of an entry's scale a part of its expansion is the rounding of its evaluation (octo-double,
+/// about 2^-410 of the scale), not of its value: an entry that its leading parts hold exactly gets zero parts after
+/// them (a cotangent of an odd multiple of pi / 2 or of pi / 4, images that sum to a dyadic rational)
+const PART_FLOOR: f64 = f64::from_bits((1023 - 300) << 52);
+
+/// x as its greedy round-to-nearest expansion, the parts from the first below `PART_FLOOR` scale on set to zero
+fn flush(x: OD, scale: f64) -> OD {
+    let floor = PART_FLOOR * scale;
+    let mut parts = [0.0; 8];
+    let mut r = x;
+    for p in parts.iter_mut() {
+        let v = r.to_f64();
+        if v.abs() <= floor {
+            break;
+        }
+        *p = v;
+        r = r - OD::from_f64(v);
+    }
+    OD::new(parts)
+}
+
+/// entry (i, j) of the N-point derivative matrix in octo-double, i != j mod N, as [`d_full`]: odd in the offset d
+/// bit for bit, as the reduction of [`sin_cos_pi_od`] maps -d to the negated remainder
+fn d_full_od(d: i64, n: i64) -> OD {
+    let (s, c) = sin_cos_pi_od(d, n);
+    let v = (c / s).mul_f(0.5);
+    if d.rem_euclid(2) == 0 {
+        v
+    } else {
+        -v
+    }
+}
+
+/// The entries of d/dtheta on the M = 8 B points of the grid of `parity` in octo-double, row-major: [`dmat`]'s sums
+/// over the images with cotangents from [`sin_cos_pi_od`], to about 2^-410 of each entry's scale (the sum of
+/// max(|t|, 1) over its terms t), each expansion cut where its parts fall below 2^-300 of that scale, so that an entry
+/// with a dyadic value is exactly it. The entries at offsets d and -d are negatives of each other bit for bit, so the
+/// rows of the even and full grids' matrices sum to zero exactly.
+pub fn dmat_od<const B: usize>(parity: Parity) -> Vec<OD> {
+    let m = 8 * B;
+    let n = period_points(parity, m);
+    let off = 2 * m as i64 - 1;
+    let tab: Vec<OD> = (-off..m as i64)
+        .map(|d| if d == 0 { OD::ZERO } else { d_full_od(d, n) })
+        .collect();
+    let mut a = vec![OD::ZERO; m * m];
+    for i in 0..m {
+        for j in 0..m {
+            let images: &[(usize, f64)] = match parity {
+                Parity::Full => &[(j, 1.0)],
+                Parity::Odd => &[(j, 1.0), (j + m, -1.0)],
+                Parity::Even => &[(j, 1.0), (j + m, 1.0)],
+            };
+            let (mut v, mut s) = (OD::ZERO, 0.0);
+            for &(jj, sgn) in images {
+                if jj != i {
+                    let t = tab[(i as i64 - jj as i64 + off) as usize].mul_f(sgn);
+                    v = v + t;
+                    s += t.to_f64().abs().max(1.0);
+                }
+            }
+            a[i * m + j] = flush(v, s);
+        }
+    }
+    a
+}
+
+/// d/dtheta on the M = 8 B points of the grid of `parity` with the remainders of its double-double entries:
+/// [`DMatC::from_od`] of [`dmat_od`]. hi + lo is the round-to-nearest double-double of each entry, which [`dmat`]'s
+/// double-double arithmetic can miss in the last bit of lo; `DMatC::with_remainder(dmat(parity), &dmat_od(parity))`
+/// keeps [`dmat`]'s bits instead.
+pub fn dmat_c<const B: usize>(parity: Parity) -> DMatC<B> {
+    DMatC::from_od(&dmat_od::<B>(parity))
 }
 
 #[cfg(test)]
