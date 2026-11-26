@@ -149,9 +149,11 @@ its winding number along a closed contour counts the modes inside, when det M ha
 | `periodic::dmat_c`, `dmat_od`, `DMatC` | d/dθ with the f64 remainder of each double-double entry, applied by the quad- and octo-double lanes (about 2⁻¹⁵⁹ per entry), and its entries in octo-double |
 | `periodic::theta`, `sin_cos`, `sin_cos_grid`, `sin_cos_pi`, `sin_cos_pi_od` | the grid points, and sines and cosines in double-double, those of rational multiples of π also in octo-double |
 | `periodic::spectrum`, `tail`, `Resampler` | a field's Fourier coefficients, its resolution, and its interpolant on another number of points |
+| `interp::Interp`, `ArctanMap`, `dmat_mapped` | trigonometric interpolation in any precision, between uniform grids or at any points, from entries formed in octo-double; Boyd's periodic arctan map of a grid and its d/dθ |
 | `ProjectedRows`, `Shooting::project_rows` | one field's rows of a block replaced by Π (state - target) + Π' y: its high harmonics unmatched and those of the pinned unknowns y held at zero |
 | `Parities` | each field's parity at the left end, at the nodes and at the right end |
 | `Shooting::renode`, `resample` | a solution moved to new node positions or to another number of collocation points, to start a Newton solve there |
+| `Shooting::resample_in::<P>` | `resample` in any precision, between uniform or mapped grids |
 | `Shooting::split_segments::<P>` | segments of more than `max_steps` steps cut at their step points into blocks of their own, to balance the threads; the residual keeps its rows bit for bit |
 
 The projector Π onto the low harmonics is formed in octo-double from cosines of exact multiples of π, and each

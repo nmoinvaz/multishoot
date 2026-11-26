@@ -1,9 +1,11 @@
 //! Moving a solution to another layout of the same problem: new node positions ([`Shooting::renode`]) or another
 //! number of collocation points ([`Shooting::resample`]), as the start of a Newton solve there. Both work in
-//! double-double on the hi and lo parts of z. [`Shooting::split_segments`] adds nodes at existing step points, so
+//! double-double on the hi and lo parts of z; [`Shooting::resample_in`] moves z in any precision, between uniform or
+//! mapped grids ([`crate::interp`]). [`Shooting::split_segments`] adds nodes at existing step points, so
 //! that long segments become several blocks that run on separate tasks, in any precision and without changing the
 //! discrete problem.
 use crate::equations::{Equations, State, Work};
+use crate::interp::{interp_between, ArctanMap, Interp};
 use crate::lane::DV;
 use crate::periodic::{Parity, Resampler};
 use crate::shooting::Shooting;
@@ -127,6 +129,50 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
         oh.extend(&zh[og..]);
         ol.extend(&zl[og..]);
         Ok((oh, ol))
+    }
+
+    /// The unknowns of the layout `to` (M2 = 8 B2 collocation points) from the solution z of this one in P (P::PARTS
+    /// part arrays, given and returned): every field moved by [`crate::interp::interp_between`] in its parity, from
+    /// this layout's grid (the map `from`, None: uniform) to `to`'s (the map `to_map`), its entries in octo-double read
+    /// in P's leading parts, so that a quad- or octo-double solution keeps its precision; the globals kept. Between
+    /// uniform grids it is [`Shooting::resample`]'s map, to rounding. `to` must have the same nodes, fields and
+    /// globals.
+    pub fn resample_in<P: Precision<Native>, E2: Equations<B2>, const B2: usize>(
+        &self,
+        z: &[&[f64]],
+        parities: &Parities,
+        to: &Shooting<E2, B2>,
+        from: Option<&ArctanMap>,
+        to_map: Option<&ArctanMap>,
+    ) -> Result<Vec<Vec<f64>>, String> {
+        self.check_z::<P>(z)?;
+        if (E2::NL, E2::NF, E2::NR, E2::NG, to.k()) != (E::NL, E::NF, E::NR, E::NG, self.k()) {
+            return Err("resample_in: the layouts differ in their fields, globals or nodes".into());
+        }
+        if (parities.left.len(), parities.node.len(), parities.right.len()) != (E::NL, E::NF, E::NR) {
+            return Err("resample_in: one parity per field of the left data, a node and the right data".into());
+        }
+        let (m, m2) = (Self::M, Shooting::<E2, B2>::M);
+        let maps: Vec<(Parity, Interp)> = [Parity::Full, Parity::Odd, Parity::Even]
+            .into_iter()
+            .map(|p| (p, interp_between(p, m, m2, from, to_map)))
+            .collect();
+        let pick = |p: Parity| &maps.iter().find(|q| q.0 == p).expect("every parity").1;
+        let mut kinds: Vec<Parity> = parities.left.clone();
+        for _ in 0..self.k() {
+            kinds.extend(&parities.node);
+        }
+        kinds.extend(&parities.right);
+        let scalar = |i: usize| P::from_raw(&z.iter().map(|q| q[i]).collect::<Vec<_>>());
+        let mut out: Vec<P::Scalar> = Vec::with_capacity(to.len());
+        for (b, &p) in kinds.iter().enumerate() {
+            let f: Vec<P::Scalar> = (b * m..(b + 1) * m).map(scalar).collect();
+            out.extend(pick(p).apply::<P>(&f));
+        }
+        out.extend((self.off_global()..self.len()).map(scalar));
+        Ok((0..P::PARTS)
+            .map(|q| out.iter().map(|&v| P::part(v, q)).collect())
+            .collect())
     }
 
     /// Splits every segment of more than `max_steps` Taylor steps at its own step points into near-equal pieces of at
