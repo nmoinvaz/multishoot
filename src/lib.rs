@@ -69,7 +69,7 @@ pub mod taylor;
 
 pub use equations::{Equations, State, Work};
 pub use family::{BorderedLu, InGlobal};
-pub use fast::{MixedLu, Storage};
+pub use fast::{BlockLanes, MixedLu, Storage};
 pub use jacobian::WithTangents;
 pub use lane::LaneConst;
 pub use mobius::Mobius;

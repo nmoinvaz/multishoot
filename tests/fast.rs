@@ -4,7 +4,7 @@ mod common;
 
 use common::{as_pointwise, perturbed, Fnv, Planted};
 use multishoot::lane::{Dtn, Fu, Fun, Lane};
-use multishoot::{Double, Equations, ExtraRow, MixedLu, Quad, Shooting, Storage, DD};
+use multishoot::{BlockLanes, Double, Equations, ExtraRow, MixedLu, Quad, Shooting, Storage, DD};
 use multisolver::prec::{max_abs, nan_max, parts, widen};
 use multisolver::quasi::{QuasiInfo, QuasiOpts};
 use multisolver::NewtonOpts;
@@ -945,5 +945,129 @@ mod controls {
         let (rep, d) = mixed::<Fu>(&sh, &zs, Storage::Staircase, STEPS);
         println!("control, pivot: max |F| {}; |z - z*| {d:.2e}", sci(&rep.fnorm));
         assert!(!rep.converged, "control did not fire");
+    }
+}
+
+/// the f64 Jacobian of `jacobian_f64_by` with lanes T and the block lanes `lanes`
+fn f64_by<T: Lane>(sh: &Shooting<Planted<B>, B>, z: &[Vec<f64>], lanes: impl Fn(usize) -> BlockLanes) -> Vec<f64> {
+    sh.jacobian_f64_by::<T>(&parts(z), true, lanes).unwrap().0
+}
+
+/// the entries of two column-major matrices of leading dimension ld that differ, in the rows of block b alone (Some)
+/// or in every row
+fn differing(sh: &Shooting<Planted<B>, B>, a: &[f64], b: &[f64], block: Option<usize>) -> usize {
+    let (l, ld) = (sh.len(), multidouble::linalg::ld_for(sh.len()));
+    let rows: Vec<usize> = match block {
+        Some(bl) => (sh.row_block(bl)..sh.row_block(bl) + 2 * Shooting::<Planted<B>, B>::M).collect(),
+        None => (0..l).collect(),
+    };
+    (0..l)
+        .flat_map(|j| rows.iter().map(move |&i| j * ld + i))
+        .filter(|&k| a[k].to_bits() != b[k].to_bits())
+        .count()
+}
+
+/// Pass, written before the first run: `jacobian_f64_by` with every block on `Lanes` is `jacobian_f64` bit for bit
+/// with `Fu` and `Fun<4>`, and with every block on `Dtn4` it is `jacobian_f64::<Dtn<4>>`, on the planted problem and
+/// on both projected layouts, at z* perturbed by 1e-2.
+#[test]
+fn f64_by_block_lanes_is_jacobian_f64() {
+    for (sh, zs) in [planted(), projected(false), projected(true)] {
+        let z = perturbed(&zs, 1e-2);
+        let d = [
+            differing(
+                &sh,
+                &f64_by::<Fu>(&sh, &z, |_| BlockLanes::Lanes),
+                &f64_jac::<Fu>(&sh, &z),
+                None,
+            ),
+            differing(
+                &sh,
+                &f64_by::<Fun<4>>(&sh, &z, |_| BlockLanes::Lanes),
+                &f64_jac::<Fun<4>>(&sh, &z),
+                None,
+            ),
+            differing(
+                &sh,
+                &f64_by::<Fu>(&sh, &z, |_| BlockLanes::Dtn4),
+                &f64_jac::<Dtn<4>>(&sh, &z),
+                None,
+            ),
+        ];
+        assert_eq!(d, [0, 0, 0]);
+    }
+}
+
+/// the segment block the tests below choose lanes for, whose u rows `projected(false)` projects
+const SEG: usize = 2;
+
+/// Pass, written before the first run: with segment block 2 on `Dtn4` and the others on `Lanes` (`Fu`), block 2's
+/// rows are `jacobian_f64::<Dtn<4>>`'s bit for bit and every other block's `jacobian_f64::<Fu>`'s, on the planted
+/// problem and with block 2's u rows projected. The control: block 1 on `Dtn4` instead must leave block 2's rows off
+/// `Dtn<4>`'s.
+#[test]
+fn f64_by_takes_each_blocks_lanes() {
+    for right in [false, true] {
+        let (sh, zs) = if right { projected(false) } else { planted() };
+        let z = perturbed(&zs, 1e-2);
+        let mixed = f64_by::<Fu>(&sh, &z, |b| if b == SEG { BlockLanes::Dtn4 } else { BlockLanes::Lanes });
+        let (fu, dtn) = (f64_jac::<Fu>(&sh, &z), f64_jac::<Dtn<4>>(&sh, &z));
+        assert_eq!(differing(&sh, &mixed, &dtn, Some(SEG)), 0, "block {SEG}");
+        for b in (0..=sh.k()).filter(|&b| b != SEG) {
+            assert_eq!(differing(&sh, &mixed, &fu, Some(b)), 0, "block {b}");
+        }
+        let wrong = f64_by::<Fu>(&sh, &z, |b| if b == 1 { BlockLanes::Dtn4 } else { BlockLanes::Lanes });
+        let off = differing(&sh, &wrong, &dtn, Some(SEG));
+        println!("control, block 1 on Dtn4: {off} entries of block {SEG} off Dtn<4>'s");
+        assert!(off > 0, "control did not fire");
+    }
+}
+
+/// the largest |J_by - J| over block b's rows, relative to max(1, the column's largest |J|) over every row, J the
+/// exact double-double Jacobian
+fn block_vs_exact(sh: &Shooting<Planted<B>, B>, z: &[Vec<f64>], f: &[f64], b: usize) -> f64 {
+    let (c, ld) = sh.jacobian::<Double>(&parts(z), true).unwrap();
+    let l = sh.len();
+    let r0 = sh.row_block(b);
+    (0..l)
+        .map(|j| {
+            let scale = (0..l).map(|i| c[0][j * ld + i].abs()).fold(1.0, nan_max);
+            (r0..r0 + 2 * Shooting::<Planted<B>, B>::M)
+                .map(|i| {
+                    (DD::new(c[0][j * ld + i], c[1][j * ld + i]) - DD::from_f64(f[j * ld + i]))
+                        .hi
+                        .abs()
+                })
+                .fold(0.0, nan_max)
+                / scale
+        })
+        .fold(0.0, nan_max)
+}
+
+/// Pass: with segment block 2 on `Double`, its rows are the double-double Jacobian's rounded to f64, within 2^-52 of
+/// each column's scale (half an ulp for the entry's rounding, half for the target's -1 added in f64), with its u rows
+/// projected or not, while the other blocks' rows stay `jacobian_f64::<Fu>`'s bit for bit. The control: block 2 on
+/// `Lanes` (`Fu`), whose f64 tangents are summed along the Taylor paths, must miss it. (The bound first written,
+/// 1e-15, held for the control too, 8.2e-16 against 7.3e-17: the planted paths are short.)
+#[test]
+fn f64_by_double_block_is_the_double_double_jacobian() {
+    for right in [false, true] {
+        let (sh, zs) = if right { projected(false) } else { planted() };
+        let z = perturbed(&zs, 1e-2);
+        let by = f64_by::<Fu>(&sh, &z, |b| {
+            if b == SEG {
+                BlockLanes::Double
+            } else {
+                BlockLanes::Lanes
+            }
+        });
+        let fu = f64_jac::<Fu>(&sh, &z);
+        let (e, e_fu) = (block_vs_exact(&sh, &z, &by, SEG), block_vs_exact(&sh, &z, &fu, SEG));
+        println!("projected {right}: block {SEG} on Double {e:.3e}, on Fu (control) {e_fu:.3e}");
+        assert!(e <= f64::EPSILON, "{e:e}");
+        for b in (0..=sh.k()).filter(|&b| b != SEG) {
+            assert_eq!(differing(&sh, &by, &fu, Some(b)), 0, "block {b}");
+        }
+        assert!(e_fu > f64::EPSILON, "control did not fire: {e_fu:e}");
     }
 }

@@ -202,6 +202,7 @@ they are `LaneConst`s: a double-double constant caps a quad- or octo-double lane
 | Item | What it does |
 |---|---|
 | `Shooting::jacobian_f64::<T>` | the Jacobian in f64 from lanes with f64 tangents (`Fu`, `Fun<N>`, `Dtn<N>`), several columns per evaluation |
+| `Shooting::jacobian_f64_by::<T>`, `BlockLanes` | the same with each block's columns on lanes of its own: T, `Dtn<4>`, or the double-double Jacobian's columns rounded to f64 |
 | `Shooting::jacobian_staircase::<T>` | the same Jacobian built block by block and factored in staircase storage (multidouble's `StaircaseLu`), never dense |
 | `Storage`, `MixedLu` | dense or staircase storage, and the f64 factors, which solve in double-double |
 | `Shooting::newton_mixed::<P, T>`, `newton_step_mixed`, `mixed_lu` | Newton's method with the residual in P and the f64 Jacobian as its matrix |
