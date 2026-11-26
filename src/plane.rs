@@ -157,7 +157,7 @@ impl<T: Real> Jets<T> {
 
 /// The problem's side: J's nonzero pattern and its Taylor coefficients about any point
 pub trait JetSource<T: Real> {
-    /// the nonzero entries (row, column) of J, fixed for the source (an entry may be repeated nowhere)
+    /// the nonzero entries (row, column) of J, fixed for the source, none twice
     fn pattern(&self) -> Vec<(usize, usize)>;
     /// Coefficients 0..kj of every entry of the pattern about x0, in the same order as `pattern`: `out.ent[e].c[..n]` and
     /// `out.ent[e].n`, `n <= kj`. A constant entry has n = 1.
