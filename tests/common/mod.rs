@@ -1,5 +1,7 @@
 //! Model problems with known solutions, and helpers, shared by the integration tests.
 #![allow(dead_code)]
+pub mod probe;
+
 use multishoot::lane::{DMat, Lane, DV};
 use multishoot::periodic::{dmat, sin_cos, theta, Parity};
 use multishoot::{Equations, Fl, State, Work, DD};
