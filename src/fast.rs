@@ -15,7 +15,7 @@
 //! double-double with the f64 factors. It needs one global and one extra row on the left data, the global and node 0.
 use crate::equations::Equations;
 use crate::jacobian::Seed;
-use crate::lane::{Lane, DV};
+use crate::lane::{Dtn, Lane, DV};
 use crate::shooting::Shooting;
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -26,6 +26,7 @@ use multidouble::simd::Native;
 use multisolver::newton::{newton_with, Factored, NewtonOpts, NewtonReport};
 use multisolver::quasi::{newton_quasi, QuasiInfo, QuasiOpts};
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 /// Where the f64 Jacobian of a mixed step is kept and factored
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +69,17 @@ impl<P: Precision<Native>> Factored<P> for MixedLu {
         self.solve(&mut b);
         b.into_iter().map(P::from_dd).collect()
     }
+}
+
+/// The lanes that form one block's column tasks in [`Shooting::jacobian_f64_by`]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BlockLanes {
+    /// the call's f64-tangent lanes T, T::NT tasks per evaluation
+    Lanes,
+    /// `Dtn<4>`: the double-double trajectory with four f64 tangents per evaluation
+    Dtn4,
+    /// `Du`: the double-double Jacobian's columns (`Shooting::jac_column` at `Double`), one task per evaluation
+    Double,
 }
 
 /// The f64 values of a field's f64 tangent k
@@ -231,6 +243,118 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
                 c[(t + r) * ld + r0 + r] -= 1.0;
             }
             self.project_f64_block(b, &mut c, ld, r0, l, Some, |_| None)?;
+        }
+        let re = self.row_extra();
+        for (r, row) in self.extra.iter().enumerate() {
+            for &(i, w) in &row.terms {
+                c[i * ld + re + r] += w.hi;
+            }
+        }
+        if !self.row_scale.is_empty() {
+            if self.row_scale.len() != l {
+                return Err(format!("row_scale has {} factors for {l} rows", self.row_scale.len()));
+            }
+            for j in 0..l {
+                for (r, &s) in self.row_scale.iter().enumerate() {
+                    c[j * ld + r] *= s;
+                }
+            }
+        }
+        Ok((c, ld))
+    }
+
+    /// The f64 Jacobian of `jacobian_f64` with the lanes of each block's column tasks chosen by `lanes(b)`
+    /// ([`BlockLanes`]): T in groups of T::NT, `Dtn<4>` in groups of four, or `Du`, the double-double Jacobian's
+    /// columns rounded to f64 when stored, whose block's projected rows are formed from them in double-double
+    /// (`project_f64_block`'s `dd_column`). Every block on `BlockLanes::Lanes` gives `jacobian_f64::<T>` bit for bit,
+    /// and every block on `Dtn4` gives `jacobian_f64::<Dtn<4>>`. For a block whose f64 tangents lose too much, such
+    /// as one with near-null directions an f64 Jacobian blurs, at the cost of a double-double evaluation per column.
+    pub fn jacobian_f64_by<T: Lane>(
+        &self,
+        z: &[&[f64]],
+        par: bool,
+        lanes: impl Fn(usize) -> BlockLanes,
+    ) -> Result<(Vec<f64>, usize), String> {
+        assert!(
+            T::TAN_F64 && T::NT >= 1,
+            "jacobian_f64_by: a lane type with f64 tangents"
+        );
+        self.check_z::<Double>(z)?;
+        if !self.is_square() {
+            return Err(format!(
+                "jacobian_f64_by: {} rows for {} unknowns",
+                self.rows(),
+                self.len()
+            ));
+        }
+        let (l, m) = (self.len(), Self::M);
+        let ld = ld_for(l);
+        let kinds: Vec<BlockLanes> = (0..self.k() + 1).map(&lanes).collect();
+        // the evaluations: each block's tasks in task order, in groups of its lanes' tangents
+        let mut units: Vec<(BlockLanes, Vec<(usize, Seed)>)> = Vec::new();
+        for t in self.jac_tasks() {
+            let kind = kinds[t.0];
+            let cap = match kind {
+                BlockLanes::Lanes => T::NT,
+                BlockLanes::Dtn4 => 4,
+                BlockLanes::Double => 1,
+            };
+            match units.last_mut() {
+                Some((k, g)) if *k == kind && g.len() < cap && g[0].0 == t.0 => g.push(t),
+                _ => units.push((kind, vec![t])),
+            }
+        }
+        let g = self.globals::<Double>(z);
+        let prep = self.prep(z)?;
+        let as_dd = |c: Vec<Vec<f64>>| -> Vec<Vec<DD>> {
+            c.into_iter()
+                .map(|v| v.into_iter().map(DD::from_f64).collect())
+                .collect()
+        };
+        let one = |u: &(BlockLanes, Vec<(usize, Seed)>)| -> Vec<Vec<DD>> {
+            match u.0 {
+                BlockLanes::Lanes => as_dd(self.jac_columns_f64::<T>(z, &g, &prep, &u.1)),
+                BlockLanes::Dtn4 => as_dd(self.jac_columns_f64::<Dtn<4>>(z, &g, &prep, &u.1)),
+                BlockLanes::Double => vec![self.jac_column::<Double>(z, &g, &prep, u.1[0])],
+            }
+        };
+        let cols: Vec<Vec<DD>> = if par {
+            units.par_iter().map(one).collect::<Vec<_>>()
+        } else {
+            units.iter().map(one).collect()
+        }
+        .into_iter()
+        .flatten()
+        .collect();
+        let tasks = units.iter().flat_map(|u| u.1.iter().copied());
+        let mut c = vec![0.0; ld * l];
+        // the double-double columns of the `Double` blocks, by block and unknown, each over its block's NF M rows
+        let mut dd_cols: HashMap<(usize, usize), Vec<DD>> = HashMap::new();
+        for ((b, seed), col) in tasks.zip(&cols) {
+            let r0 = self.row_block(b);
+            for (jj, cj) in self.seed_columns(b, seed).into_iter().enumerate() {
+                if self.dropped(cj) {
+                    continue;
+                }
+                let rows = Self::task_rows(seed, jj);
+                for &r in &rows {
+                    c[cj * ld + r0 + r] = col[r].hi;
+                }
+                if kinds[b] == BlockLanes::Double {
+                    let mut v = vec![DD::ZERO; E::NF * m];
+                    for &r in &rows {
+                        v[r] = col[r];
+                    }
+                    dd_cols.insert((b, cj), v);
+                }
+            }
+        }
+        for b in 0..self.k() + 1 {
+            let (t, r0) = (self.block_target(b), self.row_block(b));
+            for r in 0..E::NF * m {
+                c[(t + r) * ld + r0 + r] -= 1.0;
+            }
+            self.project_f64_block(b, &mut c, ld, r0, l, Some, |j| dd_cols.get(&(b, j)).map(Vec::as_slice))?;
         }
         let re = self.row_extra();
         for (r, row) in self.extra.iter().enumerate() {
