@@ -107,7 +107,7 @@ fn mobius_errors<T: Probe>(mb: &Mobius, order: usize) -> Vec<f64> {
             let (n, sigma, tau) = if p == 0 { (0, 0.0, 0.0) } else { tp[p - 1] };
             // a jet's coefficient p is order p along the seeds of coefficient 1
             let reference: Vec<OD> = (0..8)
-                .map(|j| closed(mb.wl, j, n, OD::from_f64(sigma), OD::from_f64(tau)))
+                .map(|j| closed(mb.wl(), j, n, OD::from_f64(sigma), OD::from_f64(tau)))
                 .collect();
             rel_err(&T::get(&s, p), &reference)
         })
@@ -182,6 +182,12 @@ fn coefficient_sizes(mb: &Mobius) -> (f64, f64) {
     (big, f[ORDER].val().amax())
 }
 
+/// the pass criterion of `affine_series_diverges_where_mobius_converges` on the affine series' last coefficient and
+/// the Moebius series' largest and last (NaN fails)
+fn sizes_pass(af_last: f64, mb_big: f64, mb_last: f64) -> bool {
+    af_last > 1e30 && mb_big <= 1.0 && mb_last < 1e-120
+}
+
 /// The same series in the affine variable (a = 0, t = 1 - w): at w_l = 5/2 its coefficients grow like 1.5^k, where the
 /// Moebius variable's stay at most f_0 = 1 and fall to below 1e-120 by order 360. Pass: the affine series' last
 /// coefficient above 1e30, the Moebius series' largest at most 1 and its last below 1e-120.
@@ -190,7 +196,51 @@ fn affine_series_diverges_where_mobius_converges() {
     let (mb_big, mb_last) = coefficient_sizes(&variable());
     let (af_big, af_last) = coefficient_sizes(&Mobius::new(0.0, OD::from_f64(WL)));
     println!("max |f_k|, |f_360|: Moebius {mb_big:.3e}, {mb_last:.3e}; affine {af_big:.3e}, {af_last:.3e}");
-    assert!(af_last > 1e30 && mb_big <= 1.0 && mb_last < 1e-120);
+    assert!(sizes_pass(af_last, mb_big, mb_last));
+}
+
+/// The controls of `affine_series_diverges_where_mobius_converges`: the criterion must reject each of its inputs
+/// taken from the other variable, the Moebius tail in place of the affine one, the affine maximum in place of the
+/// Moebius one, and the affine tail in place of the Moebius one, and a NaN in any of them.
+#[test]
+fn affine_series_control_swapped_sizes_fail() {
+    let (mb_big, mb_last) = coefficient_sizes(&variable());
+    let (af_big, af_last) = coefficient_sizes(&Mobius::new(0.0, OD::from_f64(WL)));
+    assert!(
+        !sizes_pass(mb_last, mb_big, mb_last),
+        "control did not fire: affine tail"
+    );
+    assert!(
+        !sizes_pass(af_last, af_big, mb_last),
+        "control did not fire: Moebius maximum"
+    );
+    assert!(
+        !sizes_pass(af_last, mb_big, af_last),
+        "control did not fire: Moebius tail"
+    );
+    let nan = f64::NAN;
+    assert!(
+        !sizes_pass(nan, mb_big, mb_last) && !sizes_pass(af_last, nan, mb_last) && !sizes_pass(af_last, mb_big, nan),
+        "control did not fire: NaN"
+    );
+}
+
+/// The pole of the convergence condition's example (README, `mobius` module): with a = 1 and w_l = 1/4, w = 2 maps to
+/// tau = -5/9, inside the unit disc, while a = 0 maps it to -4/3, outside. Pass: both to 1e-120. The control is the
+/// other variable's value, which must miss.
+#[test]
+fn tau_maps_the_documented_pole() {
+    let w = OD::from_f64(2.0);
+    let frac = |n: f64, d: f64| OD::from_f64(n) / OD::from_f64(d);
+    let m1 = Mobius::new(1.0, OD::from_f64(0.25)).tau(w);
+    let m0 = Mobius::new(0.0, OD::from_f64(0.25)).tau(w);
+    let e = |a: OD, b: OD| (a - b).to_f64().abs();
+    println!("tau(2): a = 1 {:.6}, a = 0 {:.6}", m1.to_f64(), m0.to_f64());
+    assert!(e(m1, frac(-5.0, 9.0)) < 1e-120 && e(m0, frac(-4.0, 3.0)) < 1e-120);
+    assert!(
+        e(m1, frac(-4.0, 3.0)) > 0.1 && e(m0, frac(-5.0, 9.0)) > 0.1,
+        "control did not fire"
+    );
 }
 
 /// mul_w's recurrence against the Cauchy product with w's coefficients (`w_coef`) on the series' coefficients, in
