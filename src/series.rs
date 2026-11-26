@@ -57,16 +57,17 @@ impl Default for Refine {
 }
 
 /// The factors of L = omega D + diag kappa on the M = 8 B points at the double-double values, the preconditioner of
-/// the lane solves ([`PeriodicLu::solve`]), with those of the tangents' systems at a mode matrix's rate.
+/// the lane solves ([`PeriodicLu::solve`]), with those of the tangents' systems at a mode matrix's rate. The rate and
+/// the factors are fixed together: another rate takes a new factorization ([`PeriodicLu::factor_rate`]).
 #[derive(Clone)]
 pub struct PeriodicLu {
     /// L at the values, M x M
-    pub lu: DDLu,
+    lu: DDLu,
     /// L + re(lambda), the tangents' matrix at a real rate (`None` at rate zero and at a complex rate)
-    pub lu_t: Option<DDLu>,
+    lu_t: Option<DDLu>,
     /// [[L + re, -im], [im, L + re]] on (f_re, f_im), the complex tangents' matrix at a complex rate, 2M x 2M
-    pub lu_c: Option<DDLu>,
-    pub rate: Rate,
+    lu_c: Option<DDLu>,
+    rate: Rate,
     pub refine: Refine,
     #[cfg(feature = "mutate")]
     control: Control,
@@ -202,6 +203,26 @@ impl PeriodicLu {
         Base::new(d, omega).lu(kappa, rate)
     }
 
+    /// the factors of L at the values
+    pub fn lu(&self) -> &DDLu {
+        &self.lu
+    }
+
+    /// the factors of L + re(lambda) at a real rate, `None` at rate zero and at a complex rate
+    pub fn lu_t(&self) -> Option<&DDLu> {
+        self.lu_t.as_ref()
+    }
+
+    /// the factors of the 2M x 2M real form at a complex rate, `None` otherwise
+    pub fn lu_c(&self) -> Option<&DDLu> {
+        self.lu_c.as_ref()
+    }
+
+    /// the rate the factors were formed at
+    pub fn rate(&self) -> Rate {
+        self.rate
+    }
+
     /// Sets the deliberate error of the solves ([`Control::PeriodicCoupling`], [`Control::RateUnshifted`],
     /// [`Control::RateResidual`]; `Control::None` to clear it), for a control.
     #[cfg(feature = "mutate")]
@@ -257,7 +278,8 @@ impl PeriodicLu {
     /// The values' solve reads only the leading two parts of omega and kappa through the factors, so a lane whose
     /// omega or kappa differs from the factored ones by more than the double-double rounding needs the refinement's
     /// steps to absorb it: the quad- and octo-double lanes refine, the double-double lanes take the factored matrix as
-    /// theirs. A jet or an f64 lane at a nonzero rate panics (`Rate::shift` admits neither).
+    /// theirs. A jet or an f64 lane at a nonzero rate panics (`Rate::shift` admits neither), and so does a tangent
+    /// lane other than `Dc` at a complex rate, which its tangent cannot carry.
     pub fn solve<T: Lane, const B: usize>(&self, d: &DMat<B>, omega: T, kappa: &Fl<T, B>, rhs: &Fl<T, B>) -> Fl<T, B> {
         let lu = &self.lu;
         let lu_t = match &self.lu_t {
@@ -322,6 +344,7 @@ impl PeriodicLu {
             });
         }
         if T::VAL_F64 || T::TAN_F64 {
+            assert!(self.rate.is_zero(), "PeriodicLu::solve: an f64 lane at a nonzero rate");
             // f64 values by the factors' hi parts, double-double values (Dtn) by the factors; f64 tangents by the
             // hi parts, each tangent's differentiated system
             let fv = if T::VAL_F64 {
@@ -354,6 +377,10 @@ impl PeriodicLu {
             if let Some(f) = self.solve_dc(d, lu_t, omega, kappa, rhs, coupled) {
                 return f;
             }
+            assert!(
+                self.rate.im.hi == 0.0,
+                "PeriodicLu::solve: a complex rate needs complex tangents (Dc)"
+            );
         }
         let fv = lu.solve_lanes(&rhs.val());
         if !T::TANGENT {
