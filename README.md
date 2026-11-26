@@ -32,7 +32,7 @@ residual's max |F|.
 |---|---|
 | `Equations<B>` | the problem's sizes, the Taylor recursion of its right-hand side, and the maps from endpoint data to the end nodes' states |
 | `Equations::taylor_coeffs` | Taylor coefficients 1..=kt of every field about x0, from order 0 |
-| `Equations::left_state`, `right_state` | the state at the first or last node: boundary conditions at a regular end, a series summed to the node at a singular one |
+| `Equations::left_state`, `right_state` | the state at the first or last node: boundary conditions at a regular end, a series summed to the node at a singular one ([Singular ends](#singular-ends)) |
 | `Equations::prepare`, `try_prepare` | what the endpoint maps need once per evaluation, such as a series' coefficient table; errors return through `try_prepare` |
 | `Equations::prepare_rate`, `try_prepare_rate` | the same for a mode-matrix evaluation |
 | `Equations::taylor_coeffs_at`, `left_state_at`, `right_state_at` | the same maps for order k in the parameter, from the orders kept; by default they form every order |
