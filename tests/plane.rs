@@ -609,6 +609,9 @@ fn report(name: &str, lane: &str, o: &Out) {
     );
 }
 
+/// a case: its options in, its output out
+type Case = fn(Opts) -> Out;
+
 /// whether the plane check, the log-volume check and the orthonormality of an output pass in the lane
 fn checks<T: Lane>(o: &Out) -> [bool; 3] {
     [
@@ -841,6 +844,48 @@ mod controls {
         all_cases::<T>(C::LogDrop, "LogDrop");
         cell::<T>("P1", p1::<T>, C::NoGram, "NoGram");
         cell::<T>("P2", p2::<T>, C::NoGram, "NoGram");
+    }
+
+    /// RESULT, not a check: skipping one orthonormalization (after the first step, the middle one and the second to
+    /// last) on every case and lane. In exact arithmetic it changes neither the plane nor the log-volume. Recorded
+    /// outcome (README amendment A1): the errors stay at the baseline's on P1 and P2 in every lane and on P3 in f64 and
+    /// dd (dd within 7% of the bar at the first step), and exceed the bar on P3 in qd by roundoff scaled with the
+    /// condition number of the unnormalized product (cond P = 96), not by the growth spread, which is 1.2 to 6.7
+    /// against ln(1/eps) of 36.7, 73.5 and 147 over one planned step. Nothing is asserted but that the stepper runs.
+    fn skip_one<T: Lane>() {
+        let cases: [(&str, Case); 3] = [("P1", p1::<T>), ("P2", p2::<T>), ("P3", p3::<T>)];
+        for (case, f) in cases {
+            let base = f(Opts::new());
+            for i in [0, base.steps / 2, base.steps - 2] {
+                let o = f(Opts::control(C::SkipQr(i, 1)));
+                let c = checks::<T>(&o);
+                println!(
+                    "skip one after step {i} of {} on {case} {}: plane {:.3e}, ln_vol error {:.3e} (baseline {:.3e}, bar {:.3e}) -> {}",
+                    base.steps,
+                    T::NAME,
+                    o.plane,
+                    o.ln_err,
+                    base.ln_err,
+                    o.ln_bar,
+                    if c[0] && c[1] { "within the bars" } else { "past a bar" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn skip_one_f64() {
+        skip_one::<f64>();
+    }
+
+    #[test]
+    fn skip_one_dd() {
+        skip_one::<DD>();
+    }
+
+    #[test]
+    fn skip_one_qd() {
+        skip_one::<QD>();
     }
 
     #[test]
