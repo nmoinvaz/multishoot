@@ -609,9 +609,6 @@ fn report(name: &str, lane: &str, o: &Out) {
     );
 }
 
-/// a case: its options in, its output out
-type Case = fn(Opts) -> Out;
-
 /// whether the plane check, the log-volume check and the orthonormality of an output pass in the lane
 fn checks<T: Lane>(o: &Out) -> [bool; 3] {
     [
@@ -820,6 +817,9 @@ fn extreme_scales_in_every_lane() {
 mod controls {
     use super::*;
     use multishoot::control::PlaneControl as C;
+
+    /// a case: its options in, its output out
+    type Case = fn(Opts) -> Out;
 
     /// the check fails, or the stepper refuses (columns that became dependent: a panic) and returns no plane
     fn cell<T: Lane>(case: &str, f: fn(Opts) -> Out, ctl: C, name: &str) {
