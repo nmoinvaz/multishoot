@@ -736,3 +736,62 @@ fn tangent_controls_fire() {
         assert!(planted > PLANTED, "control {c:?} did not move the series");
     }
 }
+
+/// The series of order n of `Branch`'s planted branch by multisolver's ANM (`anm::series`, which takes its orders
+/// from `jet_orders`), unrefined, with `Shooting::jet_tangent_from` set to `from`
+fn anm_series(sh: &mut Shooting<Branch<1>, 1>, z: &[Vec<f64>], n: usize, from: Option<usize>) -> Vec<Vec<DD>> {
+    sh.jet_tangent_from = from;
+    multisolver::anm::series::<Double, _>(sh, &parts(z), n, 0, true)
+        .unwrap()
+        .z
+}
+
+/// the number of coefficients whose bits differ between two series
+fn coefs_differ(a: &[Vec<DD>], b: &[Vec<DD>]) -> usize {
+    a.iter()
+        .flatten()
+        .zip(b.iter().flatten())
+        .filter(|(x, y)| x.hi.to_bits() != y.hi.to_bits() || x.lo.to_bits() != y.lo.to_bits())
+        .count()
+}
+
+/// Pass, written before the first run: through `jet_orders`, the ANM's series of order 12 with `jet_tangent_from` 1
+/// is the planted branch within 1e-24, as is the default's, and its bits differ from the default's in some
+/// coefficient, so the setting reaches the session; with `jet_tangent_from` None it is the default's bit for bit.
+#[test]
+fn anm_takes_the_tangent_update_through_jet_orders() {
+    let n = 12;
+    let (mut sh, z, want) = branch_solved::<Double>(n);
+    let plain = anm_series(&mut sh, &z, n, None);
+    let moved = anm_series(&mut sh, &z, n, Some(1));
+    let again = anm_series(&mut sh, &z, n, None);
+    let (ep, em) = (
+        planted_error::<Double>(&plain[1..], &want),
+        planted_error::<Double>(&moved[1..], &want),
+    );
+    let (differ, same) = (coefs_differ(&plain, &moved), coefs_differ(&plain, &again));
+    println!(
+        "ANM through jet_orders: planted error {ep:.3e} formed again, {em:.3e} moved; {differ} coefficients differ"
+    );
+    assert!(ep <= PLANTED && em <= PLANTED, "{ep:e} {em:e}");
+    assert!(differ > 0, "the tangent update did not reach the ANM's session");
+    assert_eq!(same, 0);
+}
+
+/// The control of `anm_takes_the_tangent_update_through_jet_orders` (feature `mutate`): the tangent update without
+/// the series the equations keep (`Control::JetTangentKeep`) must take the ANM's series off the planted one with
+/// `jet_tangent_from` 1, and must leave it as it was without (no update is made then).
+#[cfg(feature = "mutate")]
+#[test]
+fn anm_tangent_control_fires() {
+    use multishoot::control::Control;
+    let n = 12;
+    let (mut sh, z, want) = branch_solved::<Double>(n);
+    let plain = anm_series(&mut sh, &z, n, None);
+    sh.set_control(Control::JetTangentKeep);
+    let moved = planted_error::<Double>(&anm_series(&mut sh, &z, n, Some(1))[1..], &want);
+    let unmoved = coefs_differ(&plain, &anm_series(&mut sh, &z, n, None));
+    println!("control JetTangentKeep through the ANM: planted error {moved:.3e}; without the update {unmoved} differ");
+    assert!(moved > PLANTED, "control did not fire: {moved:e}");
+    assert_eq!(unmoved, 0);
+}

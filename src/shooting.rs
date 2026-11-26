@@ -58,6 +58,10 @@ pub struct Shooting<E: Equations<B>, const B: usize> {
     pub row_scale: Vec<f64>,
     /// projected rows (`Shooting::project_rows`, [`crate::projected`]), at most one per field of a block
     pub projected: Vec<crate::projected::ProjectedRows>,
+    /// The first order that the sessions of `jet_orders` (multisolver's `ResidualJet::jet_orders`, which the series
+    /// of a branch takes) move by its tangent rather than form again ([`crate::jet::JetSession::tangent_from`]).
+    /// None, the default, forms every order again, with `residual_jet`'s bits.
+    pub jet_tangent_from: Option<usize>,
     #[cfg(feature = "mutate")]
     pub(crate) control: crate::control::Control,
 }
@@ -85,6 +89,7 @@ impl<E: Equations<B>, const B: usize> Shooting<E, B> {
             extra: Vec::new(),
             row_scale: Vec::new(),
             projected: Vec::new(),
+            jet_tangent_from: None,
             #[cfg(feature = "mutate")]
             control: crate::control::Control::None,
         }
@@ -377,6 +382,15 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> Jvp<P> for Shooting<
     }
 }
 
+impl<E: Equations<B>, const B: usize> Shooting<E, B> {
+    /// the session of `jet_orders` on `P::J<N>` lanes, with the tangent update from `jet_tangent_from`
+    fn orders_session<'a, P: Precision<Native>, const N: usize>(&'a self) -> Box<dyn JetOrders<P> + 'a> {
+        let mut s = self.jet_session::<P, N>();
+        s.tangent_from(self.jet_tangent_from);
+        Box::new(s)
+    }
+}
+
 /// The residual's series in the equations' parameter ([`Shooting::residual_jet`]) on jet lanes of 8, 16 or 32
 /// coefficients, the smallest that holds the orders asked for and the coefficient vectors given: each size is one
 /// instance of the residual's code, and a jet's products cost about the square of its size.
@@ -394,7 +408,9 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> ResidualJet<P> for S
 
     /// A [`crate::jet::JetSession`] on jets of 8, 16 or 32 coefficients, the smallest that holds orders 0..=order,
     /// when the equations form one order from the kept ones (`Equations::ORDER_BY_ORDER`); otherwise multisolver's
-    /// `Recompute`, each order by `residual_jet`. Both give `residual_jet`'s bits.
+    /// `Recompute`, each order by `residual_jet`. Both give `residual_jet`'s bits, unless
+    /// [`Shooting::jet_tangent_from`] is set: the session then moves the orders from it on by their tangents, which
+    /// agree with `residual_jet`'s to rounding. `Recompute` does not read it.
     fn jet_orders<'a>(&'a self, order: usize) -> Result<Box<dyn JetOrders<P> + 'a>, String>
     where
         P: 'a,
@@ -403,9 +419,9 @@ impl<E: Equations<B>, const B: usize, P: Precision<Native>> ResidualJet<P> for S
             return Ok(Box::new(Recompute::new(self)));
         }
         match order + 1 {
-            0..=8 => Ok(Box::new(self.jet_session::<P, 8>())),
-            9..=16 => Ok(Box::new(self.jet_session::<P, 16>())),
-            17..=32 => Ok(Box::new(self.jet_session::<P, 32>())),
+            0..=8 => Ok(self.orders_session::<P, 8>()),
+            9..=16 => Ok(self.orders_session::<P, 16>()),
+            17..=32 => Ok(self.orders_session::<P, 32>()),
             n => Err(format!("jet_orders: at most 32 orders, not {n}")),
         }
     }
