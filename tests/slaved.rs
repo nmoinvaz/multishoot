@@ -52,8 +52,8 @@ fn kappa<T: Lane>(d: &DMat<B>, e: &Fl<T, B>, omega: T) -> Fl<T, B> {
 }
 
 /// the factors of every order, L_k = omega D + diag(kappa + k), at the double-double omega; `shift` takes order k's
-/// factors from order k - shift (the control of the wrong order)
-fn factors(d: &DMat<B>, omega: DD, shift: usize) -> Vec<PeriodicLu> {
+/// factors from order k - shift (the control of the wrong order). A failed factorization is the error of its order.
+fn factors(d: &DMat<B>, omega: DD, shift: usize) -> Result<Vec<PeriodicLu>, String> {
     let e = Fl::<DV, B>::cst(&e_field());
     let kv = kappa::<DV>(d, &e, DV::splat(omega));
     series_lus(
@@ -68,7 +68,6 @@ fn factors(d: &DMat<B>, omega: DD, shift: usize) -> Vec<PeriodicLu> {
         Rate::ZERO,
         true,
     )
-    .unwrap()
 }
 
 /// the series' orders (u_k, v_k), k = 0..=ORDER, in the lane from v_0 and omega: v_k by the recursion, then u_k by
@@ -134,7 +133,7 @@ fn slaved_errors<T: Probe>(refine: Refine, shift: usize, setup: &dyn Fn(&mut Per
     let v0 = T::make(&e, &seed(1.0, &e));
     let three = Fl::<T, B>::splat(DD::from_f64(3.0));
     let omega = (T::make(&Fl::splat(DD::from_f64(1.3)), &seed(0.0, &Fl::splat(DD::from_f64(3.0)))) / three).0[0];
-    let mut lus = factors(&d, omega.val().lane(0), shift);
+    let mut lus = factors(&d, omega.val().lane(0), shift).unwrap();
     for lu in lus.iter_mut() {
         lu.refine = refine;
         setup(lu);
@@ -264,7 +263,7 @@ fn slaved_hash<T: Probe>(h: &mut common::Fnv, ulps: u64) {
     let omega = (T::make(&Fl::splat(DD::from_f64(w)), &vec![Fl::splat(DD::ONE); np])
         / Fl::<T, B>::splat(DD::from_f64(3.0)))
     .0[0];
-    let lus = factors(&d, omega.val().lane(0), 0);
+    let lus = factors(&d, omega.val().lane(0), 0).unwrap();
     let (u, v) = series(&lus, &d, omega, &v0);
     let x = DD::from_f64(0.5);
     common::probe::hash_parts(h, &horner(&u, x));
@@ -367,7 +366,7 @@ impl Equations<B> for Slaved {
     fn try_prepare(&self, zh: &[f64], zl: &[f64]) -> Result<Vec<PeriodicLu>, String> {
         let og = zh.len() - 1;
         #[allow(unused_mut)]
-        let mut lus = factors(&self.d, DD::new(zh[og], zl[og]), self.shift);
+        let mut lus = factors(&self.d, DD::new(zh[og], zl[og]), self.shift)?;
         #[cfg(feature = "mutate")]
         if self.uncoupled {
             lus.iter_mut()
@@ -483,6 +482,24 @@ fn slaved_bvp_converges_to_its_closed_form() {
     assert!(r.0 && r.1 < 1e-60 && r.2 < 1e-27, "{r:?}");
 }
 
+/// A failed factorization reaches the caller as the residual's error: omega = NaN makes the factors fail, and the
+/// residual returns the error of order 0 where the same layout at omega* returns its rows. The check fails if the
+/// preparation panics or the error is lost.
+#[test]
+fn slaved_residual_returns_the_factorization_error() {
+    let (sh, zs) = slaved_bvp(Slaved::new());
+    assert!(sh.residual::<Double>(&parts(&zs), true).is_ok());
+    let mut z = zs.clone();
+    z[0][sh.off_global()] = f64::NAN;
+    let r = sh.residual::<Double>(&parts(&z), true);
+    println!("residual at omega = NaN: {:?}", r.as_ref().err());
+    assert!(
+        matches!(&r, Err(e) if e.contains("series_lus: order 0")),
+        "{:?}",
+        r.err()
+    );
+}
+
 /// The control of `slaved_bvp_converges_to_its_closed_form`: with order k's factors from order k - 1 in the series the
 /// root must miss the closed form.
 #[test]
@@ -495,12 +512,17 @@ fn slaved_bvp_control_wrong_order_fails() {
 }
 
 /// The exact Jacobian's columns of the left data and of omega, which reach the series' tangent solves, against central
-/// differences of the residual at z* perturbed by 1e-2, h = 2^-30: (worst relative difference, its column)
-fn jacobian_vs_central(sh: &Shooting<Slaved, B>, zs: &[Vec<f64>]) -> (f64, usize) {
+/// differences of the residual at z* perturbed by 1e-2, h = 2^-30: (worst relative difference, its column). A column
+/// whose difference or scale is not finite is the worst, as infinity. `poison` puts a NaN in the Jacobian's column
+/// (its first entry) before the comparison, the control of that path.
+fn jacobian_vs_central(sh: &Shooting<Slaved, B>, zs: &[Vec<f64>], poison: Option<usize>) -> (f64, usize) {
     let z = perturbed(zs, 1e-2);
     let l = sh.len();
     let h = 2f64.powi(-30);
-    let (c, ld) = sh.jacobian::<Double>(&parts(&z), true).unwrap();
+    let (mut c, ld) = sh.jacobian::<Double>(&parts(&z), true).unwrap();
+    if let Some(j) = poison {
+        c[0][j * ld] = f64::NAN;
+    }
     let cols: Vec<usize> = (0..M).chain([sh.off_global()]).collect();
     let mut worst = (0.0f64, 0usize);
     for &j in &cols {
@@ -516,8 +538,12 @@ fn jacobian_vs_central(sh: &Shooting<Slaved, B>, zs: &[Vec<f64>]) -> (f64, usize
         let err = (0..l)
             .map(|i| (col[i] - (fp[i] - fm[i]) / DD::from_f64(2.0 * h)).hi.abs())
             .fold(0.0, nan_max);
-        if err / scale > worst.0 {
-            worst = (err / scale, j);
+        let r = err / scale;
+        if !r.is_finite() {
+            return (f64::INFINITY, j);
+        }
+        if r > worst.0 {
+            worst = (r, j);
         }
     }
     worst
@@ -529,9 +555,22 @@ fn jacobian_vs_central(sh: &Shooting<Slaved, B>, zs: &[Vec<f64>]) -> (f64, usize
 #[test]
 fn slaved_jacobian_matches_central_differences() {
     let (sh, zs) = slaved_bvp(Slaved::new());
-    let (worst, col) = jacobian_vs_central(&sh, &zs);
+    let (worst, col) = jacobian_vs_central(&sh, &zs, None);
     println!("Jacobian vs central differences: worst {worst:.3e} at column {col}");
     assert!(worst < 1e-13, "column {col}: {worst:e}");
+}
+
+/// The control of `slaved_jacobian_matches_central_differences`' finite check: a NaN in one entry of the first
+/// column, the others matching, must fail it at that column.
+#[test]
+fn slaved_jacobian_control_nan_fails() {
+    let (sh, zs) = slaved_bvp(Slaved::new());
+    let (worst, col) = jacobian_vs_central(&sh, &zs, Some(3));
+    println!("control, NaN in column 3: worst {worst:.3e} at column {col}");
+    assert!(
+        worst == f64::INFINITY && col == 3,
+        "control did not fire: {worst:e} at {col}"
+    );
 }
 
 /// The control of `slaved_jacobian_matches_central_differences` (feature `mutate`): with the periodic solves' coupling
@@ -542,7 +581,7 @@ fn slaved_jacobian_control_uncoupled_fails() {
     let mut eq = Slaved::new();
     eq.uncoupled = true;
     let (sh, zs) = slaved_bvp(eq);
-    let (worst, col) = jacobian_vs_central(&sh, &zs);
+    let (worst, col) = jacobian_vs_central(&sh, &zs, None);
     println!("control, coupling dropped: worst {worst:.3e} at column {col}");
     assert!(
         worst >= 1e-13 && col == sh.off_global(),
