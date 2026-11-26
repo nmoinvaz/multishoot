@@ -254,6 +254,63 @@ fn slaved_series_controls_fail() {
     assert!(w.iter().all(|x| !x.1), "wrong order: control did not fire");
 }
 
+/// the slaved series' sums at x = 1/2 of one lane type (`slaved_errors`'s inputs, omega's value moved by `ulps` ulps
+/// of its leading part) into the hash
+fn slaved_hash<T: Probe>(h: &mut common::Fnv, ulps: u64) {
+    let d = dmat::<B>(Parity::Even);
+    let e = e_field();
+    let np = T::parts().len();
+    let v0 = T::make(&e, &vec![e; np]);
+    let w = f64::from_bits(1.3f64.to_bits() + ulps);
+    let omega = (T::make(&Fl::splat(DD::from_f64(w)), &vec![Fl::splat(DD::ONE); np])
+        / Fl::<T, B>::splat(DD::from_f64(3.0)))
+    .0[0];
+    let lus = factors(&d, omega.val().lane(0), 0);
+    let (u, v) = series(&lus, &d, omega, &v0);
+    let x = DD::from_f64(0.5);
+    common::probe::hash_parts(h, &horner(&u, x));
+    common::probe::hash_parts(h, &horner(&v, x));
+}
+
+/// the hash of the slaved series' sums over the lane types
+fn slaved_hashes(ulps: u64) -> u64 {
+    let mut h = common::Fnv::new();
+    slaved_hash::<DV>(&mut h, ulps);
+    slaved_hash::<QV>(&mut h, ulps);
+    slaved_hash::<OV>(&mut h, ulps);
+    slaved_hash::<Du>(&mut h, ulps);
+    slaved_hash::<Qu>(&mut h, ulps);
+    slaved_hash::<Ou>(&mut h, ulps);
+    slaved_hash::<Dc>(&mut h, ulps);
+    slaved_hash::<Jet<4>>(&mut h, ulps);
+    slaved_hash::<QJet<4>>(&mut h, ulps);
+    slaved_hash::<OJet<4>>(&mut h, ulps);
+    slaved_hash::<Fu>(&mut h, ulps);
+    slaved_hash::<Dtn<2>>(&mut h, ulps);
+    h.0
+}
+
+/// the hash of `slaved_hashes(0)` on every backend
+const SLAVED_REFERENCE: u64 = 0xafd7689b8868507a;
+
+/// The slaved series' bytes (every part of both sums in twelve lane types) do not depend on multidouble's SIMD
+/// backend. Pass: the hash equals the reference, which CI checks on SSE2, AVX2, portable and NEON.
+#[test]
+fn slaved_bytes_match_reference() {
+    let h = slaved_hashes(0);
+    println!("slaved series hash {h:#018x}");
+    assert_eq!(
+        h, SLAVED_REFERENCE,
+        "the slaved series' bytes differ from the reference"
+    );
+}
+
+/// The control of `slaved_bytes_match_reference`: omega one ulp up must change the hash.
+#[test]
+fn slaved_bytes_control_one_ulp_differs() {
+    assert_ne!(slaved_hashes(1), slaved_hashes(0), "control did not fire");
+}
+
 /// The slaved model as a boundary-value problem on [1/4, 1]: the series at x = 0 summed at the first node, Taylor
 /// steps between the nodes, v given at x = 1. Unknowns: V (the left data), the nodes' (u, v), u(1) (the right data)
 /// and omega (a global, fixed by an extra row), so that the series' derivative in omega enters the Jacobian.

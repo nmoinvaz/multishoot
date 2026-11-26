@@ -416,7 +416,6 @@ impl PeriodicLu {
     /// j hold the orders solved before: r_j = rhs_j - sum_{i=1..j} (omega_i D + diag kappa_i) f_(j-i), then L f_j = r_j
     /// refined as `solve` refines each order, so that every coefficient is `solve`'s bit for bit. For a residual's
     /// series formed one order at a time (`Equations::ORDER_BY_ORDER`); jet lanes at rate zero only.
-    #[allow(clippy::too_many_arguments)]
     pub fn solve_at<T: Lane, const B: usize>(
         &self,
         d: &DMat<B>,

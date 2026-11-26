@@ -193,3 +193,12 @@ pub fn rel_err(a: &[OD], b: &[OD]) -> f64 {
         d / big
     }
 }
+
+/// every part of f at every point into the hash: the eight f64 components of each part's octo-double
+pub fn hash_parts<T: Probe, const B: usize>(h: &mut super::Fnv, f: &Fl<T, B>) {
+    for p in 0..=T::parts().len() {
+        for v in T::get(f, p) {
+            v.x.iter().for_each(|&x| h.f64(x));
+        }
+    }
+}
