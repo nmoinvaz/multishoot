@@ -9,9 +9,9 @@
 //! ```
 //!
 //! D the derivative of the field's parity sector on the M points ([`crate::periodic::dmat`]), omega a frequency, and
-//! kappa_k a field: the indicial term k times a field (x d/dx gives k) plus the field's own coefficient at order 0.
-//! r_k holds the orders below. The same system is a slaved field's order k when kappa depends on x: with
-//! kappa(x) = kappa_0 + sum_j kappa_j x^j, order k of (omega D + kappa(x)) f = r(x) is
+//! kappa_k the field that multiplies f_k: k from x d/dx, times that term's coefficient at x = 0, plus the field's own
+//! coefficient at x = 0. r_k holds the orders below. The same system is a slaved field's order k when kappa depends on
+//! x: with kappa(x) = kappa_0 + sum_j kappa_j x^j, order k of (omega D + kappa(x)) f = r(x) is
 //! L_0 f_k = r_k - sum_{j=1..k} kappa_j f_(k-j).
 //!
 //! The factors are formed once per evaluation from the double-double values ([`PeriodicLu::factor`],
@@ -219,19 +219,25 @@ impl PeriodicLu {
     /// `Control::PeriodicCoupling`)
     fn coupled(&self) -> bool {
         #[cfg(feature = "mutate")]
-        if self.is(Control::PeriodicCoupling) {
-            return false;
+        {
+            !self.is(Control::PeriodicCoupling)
         }
-        true
+        #[cfg(not(feature = "mutate"))]
+        {
+            true
+        }
     }
 
     /// whether the tangents are solved by the factors at rate zero (`Control::RateUnshifted`)
     fn unshifted(&self) -> bool {
         #[cfg(feature = "mutate")]
-        if self.is(Control::RateUnshifted) {
-            return true;
+        {
+            self.is(Control::RateUnshifted)
         }
-        false
+        #[cfg(not(feature = "mutate"))]
+        {
+            false
+        }
     }
 
     /// the rate of the refinement residual: the factors' own, zero under `Control::RateResidual`
