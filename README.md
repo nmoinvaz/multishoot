@@ -116,7 +116,7 @@ evaluations, so a Krylov solver needs no matrix.
 |---|---|
 | `Shooting::residual_jet::<P, N>` | the residual's coefficients in the equations' parameter on the jet state `sum_k z_k h^k`, on jets of N coefficients |
 | `Shooting::jet_session::<P, N>`, `jet::JetSession` | the same series one order at a time: `next` takes z_k and returns order k + 1 with z_(k+1) zero, and `order` reads an order formed |
-| `JetSession::tangent_from` | from a given order on, each order moved by its tangent once z_k is given, equal to `residual_jet`'s to rounding |
+| `JetSession::tangent_from`, `Shooting::jet_tangent_from` | from a given order on, each order moved by its tangent once z_k is given, equal to `residual_jet`'s to rounding; the field sets it for the sessions of `jet_orders`, which multisolver's series of a branch takes |
 
 Order 0 is the residual; with z_1 given, order 1 is J z_1 + dF/dparameter. A session keeps each block's state, its
 endpoint series and each step's work between orders. With the order-k methods an order costs about one evaluation at
@@ -184,7 +184,7 @@ that does:
 |---|---|---|
 | `Problem<P>` | `len`, `residual` and `jacobian` | Newton, chord, quasi-Newton (QNERR), Levenberg-Marquardt, Newton with weak directions removed, deflation of known roots |
 | `Jvp<P>` | `jvp`, J v without the Jacobian | the Krylov-refined Newton method |
-| `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
+| `ResidualJet<P>` | `residual_jet` on jets of 8, 16 or 32 coefficients, and `jet_orders`: a `JetSession` (with the tangent update from `jet_tangent_from`) when `ORDER_BY_ORDER` is set, else multisolver's `Recompute` | the asymptotic numerical method, the exact tangent predictor |
 | `Family<P>` | `residual_at`, `jacobian_at` and `dp_at` at any parameter, through `Shooting::in_global` (`InGlobal`) | pseudo-arclength continuation through folds, the fold's location |
 
 ![Shooting and its family view implement multisolver's traits, which its solvers run on](docs/figures/solvers.svg)
