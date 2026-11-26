@@ -188,8 +188,11 @@ for k in 0..=order {
 horner(&f, x)
 ```
 
-The Moebius variable keeps a singularity at w = 0 far from the node. With a > 0, a series about w = 1 converges in τ
-where its affine series in 1 - w does not, and the coefficients of a solution regular at w = 0, which the affine
+The Moebius variable keeps a singularity at w = 0 far from the node. The series about w = 1 converges at the node when
+every singularity of the solution, mapped by `Mobius::tau`, lies outside the unit disc in τ, which the caller checks:
+a > 0 does not ensure it, and the constructor's |a t_l| < 1 places only w = ∞ outside. With a = 1 and w_l = 1/4 a pole
+at w = 2 sits at τ = -5/9, inside, while the affine series in 1 - w converges there. Where the condition holds the
+series converges where the affine one need not, and the coefficients of a solution regular at w = 0, which the affine
 recurrence loses digits on as a minimal solution, stay of order one. Its constants are not exact in double-double, so
 they are `LaneConst`s: a double-double constant caps a quad- or octo-double lane at 2^-106.
 

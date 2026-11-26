@@ -11,10 +11,14 @@
 //! t = (1 - w) / (1 + a w),    tau = t / t_l,    t_l = (1 - w_l) / (1 + a w_l),
 //! ```
 //!
-//! keeps w = 1 at t = 0, puts the node at tau = 1, w = 0 at tau = 1 / t_l and w = infinity at tau = -1 / (a t_l). With
-//! a > 0 the half plane Re w > 0 lies inside |t| < 1 when a = 1, and a larger a moves w = 0 farther from the node in
-//! tau at the cost of bringing w = infinity nearer, so the series converges, and its coefficients stay of order one,
-//! where the affine one does not (a = 0 is the affine variable).
+//! keeps w = 1 at t = 0, puts the node at tau = 1, w = 0 at tau = 1 / t_l and w = infinity at tau = -1 / (a t_l). A
+//! larger a moves w = 0 farther from the node in tau at the cost of bringing w = infinity nearer (a = 0 is the affine
+//! variable). The series in tau converges at the node when every singularity of the solution, mapped by `tau`, lies
+//! outside the unit disc |tau| <= 1, and that is the caller's to check: a > 0 does not ensure it, nor does
+//! |a t_l| < 1, which places w = infinity alone. A pole at w = 2 with a = 1 and w_l = 1/4 sits at tau = -5/9, inside,
+//! where the affine series, of radius 1 about w = 1, converges at the node. Where the singularities lie outside it, the
+//! series converges where the affine one need not, and the coefficients of a solution regular at w = 0 stay of order
+//! one.
 //!
 //! In tau, w = (1 - t_l tau) / (1 + a t_l tau), and the derivatives are polynomials of degree two times d/dtau:
 //!
@@ -35,13 +39,14 @@ use crate::lane::{Lane, LaneConst};
 use multidouble::field::Fl;
 use multidouble::od::OD;
 
-/// The Moebius variable tau = t / t_l, t = (1 - w) / (1 + a w), of a series about w = 1 summed at w_l (tau = 1)
+/// The Moebius variable tau = t / t_l, t = (1 - w) / (1 + a w), of a series about w = 1 summed at w_l (tau = 1). Its
+/// constants follow from a and w_l when it is made, so another a or w_l takes a new variable.
 #[derive(Clone, Debug)]
 pub struct Mobius {
     /// the parameter a >= 0
-    pub a: f64,
+    a: f64,
     /// the node w_l, in octo-double
-    pub wl: OD,
+    wl: OD,
     t_l: LaneConst,
     /// a t_l, the products' recurrence coefficient
     at_l: LaneConst,
@@ -55,6 +60,8 @@ pub struct Mobius {
 impl Mobius {
     /// The variable with parameter a about w = 1, summed at w_l. Panics unless 1 + a w_l and 1 - w_l are nonzero
     /// and |a t_l| < 1, where w = infinity lies outside the unit disc in tau and the products' recurrence is stable.
+    /// The solution's other singularities, mapped by [`Mobius::tau`], must lie outside it for the series to converge
+    /// at the node.
     pub fn new(a: f64, wl: OD) -> Self {
         Self::build(a, wl, false, false, false)
     }
@@ -122,6 +129,16 @@ impl Mobius {
             wr: c(-atm),
             q,
         }
+    }
+
+    /// the parameter a
+    pub fn a(&self) -> f64 {
+        self.a
+    }
+
+    /// the node w_l
+    pub fn wl(&self) -> OD {
+        self.wl
     }
 
     /// t_l = (1 - w_l) / (1 + a w_l), the unit of tau
