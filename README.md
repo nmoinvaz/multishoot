@@ -173,11 +173,12 @@ precision reads its leading parts, so the projected rows are exact to the precis
 At a regular singular point x = 0, a field that the equations slave meets at order k the periodic system
 (ω D + diag κ_k) f_k = r_k: κ_k holds the indicial k and the field's own coefficient, r_k the orders below.
 The equations factor every order once per evaluation in `prepare`, from the state's double-double values, and solve
-each order in `left_state` or `right_state`, so one code serves the residual, the Jacobian, the jets and the mode
-matrix:
+each order in `left_state` or `right_state`, so one code serves the residual, the Jacobian and the jets. The snippet
+prepares at rate zero. A mode-matrix evaluation prepares through `Equations::try_prepare_rate` and passes the rate it
+receives to `series_lus`, whose factors then shift the tangents' solves.
 
 ```rust,ignore
-// prepare: the factors of every order at the state's omega
+// prepare, at rate zero: the factors of every order at the state's omega
 let kap = |k: usize| kappa_dd.iter().map(|&c| c + DD::from_f64(k as f64)).collect();
 let lus = series_lus(&d, omega_dd, order, kap, Rate::ZERO, true)?;
 // left_state, in the lane T: order k from the orders below, then the sum at the node
