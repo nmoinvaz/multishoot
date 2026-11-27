@@ -989,6 +989,25 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         }
     }
 
+    /// The crossing of the last accepted step when no `form` has looked at its end (the walk ended there): A0 at the end
+    /// state as it stands, with the jets about the end. The state is not projected and no step is taken.
+    fn check_end(&mut self) {
+        #[cfg(feature = "mutate")]
+        if matches!(
+            self.control,
+            ImplicitControl::NoEndCrossing | ImplicitControl::NoCrossing
+        ) {
+            return;
+        }
+        if self.checked || self.prev.is_none() {
+            return;
+        }
+        let kt = self.opts.plan.kt;
+        self.src.jets(self.x, kt, &mut self.jets);
+        let (_, _, a0) = self.eval(&self.y);
+        self.check_crossing(sign(a0.to_f64()));
+    }
+
     /// The zero of A0's series in the step before, between its start and its end (A0 changes sign there)
     fn locate_crossing(&mut self) -> Crossing<T> {
         let p = self.prev.clone().expect("a step before");
@@ -1156,7 +1175,8 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         })
     }
 
-    /// Walk to `x1`, landing on each checkpoint between on the way, until the end or a stop
+    /// Walk to `x1`, landing on each checkpoint between on the way, until the end or a stop. The end of the last step
+    /// is checked for a crossing too, whether the walk ended there or stopped on a guard, without projecting it.
     pub fn run(&mut self, x1: f64, cps: &[f64]) -> WalkOut<T> {
         let x0 = self.x;
         let dir = if x1 > x0 { 1.0 } else { -1.0 };
@@ -1196,6 +1216,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
                 }
             }
         }
+        self.check_end();
         WalkOut {
             x: self.x,
             y: self.y,
