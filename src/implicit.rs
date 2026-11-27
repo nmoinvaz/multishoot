@@ -12,8 +12,10 @@
 //! among the roots. [`Branch::Project`] makes one Newton correction of y'' at each step's start, [`Branch::Conserve`]
 //! none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there the walk reports: a step
 //! that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is [`Stop::Pivot`] with an
-//! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`], a double root
-//! that the branch passes with its analytic continuation intact (the zero of A0's series inside the step is located).
+//! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`]: the branch
+//! passes a root of N in y'' of even multiplicity (a double root generically, a quadruple one where four roots meet) with
+//! its analytic continuation intact, and the zero of A0's series inside the step is located. Only a sign change between
+//! two step starts is seen: a step that passes two zeros of A0 and ends with the sign it started with reports none.
 //!
 //! Near a double root of N in y'' use [`Branch::Project`]; `Conserve` turns the crossing into an avoided one (see [`Branch`]).
 //!
@@ -716,8 +718,10 @@ pub enum Stop {
     NotFormed,
 }
 
-/// A sign change of A0 between two step starts: the branch passes a double root of N in y''. `x` is the zero of A0's
-/// series inside the step (`located`), else the step's start.
+/// A sign change of A0 between two step starts: the branch passes a root of N in y'' of even multiplicity, as A0 has a zero
+/// of odd order there. `x` is the zero of A0's series inside the step (`located`), else the step's start. A step across
+/// two zeros of A0 changes no sign and has none.
+
 #[derive(Clone, Debug)]
 pub struct Crossing<T> {
     pub x: T,
@@ -753,6 +757,7 @@ pub struct WalkOut<T> {
     pub stop: Stop,
     /// the state on each checkpoint passed, with the step count
     pub cps: Vec<(f64, [T; 3], usize)>,
+    /// the sign changes of A0 between step starts, in order (a step across two zeros is not seen)
     pub crossings: Vec<Crossing<T>>,
     /// with [`Stop::Pivot`]: the estimate of the zero of A0 (none for any other stop, including a later run's)
     pub zero: Option<Zero<T>>,
