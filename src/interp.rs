@@ -14,7 +14,8 @@
 //! g(s) = s0 + atan2(L sin(s - s0), cos(s - s0)),   g'(s) = L / (cos^2(s - s0) + L^2 sin^2(s - s0)),
 //! ```
 //!
-//! the points are densest at theta = s0 and s0 + pi (g' = L there). Since g(s + pi) = g(s) + pi, the odd and even
+//! the spacing in theta is g' times the spacing in s, so L < 1 crowds the points about theta = s0 and s0 + pi (g' = L
+//! there) and L > 1 about s0 + pi/2 and s0 + 3pi/2 (g' = 1/L there). Since g(s + pi) = g(s) + pi, the odd and even
 //! fields keep their parities in s. A field on a mapped grid is a trigonometric polynomial in s, so moving it to
 //! another grid evaluates its interpolant in s at the targets' s = g^-1(theta). d/dtheta there is diag(1 / g'(s_i))
 //! times d/ds ([`dmat_mapped`]).
@@ -52,7 +53,7 @@ pub fn atan2_od(y: OD, x: OD) -> OD {
 }
 
 /// Boyd's periodic arctan map theta = g(s) of a grid uniform in s (the module's documentation): L = 1 is the identity,
-/// L > 1 crowds the points about theta = s0 and s0 + pi
+/// L < 1 crowds the points about theta = s0 and s0 + pi, L > 1 about s0 + pi/2 and s0 + 3pi/2
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ArctanMap {
     pub s0: f64,
