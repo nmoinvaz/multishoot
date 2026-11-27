@@ -1820,6 +1820,36 @@ fn overflow_coordinate<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::locate_crossing`, a bracket that did not converge): N = (1 - x)^3 y'' from the zero state at
+/// 0 to 2^100 in one forced step has A0 = (1 - x)^3, a triple zero at 1 that the step brackets. The crossing is reported and
+/// is either not located or located within 1e-3 of 1: 80 bisections of a bracket 2^100 long leave 2^20.
+fn located_far<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = PolyEq::new(&[((0, 0, 1), &[1, -3, 3, -1])]);
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], opts::<T>(Branch::Project, pow2(100)));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let stepped = w.form().is_ok() && w.advance(pow2(100), pow2(100)).is_ok();
+    let out = w.run(pow2(100), &[]);
+    let (located, err) = out
+        .crossings
+        .first()
+        .map_or((false, f64::NAN), |k| (k.located, (k.x.to_f64() - 1.0).abs()));
+    Check {
+        pass: stepped && out.stop == Stop::End && out.crossings.len() == 1 && (!located || err <= 1e-3),
+        detail: format!(
+            "{} {:?}: stop {:?}, {} crossings, located {}, {:.2e} from 1",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.crossings.len(),
+            located,
+            err
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1835,6 +1865,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, linear_pivot::<T>(Ctl::None), false);
     tally(&mut bad, quad_small_coeff::<T>(Ctl::None), false);
     tally(&mut bad, overflow_coordinate::<T>(Ctl::None), false);
+    tally(&mut bad, located_far::<T>(Ctl::None), false);
     finish(bad);
 }
 
