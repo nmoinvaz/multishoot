@@ -94,8 +94,8 @@ background has none. The caller supplies the series at any point; the module kno
 | Item | What it does |
 |---|---|
 | `table::SeriesSource` | the caller's F functions: their coefficients about any point, and the point up to which they hold (the end of the source's own piece) |
-| `table::Table::build`, `Opts` | the table of a path (either direction): each step is `fraction` of the width at which every stored series passes `t_k <= tail S` for its last `last` orders, at most the source's piece, the path's end or `hmax` |
-| `Table::shifted`, `find`, `headroom` | the jets of a function about any point of the path, shifted from the step that holds it by the exact difference in the lane; which step holds a point; the width left from a point |
+| `table::Table::build`, `Opts` | the table of a path (either direction): each step is `fraction` of the width at which every stored series passes `t_k <= tail S + atol` for its last `last` orders, at most the source's piece, the path's end or `hmax` |
+| `Table::shifted`, `find`, `headroom` | the jets of a function about any point of the path, shifted from the step that holds it by `x0 - start` formed in the lane (exact in `DD`, `QD` and `OD`, rounded in `f64` where the two points are not within a factor of 2 of each other); which step holds a point; the width left from a point |
 | `Table::bounds`, `width`, `series`, `map` | a step's ends and width, its stored coefficients, and the table in another scalar (built in `DD`, used in `f64`) |
 | `table::shift`, `TableJets` | the polynomial shift; the table as a `plane::JetSource` (function e is entry e of J) |
 
