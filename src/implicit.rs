@@ -723,7 +723,7 @@ pub struct WalkOut<T> {
     /// the state on each checkpoint passed, with the step count
     pub cps: Vec<(f64, [T; 3], usize)>,
     pub crossings: Vec<Crossing<T>>,
-    /// with [`Stop::Pivot`]: the estimate of the zero of A0
+    /// with [`Stop::Pivot`]: the estimate of the zero of A0 (none for any other stop, including a later run's)
     pub zero: Option<Zero<T>>,
     /// the largest `|N| / sum |terms|` at a step's start after the correction (before it for `Conserve`), the first step
     /// excluded: the start data's own residual is not the walk's
@@ -1225,6 +1225,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             }
         }
         self.check_end();
+        // the estimate belongs to the stop that made it: a later run that ends otherwise has none
+        #[cfg(feature = "mutate")]
+        let keep_zero = self.control == ImplicitControl::KeepZero;
+        #[cfg(not(feature = "mutate"))]
+        let keep_zero = false;
         WalkOut {
             x: self.x,
             y: self.y,
@@ -1232,7 +1237,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             stop,
             cps: cp,
             crossings: self.crossings.clone(),
-            zero: self.zero.clone(),
+            zero: if stop == Stop::Pivot || keep_zero {
+                self.zero.clone()
+            } else {
+                None
+            },
             n_rel_max: self.n_rel_max,
             n_rel_pre_max: self.n_rel_pre_max,
         }

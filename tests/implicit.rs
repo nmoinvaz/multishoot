@@ -1297,6 +1297,34 @@ fn dup_checkpoints<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::run`, the estimate of the zero): the fold F1 stops with `Stop::Pivot` and the estimate; a second
+/// `run` from where it stopped, to the same x, ends with `Stop::End` and no estimate.
+fn zero_only_pivot<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = PolyEq::f1();
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 1e-4;
+    let y0 = [T::one(), T::from_f64(-2.5), T::from_f64(3.75)];
+    let mut w = Walker::<T, _>::new(&eq, -1.0, y0, o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let first = w.run(1.0, &[]);
+    let again = w.run(w.x(), &[]);
+    Check {
+        pass: first.stop == Stop::Pivot && first.zero.is_some() && again.stop == Stop::End && again.zero.is_none(),
+        detail: format!(
+            "{} {:?}: first run {:?} with an estimate {}, second run {:?} with one {}",
+            T::NAME,
+            ctl,
+            first.stop,
+            first.zero.is_some(),
+            again.stop,
+            again.zero.is_some()
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1304,6 +1332,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, repeat_form::<T>(Ctl::None), false);
     tally(&mut bad, last_crossing::<T>(Ctl::None), false);
     tally(&mut bad, dup_checkpoints::<T>(Ctl::None), false);
+    tally(&mut bad, zero_only_pivot::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1423,7 +1452,8 @@ mod controls {
             | ImplicitControl::StaleSeries
             | ImplicitControl::RepeatCrossing
             | ImplicitControl::NoEndCrossing
-            | ImplicitControl::NoDedup => [false; 6],
+            | ImplicitControl::NoDedup
+            | ImplicitControl::KeepZero => [false; 6],
         }
     }
 
@@ -1490,6 +1520,7 @@ mod controls {
             (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
+            (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
         ]
     }
 
