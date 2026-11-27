@@ -6,7 +6,8 @@
 //! err = max_f |computed_f - exact_f| / max_f |exact_f| over (y, y', y'')):
 //!
 //! - `coeffs`: Q-A's series about x0 = 0.7, scaled by l = 1 and l = 1/4, against the Taylor coefficients of exp(x^2 / 2):
-//!   every c_k (y, y', y'') within bar, relative.
+//!   gated, sum_k |dc_k| <= bar sum_k |c_k| for each of y, y', y'' (the series summed at s = 1); observed and not gated
+//!   (NOT MET, README): every c_k within bar, relative, `coeffs_each`.
 //! - `closed_form`: nine branches, from x = 0 to 3, hmax 0.3, landing on 0.5, 1.5 and 3, in both branch modes: err <= bar
 //!   at each landing, the walk ends with `Stop::End`, and `n_rel_max` <= bar.
 //! - `crossings`: the sign changes of A0 equal the exact list in number and each is located within bar max(1, x):
@@ -288,6 +289,8 @@ enum Ctl {
     WrongForm,
     /// one computed coefficient of the series replaced by a NaN
     NanCoeff,
+    /// one coefficient of the series off by 10 bar of the series' size
+    BadCoeff,
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -520,8 +523,9 @@ fn planner<T: TestReal>() -> Check {
     }
 }
 
-/// Q-A's series about x0 = 0.7 against the Taylor coefficients of exp(x^2 / 2), in the variable (x - x0) / l
-fn coeffs<T: TestReal>(l: f64, ctl: Ctl) -> Check {
+/// Q-A's series about x0 = 0.7 in the variable s = (x - x0) / l, and the Taylor coefficients of exp(x^2 / 2) in the same
+/// variable: y, y', y'' by order
+fn coeffs_data<T: TestReal>(l: f64, ctl: Ctl) -> (Series<T>, [Vec<T>; 3]) {
     let eq = PolyEq::q();
     let kt = T::KT;
     let x0 = 0.7;
@@ -533,7 +537,7 @@ fn coeffs<T: TestReal>(l: f64, ctl: Ctl) -> Check {
     }
     let mut jets = Jets::<T>::new(eq.pat.len(), kt);
     eq.jets(x0, kt, &mut jets);
-    let s = rec.form(&jets, l, y0).clone();
+    let mut s = rec.form(&jets, l, y0).clone();
     // exp(x0^2/2) exp(x0 h) exp(h^2/2): a_k = e0 sum_(2i + j = k) x0^j / (j! 2^i i!)
     let n = kt + 3;
     let mut fact = vec![T::one(); n + 1];
@@ -553,27 +557,68 @@ fn coeffs<T: TestReal>(l: f64, ctl: Ctl) -> Check {
             e0 * t
         })
         .collect();
-    let b = bar::<T>();
+    let ex = [
+        (0..=kt).map(|k| a[k].mulf(l.powi(k as i32))).collect::<Vec<T>>(),
+        (0..=kt)
+            .map(|k| (a[k + 1] * T::from_f64((k + 1) as f64)).mulf(l.powi(k as i32)))
+            .collect(),
+        (0..=kt)
+            .map(|k| (a[k + 2] * T::from_f64(((k + 1) * (k + 2)) as f64)).mulf(l.powi(k as i32)))
+            .collect(),
+    ];
+    if ctl == Ctl::BadCoeff {
+        // an error of 10 bar of the series' size in one coefficient of y
+        let size: f64 = ex[0].iter().map(|e| e.to_f64().abs()).sum();
+        s.c[0][kt / 2] = s.c[0][kt / 2] + T::from_f64(10.0 * bar::<T>() * size);
+    }
+    (s, ex)
+}
+
+/// The gated criterion of `coeffs`: for each field, sum_k |dc_k| <= bar sum_k |c_k| (the series summed at s = 1, the step
+/// the scale l is for, with its terms' signs dropped): the accuracy a step uses, which `step_sum` measures on planned
+/// steps. The relative error of each c_k is `coeffs_each`'s observation.
+fn coeffs<T: TestReal>(l: f64, ctl: Ctl) -> Check {
+    let (s, ex) = coeffs_data::<T>(l, ctl);
     let mut worst = 0.0f64;
-    for k in 0..=kt {
-        let lk = l.powi(k as i32);
-        let ex = [
-            a[k].mulf(lk),
-            (a[k + 1] * T::from_f64((k + 1) as f64)).mulf(lk),
-            (a[k + 2] * T::from_f64(((k + 1) * (k + 2)) as f64)).mulf(lk),
-        ];
-        for (cf, e) in s.c.iter().zip(ex.iter()) {
-            worst = worst.max(((cf[k] - *e) / *e).to_f64().abs());
+    for (cf, ef) in s.c.iter().zip(ex.iter()) {
+        let (mut num, mut den) = (0.0f64, 0.0f64);
+        for (c, e) in cf.iter().zip(ef.iter()) {
+            num += (*c - *e).to_f64().abs();
+            den += c.to_f64().abs();
         }
+        worst = nanmax(worst, num / (T::EPS * den));
     }
     Check {
-        pass: worst <= b,
+        pass: worst <= 1e6,
         detail: format!(
-            "{} Q-A l = {} {:?}: worst relative error of c_k, k <= {}: {:.2e} (bar {:.1e})",
+            "{} Q-A l = {} {:?}: worst sum|dc_k| / (eps sum|c_k|) {:.2e} (bar 1e6)",
             T::NAME,
             l,
             ctl,
-            kt,
+            worst
+        ),
+    }
+}
+
+/// An observation, not a gated check: Q-A's series against the Taylor coefficients of exp(x^2 / 2), the relative error of
+/// every c_k, met when the worst is within the bar. It is NOT MET in every lane (README, the coordinator's ruling): the
+/// relative error of c_k grows about threefold per order, as order k of N is a cancelling convolution.
+fn coeffs_each<T: TestReal>(l: f64) -> Check {
+    let (s, ex) = coeffs_data::<T>(l, Ctl::None);
+    let mut worst = 0.0f64;
+    for k in 0..=T::KT {
+        for (cf, ef) in s.c.iter().zip(ex.iter()) {
+            worst = worst.max(((cf[k] - ef[k]) / ef[k]).to_f64().abs());
+        }
+    }
+    let b = bar::<T>();
+    Check {
+        pass: worst <= b,
+        detail: format!(
+            "{} Q-A l = {}: observation, worst relative error of c_k, k <= {}: {:.2e} (bar {:.1e})",
+            T::NAME,
+            l,
+            T::KT,
             worst,
             b
         ),
@@ -851,9 +896,10 @@ fn fold_lane<T: TestReal>() {
 
 fn misc_lane<T: TestReal>() {
     let mut bad = Vec::new();
-    // `coeffs` as worded (relative error of every c_k) is NOT MET in every lane: recorded, not gated
     for l in [1.0, 0.25] {
-        tally(&mut bad, coeffs::<T>(l, Ctl::None), true);
+        tally(&mut bad, coeffs::<T>(l, Ctl::None), false);
+        // as worded (the relative error of every c_k) it is NOT MET in every lane: recorded, not gated
+        tally(&mut bad, coeffs_each::<T>(l), true);
     }
     tally(&mut bad, zero_pivot::<T>(Ctl::None), false);
     tally(&mut bad, planner::<T>(), false);
@@ -1266,9 +1312,21 @@ fn cut_fires<T: TestReal>() {
     }
 }
 
+/// the gated `coeffs` fails on a coefficient that is off by 10 bar of the series' size
+fn bad_coeff_fires<T: TestReal>() {
+    for l in [1.0, 0.25] {
+        let c = coeffs::<T>(l, Ctl::BadCoeff);
+        show(&c);
+        assert!(!c.pass, "control BadCoeff did not fire: {}", c.detail);
+    }
+}
+
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    bad_coeff_fires::<f64>();
+    bad_coeff_fires::<DD>();
+    bad_coeff_fires::<QD>();
     cut_fires::<f64>();
     cut_fires::<DD>();
     nan_coeff_fires::<f64>();
@@ -1413,6 +1471,22 @@ mod controls {
     #[test]
     fn edge_controls_qd() {
         edge_controls(&edge_rows::<QD>());
+    }
+
+    /// the gated `coeffs` fails on a recursion that skips order 3 of N
+    fn skip_order_fires<T: TestReal>() {
+        for l in [1.0, 0.25] {
+            let c = coeffs::<T>(l, Ctl::Lib(ImplicitControl::SkipOrder(3)));
+            show(&c);
+            assert!(!c.pass, "control SkipOrder did not fire: {}", c.detail);
+        }
+    }
+
+    #[test]
+    fn coeffs_controls() {
+        skip_order_fires::<f64>();
+        skip_order_fires::<DD>();
+        skip_order_fires::<QD>();
     }
 
     #[test]
