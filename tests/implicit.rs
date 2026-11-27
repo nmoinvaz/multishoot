@@ -1853,6 +1853,70 @@ fn located_far<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::locate_crossing`, an overflowing midpoint): N = (1 - 2^-1023 x) y'' from the zero state at 0 to
+/// 1.75 2^1023 in one forced step has A0 = 1 - 2^-1023 x, a simple zero at 2^1023 that the step brackets. The crossing is
+/// reported and is either not located or located at a finite x within 1e-3 of 2^1023 (relative): half the sum of two
+/// ends of the bracket overflows.
+fn midpoint_overflow<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[1.0, -pow2(-1023)])]);
+    let end = 1.75 * pow2(1023);
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], opts::<T>(Branch::Project, end));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let stepped = w.form().is_ok() && w.advance(end, end).is_ok();
+    let out = w.run(end, &[]);
+    let (located, x) = out
+        .crossings
+        .first()
+        .map_or((false, f64::NAN), |k| (k.located, k.x.to_f64()));
+    let err = (x / pow2(1023) - 1.0).abs();
+    Check {
+        pass: stepped && out.stop == Stop::End && out.crossings.len() == 1 && (!located || err <= 1e-3),
+        detail: format!(
+            "{} {:?}: stop {:?}, {} crossings, located {}, x = {:e} for 2^1023 = {:e}",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.crossings.len(),
+            located,
+            x,
+            pow2(1023)
+        ),
+    }
+}
+
+/// Pass (review of `Walker::locate_crossing`, a zero midpoint): N = (x - 2)^2 (3 - x) y'' from the zero state at 0 to 4 in
+/// one forced step has A0 = (x - 2)^2 (3 - x), positive up to 3 and negative after, with a tangent zero at 2 that the
+/// first midpoint hits exactly. The crossing is reported and is either not located or located within 1e-3 of 3.
+fn tangent_midpoint<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = PolyEq::new(&[((0, 0, 1), &[12, -16, 7, -1])]);
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let stepped = w.form().is_ok() && w.advance(4.0, 4.0).is_ok();
+    let out = w.run(4.0, &[]);
+    let (located, err) = out
+        .crossings
+        .first()
+        .map_or((false, f64::NAN), |k| (k.located, (k.x.to_f64() - 3.0).abs()));
+    Check {
+        pass: stepped && out.stop == Stop::End && out.crossings.len() == 1 && (!located || err <= 1e-3),
+        detail: format!(
+            "{} {:?}: stop {:?}, {} crossings, located {}, {:.2e} from 3",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.crossings.len(),
+            located,
+            err
+        ),
+    }
+}
+
 /// Pass (review of `Walker::estimate_zero`, an overflowing fallback): N = (2^1023 + x - 2^-1023 x^2) y'' from the zero state
 /// at 0 with `pivot_abs` `f64::MAX` stops with `Stop::Pivot` and the estimate rho = -2, beta = 1/3, x = -2^1023 / 3: twice
 /// 2^1023 is not an `f64`, though the product with 2^-1023 is.
@@ -1983,6 +2047,8 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, overflow_coordinate::<T>(Ctl::None), false);
     tally(&mut bad, located_far::<T>(Ctl::None), false);
     tally(&mut bad, two_samples::<T>(Ctl::None), false);
+    tally(&mut bad, midpoint_overflow::<T>(Ctl::None), false);
+    tally(&mut bad, tangent_midpoint::<T>(Ctl::None), false);
     tally(&mut bad, rho_fallback_overflow::<T>(Ctl::None), false);
     tally(&mut bad, zero_numerator_overflow::<T>(Ctl::None), false);
     finish(bad);
@@ -2217,7 +2283,10 @@ mod controls {
             | ImplicitControl::ScaledQuad
             | ImplicitControl::NoFiniteZero
             | ImplicitControl::DoubleFirst
-            | ImplicitControl::ProductFirst => [false; 6],
+            | ImplicitControl::ProductFirst
+            | ImplicitControl::OpenBracket
+            | ImplicitControl::ZeroMid
+            | ImplicitControl::SumMidpoint => [false; 6],
         }
     }
 
@@ -2300,6 +2369,13 @@ mod controls {
                 ImplicitControl::ProductFirst,
                 "zero_numerator_overflow",
                 zero_numerator_overflow::<T>,
+            ),
+            (ImplicitControl::OpenBracket, "located_far", located_far::<T>),
+            (ImplicitControl::ZeroMid, "tangent_midpoint", tangent_midpoint::<T>),
+            (
+                ImplicitControl::SumMidpoint,
+                "midpoint_overflow",
+                midpoint_overflow::<T>,
             ),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
