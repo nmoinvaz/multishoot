@@ -1502,6 +1502,54 @@ fn repeat_form<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::check_end`, a preview): on `last_crossing`'s walk, whose last step crosses the double root at
+/// 0, `run(1)` reports that crossing (located within the bar); the same walk resumed by `run(2)` reports it once, from
+/// the `form` that resumes it; and after a restart on the end state (`set_y` forgets the step before) `run(2)` reports
+/// none, as the end of the first run recorded nothing in the walk.
+fn end_preview<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = mirror_eq();
+    let new = || {
+        #[allow(unused_mut)]
+        let mut w = Walker::<T, _>::new(&eq, -1.0, mirror_state::<T>(-1.0), opts::<T>(Branch::Project, 4.0));
+        #[cfg(feature = "mutate")]
+        if let Ctl::Lib(c) = ctl {
+            w.set_control(c);
+        }
+        w
+    };
+    let at_zero = |k: &Crossing<T>| k.located && k.x.to_f64().abs() <= bar::<T>();
+    let mut w = new();
+    let first = w.run(1.0, &[]);
+    let resumed = w.run(2.0, &[]);
+    let mut r = new();
+    let end = r.run(1.0, &[]);
+    r.set_y(end.y);
+    let restarted = r.run(2.0, &[]);
+    let (n1, n2, n3) = (
+        first.crossings.len(),
+        resumed.crossings.len(),
+        restarted.crossings.len(),
+    );
+    Check {
+        pass: first.stop == Stop::End
+            && n1 == 1
+            && at_zero(&first.crossings[0])
+            && resumed.stop == Stop::End
+            && n2 == 1
+            && at_zero(&resumed.crossings[0])
+            && restarted.stop == Stop::End
+            && n3 == 0,
+        detail: format!(
+            "{} {:?}: {} crossings after run(1) (one expected), {} after it resumed to 2 (one), {} after a restart at 1 (none)",
+            T::NAME,
+            ctl,
+            n1,
+            n2,
+            n3
+        ),
+    }
+}
+
 /// Pass (review of `Walker::run`, the last step): the step of `repeat_form`'s walk from -1 to 1 is the last one. `run`
 /// ends with `Stop::End` in one step, to the state of the branch within the bar, and reports the crossing at 0 (located,
 /// within the bar), which no step start sees.
@@ -1732,6 +1780,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, dup_checkpoints::<T>(Ctl::None), false);
     tally(&mut bad, zero_only_pivot::<T>(Ctl::None), false);
     tally(&mut bad, shift_edges::<T>(Ctl::None), false);
+    tally(&mut bad, end_preview::<T>(Ctl::None), false);
     tally(&mut bad, shift_zero_point::<T>(Ctl::None), false);
     tally(&mut bad, end_pole::<T>(Ctl::None), false);
     tally(&mut bad, linear_pivot::<T>(Ctl::None), false);
@@ -1947,6 +1996,7 @@ mod controls {
             | ImplicitControl::StaleSeries
             | ImplicitControl::RepeatCrossing
             | ImplicitControl::NoEndCrossing
+            | ImplicitControl::RecordEnd
             | ImplicitControl::NoDedup
             | ImplicitControl::KeepZero
             | ImplicitControl::EmptyShift
@@ -2017,6 +2067,7 @@ mod controls {
             (ImplicitControl::StaleSeries, "stale", stale::<T>),
             (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
+            (ImplicitControl::RecordEnd, "end_preview", end_preview::<T>),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
             (ImplicitControl::EmptyShift, "shift_edges", shift_edges::<T>),
