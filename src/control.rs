@@ -75,3 +75,22 @@ pub enum Control {
     /// 2^-106 only
     MobiusConstDD,
 }
+
+/// A deliberate error in the implicit-ODE recursion or walk ([`crate::implicit`]), the controls of its planted checks
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImplicitControl {
+    /// none
+    None,
+    /// `y''_k` left zero at order k, so that order k of N is not imposed and N drifts
+    SkipOrder(usize),
+    /// 1/k and the reciprocal of A0 rounded to double-double
+    RecipDD,
+    /// A0 = 0 not tested before the division
+    NoPivotCheck,
+    /// the sign change of A0 between two step starts not looked for
+    NoCrossing,
+    /// the zero of A0 estimated with the exponent 1/2 fixed
+    ExponentHalf,
+    /// `pivot_abs` ignored
+    NoPivotStop,
+}
