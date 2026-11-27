@@ -8,15 +8,16 @@
 //! per step ([`Recursion`]). `y_k` and `y'_k` follow from `y'_(k-1)` and `y''_(k-1)`. Order 0 of N is not imposed, so N is
 //! constant along the flow and the data's `N = 0` carries through.
 //!
-//! The branch is chosen once, by the data (y, y', y'') at the start, and carried: no root is ever re-selected by its order
-//! among the roots. [`Branch::Project`] makes one Newton correction of y'' at each step's start, [`Branch::Conserve`]
-//! none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there the walk reports: a step
-//! that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is [`Stop::Pivot`] with an
-//! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`]: the walk
-//! steps over it and locates the zero of A0's series inside the step. A crossing says nothing of the multiplicity of the
-//! root of N in y'' there: for `N = z^3 - x z` on the branch `z = 0`, `A0 = -x` changes sign at `x = 0`. Only a sign
-//! change between two step starts is seen: a step that passes two zeros of A0 and ends with the sign it started with
-//! reports none.
+//! The branch is chosen once, by the data (y, y', y'') at the start, and carried: no root is ever re-selected by its
+//! order among the roots. [`Branch::Project`] makes one Newton correction of y'' at each step's start,
+//! [`Branch::Conserve`] none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there
+//! the walk reports: a step that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is
+//! [`Stop::Pivot`] with an estimate of the zero of A0 ([`Zero`], none where A0's series has no slope or the estimate is
+//! not finite), and a sign change of A0 between two step starts is a [`Crossing`]: the walk steps over it and, where
+//! A0's series in the step brackets a zero, locates it (`located`), else the crossing's `x` is the step's start and not
+//! a zero. A crossing says nothing of the multiplicity of the root of N in y'' there: for `N = z^3 - x z` on the branch
+//! `z = 0`, `A0 = -x` changes sign at `x = 0`. Only a sign change between two step starts is seen: a step that passes
+//! two zeros of A0 and ends with the sign it started with reports none.
 //!
 //! Near a double root of N in y'' use [`Branch::Project`]; `Conserve` turns the crossing into an avoided one (see [`Branch`]).
 //!
@@ -645,14 +646,16 @@ impl<T: Scalar> Recursion<T> {
 ///
 /// Which one near a double root of N in y'' (where the branch meets another root and `A0 = 0`): `Project`. `Conserve`
 /// keeps N at its start value, a rounding eps and not 0, and for N = eps a double root is two roots: the analytic
-/// branch becomes an avoided crossing (or a fold). A Taylor series about a point at distance d from the crossing then has
-/// radius about d, the planner's steps shrink toward it and the walk ends with [`Stop::Tiny`], or it follows the other
-/// branch. `Project` makes one Newton correction at each step's start, which brings N back to about roundoff when the
-/// state is near the branch, and then the double root stays a double root. It is one correction, not a projection onto
-/// N = 0 (for `N = y''^2 - 1` at `y'' = 2` it gives `y'' = 1.25`, where N is still 0.5625), and a residual that stays
-/// nonzero can still turn the crossing into an avoided one: it promises neither a zero of N nor a crossing.
-/// Where `|A0|` stays away from 0, both give the branch to roundoff; `Conserve` is then the cheaper (no evaluation of N
-/// per step) and its drift of N is bounded by the roundoff of the steps (`WalkOut::n_rel_max`).
+/// branch becomes an avoided crossing (or a fold). A Taylor series about a point at distance d from the crossing then
+/// has radius about d, the planner's steps shrink toward it and the walk ends with [`Stop::Tiny`], or it follows the
+/// other branch. `Project` makes one Newton correction at each step's start, which reduces the residual of N when the
+/// state is near the branch and so may let the walk cross. It is one correction, not a projection onto N = 0 (for
+/// `N = y''^2 - 1` at `y'' = 2` it gives `y'' = 1.25`, where N is still 0.5625), and a residual that stays nonzero, at
+/// roundoff too, can give an avoided crossing (for `N = z^2 - x^2` the level `N = eps > 0` has the branch
+/// `z = sqrt(x^2 + eps)`, which does not cross zero): it promises neither a zero of N nor a crossing. Where the start
+/// is on the branch to roundoff (N small against `A0`) and `|A0|` stays away from 0, both give the branch to roundoff;
+/// `Conserve` is then the cheaper (no evaluation of N per step) and its drift of N is bounded by the roundoff of the
+/// steps (`WalkOut::n_rel_max`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Branch {
     /// one Newton correction of y'': `y'' -= N / A0` at the values of the state
@@ -709,7 +712,7 @@ impl WalkOpts {
 pub enum Stop {
     /// reached the end of the interval
     End,
-    /// `|A0| <= pivot_abs` at a step's start: `WalkOut::zero` holds the estimate of the zero
+    /// `|A0| <= pivot_abs` at a step's start: `WalkOut::zero` holds the estimate of the zero, if there is one
     Pivot,
     /// `A0 = 0` at a step's start
     ZeroPivot,
@@ -726,7 +729,8 @@ pub enum Stop {
 
 /// A sign change of A0 between two step starts, with no claim of the multiplicity of the root of N in y'' there (for
 /// `N = z^3 - x z` on `z = 0`, `A0 = -x` changes sign at the triple root `x = 0`). `x` is the zero of A0's series
-/// inside the step (`located`), else the step's start. A step across two zeros of A0 changes no sign and has none.
+/// inside the step (`located`), else the step's start, which is not a zero. A step across two zeros of A0 changes no
+/// sign and has none.
 
 #[derive(Clone, Debug)]
 pub struct Crossing<T> {
@@ -735,9 +739,10 @@ pub struct Crossing<T> {
     pub located: bool,
 }
 
-/// An estimate of the zero of A0 from its first three Taylor coefficients: for `A0 ~ c |x* - x|^beta`,
-/// `beta = 1 / (1 - rho)` with `rho = A0 A0'' / A0'^2`, and `x* = x - beta A0 / A0'`. Exact for a pure power; an estimate
-/// otherwise, whose error is the departure of A0 from a power.
+/// An estimate of the zero of A0 from its first three Taylor coefficients: for `A0 ~ c |x* - x|^beta`, `beta = 1 / (1 -
+/// rho)` with `rho = A0 A0'' / A0'^2`, and `x* = x - beta A0 / A0'`. Exact for a pure power; an estimate otherwise,
+/// whose error is the departure of A0 from a power. None where A0's series has no slope (a constant pivot) or the
+/// estimate is not finite and positive in beta.
 #[derive(Clone, Debug)]
 pub struct Zero<T> {
     pub x: T,
@@ -765,7 +770,8 @@ pub struct WalkOut<T> {
     pub cps: Vec<(f64, [T; 3], usize)>,
     /// the sign changes of A0 between step starts, in order (a step across two zeros is not seen)
     pub crossings: Vec<Crossing<T>>,
-    /// with [`Stop::Pivot`]: the estimate of the zero of A0 (none for any other stop, including a later run's)
+    /// with [`Stop::Pivot`]: the estimate of the zero of A0, if there is one (none for any other stop, including a
+    /// later run's)
     pub zero: Option<Zero<T>>,
     /// the largest `|N| / sum |terms|` at a step's start after the correction (before it for `Conserve`), the first step
     /// excluded: the start data's own residual is not the walk's
