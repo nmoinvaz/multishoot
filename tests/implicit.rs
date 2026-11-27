@@ -297,6 +297,10 @@ enum Ctl {
     NanState,
     /// the planned step of `planner` with its last bit flipped, before the comparison
     FlipBit,
+    /// one coefficient of each lane of `lanes` off by 1e-20
+    LanePerturb,
+    /// one coefficient of each lane of `lanes` a NaN
+    NanLane,
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -1014,45 +1018,74 @@ fn coeff_vec<T: Scalar>(eq: &PolyEq, x0: f64, y0: [T; 3], kt: usize, l: f64) -> 
 }
 
 /// Pass: the recursion on `Fl<DV, 1>` and on the dual lane `Fl<Du, 1>` (value part) gives double-double's coefficients to
-/// 1e2 eps_dd, for Q-A and K-C from x0 = 0.7
-#[test]
-fn lanes() {
+/// 1e2 eps_dd, for Q-A and K-C from x0 = 0.7. Every coefficient must be within it: a NaN is not.
+fn lanes_check(br: Br, ctl: Ctl) -> Check {
     let kt = <DD as TestReal>::KT;
     let x0 = 0.7;
     let tol = 1e2 * <DD as Real>::EPS;
-    for (br, eq) in [(Br::QA, PolyEq::q()), (Br::KC, PolyEq::k())] {
-        let y = exact::<DD>(br, DD::from_f64(x0));
-        let c0 = coeff_vec::<DD>(&eq, x0, y, kt, 0.25);
-        let yv = [
-            Fl::<DV, 1>::splat(y[0]),
-            Fl::<DV, 1>::splat(y[1]),
-            Fl::<DV, 1>::splat(y[2]),
-        ];
-        let yu = [
-            Fl::<Du, 1>::splat(y[0]),
-            Fl::<Du, 1>::splat(y[1]),
-            Fl::<Du, 1>::splat(y[2]),
-        ];
-        let cv = coeff_vec::<Fl<DV, 1>>(&eq, x0, yv, kt, 0.25);
-        let cu = coeff_vec::<Fl<Du, 1>>(&eq, x0, yu, kt, 0.25);
-        let (mut wv, mut wu) = (0.0f64, 0.0f64);
-        for f in 0..3 {
-            for k in 0..=kt {
-                let r = c0[f][k];
-                let sc = r.to_f64().abs().max(1e-300);
-                wv = wv.max(((cv[f][k].get(0) - r).to_f64()).abs() / sc);
-                wu = wu.max(((cu[f][k].val().get(0) - r).to_f64()).abs() / sc);
-            }
+    let eq = eq_of(br);
+    let y = exact::<DD>(br, DD::from_f64(x0));
+    let c0 = coeff_vec::<DD>(&eq, x0, y, kt, 0.25);
+    let yv = [
+        Fl::<DV, 1>::splat(y[0]),
+        Fl::<DV, 1>::splat(y[1]),
+        Fl::<DV, 1>::splat(y[2]),
+    ];
+    let yu = [
+        Fl::<Du, 1>::splat(y[0]),
+        Fl::<Du, 1>::splat(y[1]),
+        Fl::<Du, 1>::splat(y[2]),
+    ];
+    let mut cv = coeff_vec::<Fl<DV, 1>>(&eq, x0, yv, kt, 0.25);
+    let mut cu = coeff_vec::<Fl<Du, 1>>(&eq, x0, yu, kt, 0.25);
+    match ctl {
+        // an error far above the tolerance in one coefficient of each lane
+        Ctl::LanePerturb => {
+            cv[0][kt / 2] = cv[0][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(1e-20));
+            cu[0][kt / 2] = cu[0][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(1e-20));
         }
-        println!(
-            "[{}] lanes {:?}: Fl<DV,1> {:.2e}, Fl<Du,1> value {:.2e} (bar {:.1e})",
-            if wv <= tol && wu <= tol { "PASS" } else { "FAIL" },
-            br,
-            wv,
-            wu,
-            tol
-        );
-        assert!(wv <= tol && wu <= tol, "{br:?}: {wv:e} {wu:e} against {tol:e}");
+        Ctl::NanLane => {
+            cv[1][kt / 2] = cv[1][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(f64::NAN));
+            cu[2][kt / 2] = cu[2][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(f64::NAN));
+        }
+        _ => {}
+    }
+    let (mut wv, mut wu) = (0.0f64, 0.0f64);
+    for f in 0..3 {
+        for k in 0..=kt {
+            let r = c0[f][k];
+            let sc = r.to_f64().abs().max(1e-300);
+            wv = nanmax(wv, ((cv[f][k].get(0) - r).to_f64()).abs() / sc);
+            wu = nanmax(wu, ((cu[f][k].val().get(0) - r).to_f64()).abs() / sc);
+        }
+    }
+    Check {
+        pass: wv <= tol && wu <= tol,
+        detail: format!(
+            "lanes {:?} {:?}: Fl<DV,1> {:.2e}, Fl<Du,1> value {:.2e} (bar {:.1e})",
+            br, ctl, wv, wu, tol
+        ),
+    }
+}
+
+#[test]
+fn lanes() {
+    let mut bad = Vec::new();
+    for br in [Br::QA, Br::KC] {
+        tally(&mut bad, lanes_check(br, Ctl::None), false);
+    }
+    finish(bad);
+}
+
+/// A coefficient of a lane off by 1e-20, or a NaN, fails the lane check
+#[test]
+fn lanes_controls() {
+    for br in [Br::QA, Br::KC] {
+        for ctl in [Ctl::LanePerturb, Ctl::NanLane] {
+            let c = lanes_check(br, ctl);
+            show(&c);
+            assert!(!c.pass, "control {ctl:?} did not fire: {}", c.detail);
+        }
     }
 }
 
