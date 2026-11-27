@@ -1164,13 +1164,29 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         // rho = 0; where the scale of the coefficients differs by more than the scaling holds, 2 (a0 / a1) (a2 / a1)
         let normal = |v: T| v.to_f64().abs() >= f64::MIN_POSITIVE;
         let (num, den) = ((s0 * s2).mulf(2.0), s1 * s1);
-        #[allow(unused_mut)]
-        let mut rho = if a[2].to_f64() == 0.0 {
-            T::zero()
-        } else if normal(num) && normal(den) {
-            num / den
+        #[cfg(feature = "mutate")]
+        let (scaled_quad, double_first, product_first, any_zero) = (
+            self.control == ImplicitControl::ScaledQuad,
+            self.control == ImplicitControl::DoubleFirst,
+            self.control == ImplicitControl::ProductFirst,
+            self.control == ImplicitControl::NoFiniteZero,
+        );
+        #[cfg(not(feature = "mutate"))]
+        let (scaled_quad, double_first, product_first, any_zero) = (false, false, false, false);
+        let no_quad = if scaled_quad {
+            s2.to_f64() == 0.0
         } else {
+            a[2].to_f64() == 0.0
+        };
+        #[allow(unused_mut)]
+        let mut rho = if no_quad {
+            T::zero()
+        } else if scaled_quad || (normal(num) && normal(den)) {
+            num / den
+        } else if double_first {
             (a[0] / a[1]).mulf(2.0) * (a[2] / a[1])
+        } else {
+            ((a[0] / a[1]) * (a[2] / a[1])).mulf(2.0)
         };
         #[cfg(feature = "mutate")]
         if self.control == ImplicitControl::PlainRho {
@@ -1186,9 +1202,15 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if !(b.is_finite() && b > 0.0) {
             return None;
         }
-        let s = -(beta * a[0] / a[1]);
+        // beta a0 / a1, as beta (a0 / a1) where the product beta a0 is not an `f64`
+        let top = beta * a[0];
+        let s = if product_first || top.to_f64().is_finite() {
+            -(top / a[1])
+        } else {
+            -(beta * (a[0] / a[1]))
+        };
         let x = T::from_f64(self.x) + s.mulf(self.l);
-        if !x.to_f64().is_finite() {
+        if !any_zero && !x.to_f64().is_finite() {
             return None;
         }
         Some(Zero { x, beta: b })

@@ -1853,6 +1853,67 @@ fn located_far<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::estimate_zero`, an overflowing fallback): N = (2^1023 + x - 2^-1023 x^2) y'' from the zero state
+/// at 0 with `pivot_abs` `f64::MAX` stops with `Stop::Pivot` and the estimate rho = -2, beta = 1/3, x = -2^1023 / 3: twice
+/// 2^1023 is not an `f64`, though the product with 2^-1023 is.
+fn rho_fallback_overflow<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[pow2(1023), 1.0, -pow2(-1023)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = f64::MAX;
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    let want = -pow2(1023) / 3.0;
+    let (err, beta) = out
+        .zero
+        .as_ref()
+        .map_or((f64::NAN, f64::NAN), |z| (((z.x.to_f64() - want) / want).abs(), z.beta));
+    Check {
+        pass: out.stop == Stop::Pivot && err <= bar::<T>() && (beta - 1.0 / 3.0).abs() <= bar::<T>(),
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate off by {:.2e} of -2^1023 / 3 with beta {}",
+            T::NAME,
+            ctl,
+            out.stop,
+            err,
+            beta
+        ),
+    }
+}
+
+/// Pass (review of `Walker::estimate_zero`, an overflowing numerator): N = 2^1023 (1 + x + 3 x^2 / 8) y'' from the zero
+/// state at 0 with `pivot_abs` `f64::MAX` stops with `Stop::Pivot` and the estimate rho = 3/4, beta = 4, x = -4: beta times
+/// 2^1023 is not an `f64`, though the displacement is.
+fn zero_numerator_overflow<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[pow2(1023), pow2(1023), 0.375 * pow2(1023)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = f64::MAX;
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    let (err, beta) = out
+        .zero
+        .as_ref()
+        .map_or((f64::NAN, f64::NAN), |z| (((z.x.to_f64() + 4.0) / 4.0).abs(), z.beta));
+    Check {
+        pass: out.stop == Stop::Pivot && err <= bar::<T>() && (beta - 4.0).abs() <= 4.0 * bar::<T>(),
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate off by {:.2e} of -4 with beta {}",
+            T::NAME,
+            ctl,
+            out.stop,
+            err,
+            beta
+        ),
+    }
+}
+
 /// N = A(x) y'' with A = +1 before 0 and -1 after, and at 0 it reads +1 the first time and -1 after: the second sample
 /// of a pivot that a projection between two `form`s of one state moved across zero
 struct TwoSampleEq {
@@ -1922,6 +1983,8 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, overflow_coordinate::<T>(Ctl::None), false);
     tally(&mut bad, located_far::<T>(Ctl::None), false);
     tally(&mut bad, two_samples::<T>(Ctl::None), false);
+    tally(&mut bad, rho_fallback_overflow::<T>(Ctl::None), false);
+    tally(&mut bad, zero_numerator_overflow::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -2150,7 +2213,11 @@ mod controls {
             | ImplicitControl::KeepZero
             | ImplicitControl::EmptyShift
             | ImplicitControl::PlainReciprocal
-            | ImplicitControl::PlainRho => [false; 6],
+            | ImplicitControl::PlainRho
+            | ImplicitControl::ScaledQuad
+            | ImplicitControl::NoFiniteZero
+            | ImplicitControl::DoubleFirst
+            | ImplicitControl::ProductFirst => [false; 6],
         }
     }
 
@@ -2218,6 +2285,22 @@ mod controls {
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
             (ImplicitControl::RecordEnd, "end_preview", end_preview::<T>),
             (ImplicitControl::PlainRho, "linear_pivot", linear_pivot::<T>),
+            (ImplicitControl::ScaledQuad, "quad_small_coeff", quad_small_coeff::<T>),
+            (
+                ImplicitControl::NoFiniteZero,
+                "overflow_coordinate",
+                overflow_coordinate::<T>,
+            ),
+            (
+                ImplicitControl::DoubleFirst,
+                "rho_fallback_overflow",
+                rho_fallback_overflow::<T>,
+            ),
+            (
+                ImplicitControl::ProductFirst,
+                "zero_numerator_overflow",
+                zero_numerator_overflow::<T>,
+            ),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
             (ImplicitControl::EmptyShift, "shift_edges", shift_edges::<T>),
