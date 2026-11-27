@@ -320,6 +320,8 @@ enum Ctl {
     LanePerturb(Lane),
     /// one coefficient of one lane of `lanes` a NaN
     NanLane(Lane),
+    /// the step number of every crossing of a walk's result one too high
+    WrongStep,
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -1681,15 +1683,15 @@ fn shift_edges<T: TestReal>(ctl: Ctl) -> Check {
 /// Pass (review of `taylor_shift`, a shift by 0): [0, 0, 2^1023] about 0 and about -0 is itself, not a NaN from the
 /// binomial 2 times 2^1023 times 0
 fn shift_zero_point<T: TestReal>(ctl: Ctl) -> Check {
-    let mut poly = [T::zero(), T::zero(), T::from_f64(pow2(1023))];
-    if ctl == Ctl::NanCoeff {
-        poly[1] = T::from_f64(f64::NAN);
-    }
+    let poly = [T::zero(), T::zero(), T::from_f64(pow2(1023))];
     let ok: Vec<bool> = [0.0, -0.0]
         .iter()
         .map(|&x0| {
             let mut out = [T::from_f64(-1.0); 3];
             taylor_shift(&poly, x0, &mut out);
+            if ctl == Ctl::NanCoeff {
+                out[1] = T::from_f64(f64::NAN);
+            }
             (0..3).all(|j| out[j].to_f64() == poly[j].to_f64())
         })
         .collect();
@@ -2001,7 +2003,8 @@ impl<T: Scalar> Coefficients<T> for TwoSampleEq {
 
 /// Pass (review of `Walker::form`, the sign a crossing is compared with): on `TwoSampleEq`, a walk from -1 forms twice at
 /// 0, the first sample +1 as at -1 and the second -1, then steps to 1 where A is -1. The sign compared and the sign stored
-/// for the next comparison are one sample, the first, so the change from +1 to -1 is reported once, in the last step.
+/// for the next comparison are one sample, the first, so the change from +1 to -1 is reported once, in the last step
+/// (the second).
 fn two_samples<T: TestReal>(ctl: Ctl) -> Check {
     let eq = TwoSampleEq {
         last: std::cell::Cell::new(f64::NAN),
@@ -2017,15 +2020,20 @@ fn two_samples<T: TestReal>(ctl: Ctl) -> Check {
         && w.form().is_ok()
         && w.form().is_ok()
         && w.advance(1.0, 1.0).is_ok();
-    let out = w.run(1.0, &[]);
+    let mut out = w.run(1.0, &[]);
+    if ctl == Ctl::WrongStep {
+        out.crossings.iter_mut().for_each(|k| k.step += 1);
+    }
+    let step = out.crossings.first().map_or(0, |k| k.step);
     Check {
-        pass: ok && out.crossings.len() == 1,
+        pass: ok && out.crossings.len() == 1 && step == 2,
         detail: format!(
-            "{} {:?}: steps taken {}, {} crossings (one expected)",
+            "{} {:?}: steps taken {}, {} crossings (one expected), in step {} (the second)",
             T::NAME,
             ctl,
             ok,
-            out.crossings.len()
+            out.crossings.len(),
+            step
         ),
     }
 }
@@ -2177,7 +2185,15 @@ fn flip_bit_fires<T: TestReal>() {
     assert!(planner::<T>(Ctl::None).pass);
 }
 
-/// a NaN coefficient, which is what the overflowing binomial wrote, fails `shift_zero_point`
+/// a crossing tagged with the wrong step fails `two_samples`, though the count is right
+fn wrong_step_fires<T: TestReal>() {
+    let c = two_samples::<T>(Ctl::WrongStep);
+    show(&c);
+    assert!(!c.pass, "control WrongStep did not fire: {}", c.detail);
+    assert!(two_samples::<T>(Ctl::None).pass);
+}
+
+/// a NaN in the shifted coefficients, which is what the overflowing binomial wrote, fails `shift_zero_point`
 fn shift_nan_fires<T: TestReal>() {
     let c = shift_zero_point::<T>(Ctl::NanCoeff);
     show(&c);
@@ -2201,6 +2217,9 @@ fn nan_position_fires<T: TestReal>() {
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    wrong_step_fires::<f64>();
+    wrong_step_fires::<DD>();
+    wrong_step_fires::<QD>();
     shift_nan_fires::<f64>();
     shift_nan_fires::<DD>();
     shift_nan_fires::<QD>();
@@ -2286,7 +2305,9 @@ mod controls {
             | ImplicitControl::ProductFirst
             | ImplicitControl::OpenBracket
             | ImplicitControl::ZeroMid
-            | ImplicitControl::SumMidpoint => [false; 6],
+            | ImplicitControl::SumMidpoint
+            | ImplicitControl::LastSign
+            | ImplicitControl::NoFiniteEnd => [false; 6],
         }
     }
 
@@ -2377,6 +2398,7 @@ mod controls {
                 "midpoint_overflow",
                 midpoint_overflow::<T>,
             ),
+            (ImplicitControl::LastSign, "two_samples", two_samples::<T>),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
             (ImplicitControl::EmptyShift, "shift_edges", shift_edges::<T>),
@@ -2389,6 +2411,8 @@ mod controls {
         rows.push((ImplicitControl::PlainScale, "underflow", underflow));
         rows.push((ImplicitControl::PlainReciprocal, "reciprocal", reciprocal));
         rows.push((ImplicitControl::PlainRho, "rho_scale", rho_scale));
+        // dd and qd turn an infinite pivot into a NaN, which has no sign: only f64 reads one
+        rows.push((ImplicitControl::NoFiniteEnd, "end_pole", end_pole::<f64>));
         edge_controls(&rows);
     }
 

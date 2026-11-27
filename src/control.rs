@@ -152,4 +152,8 @@ pub enum ImplicitControl {
     ZeroMid,
     /// the midpoint of the bracket of a crossing formed as half the sum of its ends, which overflows
     SumMidpoint,
+    /// the sign of the last `form` of a state stored for the next comparison, the first one's compared
+    LastSign,
+    /// a pivot that is not finite at the end of a `run` read for its sign
+    NoFiniteEnd,
 }
