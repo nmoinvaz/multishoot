@@ -126,4 +126,6 @@ pub enum ImplicitControl {
     NoEndCrossing,
     /// equal checkpoints of a `run` not merged
     NoDedup,
+    /// the estimate of the zero returned with every `run` after a pivot stop, not only the one that stopped there
+    KeepZero,
 }
