@@ -1125,24 +1125,29 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if !big.is_finite() {
             return None;
         }
-        #[allow(unused_mut)]
-        let mut e = big.log2().floor() as i32;
-        #[cfg(feature = "mutate")]
-        if self.control == ImplicitControl::PlainRho {
-            e = 0;
-        }
+        let e = big.log2().floor() as i32;
         let sc = |v: T| match e {
             0 => v,
             1.. => mul_pow(v, 0.5, e as usize),
             _ => mul_pow(v, 2.0, e.unsigned_abs() as usize),
         };
         let (s0, s1, s2) = (sc(a[0]), sc(a[1]), sc(a[2]));
-        // a linear A0 has rho = 0 and beta = 1, which `s1 * s1` may not show where it underflows
-        let rho = if s2.to_f64() == 0.0 {
+        // rho = 2 s0 s2 / s1^2 of the scaled coefficients where both products are normal; a linear A0 (a2 = 0) has
+        // rho = 0; where the scale of the coefficients differs by more than the scaling holds, 2 (a0 / a1) (a2 / a1)
+        let normal = |v: T| v.to_f64().abs() >= f64::MIN_POSITIVE;
+        let (num, den) = ((s0 * s2).mulf(2.0), s1 * s1);
+        #[allow(unused_mut)]
+        let mut rho = if a[2].to_f64() == 0.0 {
             T::zero()
+        } else if normal(num) && normal(den) {
+            num / den
         } else {
-            (s0 * s2).mulf(2.0) / (s1 * s1)
+            (a[0] / a[1]).mulf(2.0) * (a[2] / a[1])
         };
+        #[cfg(feature = "mutate")]
+        if self.control == ImplicitControl::PlainRho {
+            rho = (a[0] * a[2]).mulf(2.0) / (a[1] * a[1]);
+        }
         #[allow(unused_mut)]
         let mut beta = T::one() / (T::one() - rho);
         #[cfg(feature = "mutate")]
@@ -1154,10 +1159,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             return None;
         }
         let s = -(beta * a[0] / a[1]);
-        Some(Zero {
-            x: T::from_f64(self.x) + s.mulf(self.l),
-            beta: b,
-        })
+        let x = T::from_f64(self.x) + s.mulf(self.l);
+        if !x.to_f64().is_finite() {
+            return None;
+        }
+        Some(Zero { x, beta: b })
     }
 
     /// The planner's step in x from the series just formed: [`step_from_norms`] on the largest coefficient of orders kt - 1

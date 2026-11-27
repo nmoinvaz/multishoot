@@ -1771,6 +1771,55 @@ fn linear_pivot<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::estimate_zero`, a small quadratic coefficient): N = (2^1000 + x + 2^-1000 x^2) y'' from the
+/// zero state at 0 with `pivot_abs` 2^1001 stops with `Stop::Pivot` and no estimate: the formula gives rho = 2 and
+/// beta = -1, which is no exponent. The coefficient 2^-1000 is not zero, though it is below the scale of the pivot.
+fn quad_small_coeff<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[pow2(1000), 1.0, pow2(-1000)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = pow2(1001);
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    Check {
+        pass: out.stop == Stop::Pivot && out.zero.is_none(),
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate {:?} (none expected)",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.zero.as_ref().map(|z| (z.x.to_f64(), z.beta))
+        ),
+    }
+}
+
+/// Pass (review of `Walker::estimate_zero`, an overflowing coordinate): N = (1 + 2^-1030 x) y'' from the zero state at 0
+/// with `pivot_abs` 2 stops with `Stop::Pivot`, and the zero at -2^1030 is not an `f64`: no estimate, not one at infinity.
+fn overflow_coordinate<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[1.0, pow2(-1030)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 2.0;
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    Check {
+        pass: out.stop == Stop::Pivot && out.zero.is_none(),
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate {:?} (none expected)",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.zero.as_ref().map(|z| (z.x.to_f64(), z.beta))
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1784,6 +1833,8 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, shift_zero_point::<T>(Ctl::None), false);
     tally(&mut bad, end_pole::<T>(Ctl::None), false);
     tally(&mut bad, linear_pivot::<T>(Ctl::None), false);
+    tally(&mut bad, quad_small_coeff::<T>(Ctl::None), false);
+    tally(&mut bad, overflow_coordinate::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -2068,6 +2119,7 @@ mod controls {
             (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
             (ImplicitControl::RecordEnd, "end_preview", end_preview::<T>),
+            (ImplicitControl::PlainRho, "linear_pivot", linear_pivot::<T>),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
             (ImplicitControl::EmptyShift, "shift_edges", shift_edges::<T>),
