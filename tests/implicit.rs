@@ -287,6 +287,13 @@ fn crossing_list<T: TestReal>(b: Br) -> Vec<T> {
     }
 }
 
+/// the lanes of `lanes`: `Fl<DV, 1>` and the value part of `Fl<Du, 1>`
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Lane {
+    V,
+    U,
+}
+
 /// a deliberate error of a control
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Ctl {
@@ -309,10 +316,10 @@ enum Ctl {
     NanState,
     /// the planned step of `planner` with its last bit flipped, before the comparison
     FlipBit,
-    /// one coefficient of each lane of `lanes` off by 1e-20
-    LanePerturb,
-    /// one coefficient of each lane of `lanes` a NaN
-    NanLane,
+    /// one coefficient of one lane of `lanes` off by 1e-20
+    LanePerturb(Lane),
+    /// one coefficient of one lane of `lanes` a NaN
+    NanLane(Lane),
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -1064,15 +1071,11 @@ fn lanes_check(br: Br, ctl: Ctl) -> Check {
     let mut cv = coeff_vec::<Fl<DV, 1>>(&eq, x0, yv, kt, 0.25);
     let mut cu = coeff_vec::<Fl<Du, 1>>(&eq, x0, yu, kt, 0.25);
     match ctl {
-        // an error far above the tolerance in one coefficient of each lane
-        Ctl::LanePerturb => {
-            cv[0][kt / 2] = cv[0][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(1e-20));
-            cu[0][kt / 2] = cu[0][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(1e-20));
-        }
-        Ctl::NanLane => {
-            cv[1][kt / 2] = cv[1][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(f64::NAN));
-            cu[2][kt / 2] = cu[2][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(f64::NAN));
-        }
+        // an error far above the tolerance in one coefficient of one lane
+        Ctl::LanePerturb(Lane::V) => cv[0][kt / 2] = cv[0][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(1e-20)),
+        Ctl::LanePerturb(Lane::U) => cu[0][kt / 2] = cu[0][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(1e-20)),
+        Ctl::NanLane(Lane::V) => cv[1][kt / 2] = cv[1][kt / 2] + Fl::<DV, 1>::splat(DD::from_f64(f64::NAN)),
+        Ctl::NanLane(Lane::U) => cu[2][kt / 2] = cu[2][kt / 2] + Fl::<Du, 1>::splat(DD::from_f64(f64::NAN)),
         _ => {}
     }
     let (mut wv, mut wu) = (0.0f64, 0.0f64);
@@ -1102,14 +1105,17 @@ fn lanes() {
     finish(bad);
 }
 
-/// A coefficient of a lane off by 1e-20, or a NaN, fails the lane check
+/// A coefficient of one lane off by 1e-20, or a NaN, fails the lane check, for each lane alone: a check that stopped
+/// looking at one lane would pass its control
 #[test]
 fn lanes_controls() {
     for br in [Br::QA, Br::KC] {
-        for ctl in [Ctl::LanePerturb, Ctl::NanLane] {
-            let c = lanes_check(br, ctl);
-            show(&c);
-            assert!(!c.pass, "control {ctl:?} did not fire: {}", c.detail);
+        for lane in [Lane::V, Lane::U] {
+            for ctl in [Ctl::LanePerturb(lane), Ctl::NanLane(lane)] {
+                let c = lanes_check(br, ctl);
+                show(&c);
+                assert!(!c.pass, "control {ctl:?} did not fire: {}", c.detail);
+            }
         }
     }
 }
