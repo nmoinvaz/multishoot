@@ -1403,6 +1403,30 @@ fn reciprocal(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::form`, the zero estimate's exponent): N = 2^-550 (1 - x) y'' from the zero state at x = 0 has
+/// A0 = 2^-550 (1 - x), linear, zero at x = 1. With `pivot_abs` 1e-100 the walk stops at once with `Stop::Pivot`; the
+/// estimate is x = 1 with beta = 1, though the square of A0's slope, 2^-1100, is not an `f64`.
+fn rho_scale(ctl: Ctl) -> Check {
+    let c = pow2(-550);
+    let eq = RealEq::new(&[((0, 0, 1), &[c, -c])]);
+    let mut o = opts::<f64>(Branch::Project, 1.0);
+    o.pivot_abs = 1e-100;
+    let mut w = Walker::<f64, _>::new(&eq, 0.0, [0.0; 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(0.5, &[]);
+    let (x, beta) = out.zero.as_ref().map_or((f64::NAN, f64::NAN), |z| (z.x, z.beta));
+    Check {
+        pass: out.stop == Stop::Pivot && (x - 1.0).abs() <= bar::<f64>() && (beta - 1.0).abs() <= bar::<f64>(),
+        detail: format!(
+            "f64 {ctl:?}: stop {:?}, estimate x = {x}, beta = {beta} for x = 1, beta = 1",
+            out.stop
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 whose exponents are beyond what the multi-doubles' splits take: f64 only
 #[test]
 fn edges_f64() {
@@ -1410,6 +1434,7 @@ fn edges_f64() {
     let mut bad = Vec::new();
     tally(&mut bad, underflow(Ctl::None), false);
     tally(&mut bad, reciprocal(Ctl::None), false);
+    tally(&mut bad, rho_scale(Ctl::None), false);
     finish(bad);
 }
 
@@ -1523,7 +1548,8 @@ mod controls {
             | ImplicitControl::NoDedup
             | ImplicitControl::KeepZero
             | ImplicitControl::EmptyShift
-            | ImplicitControl::PlainReciprocal => [false; 6],
+            | ImplicitControl::PlainReciprocal
+            | ImplicitControl::PlainRho => [false; 6],
         }
     }
 
@@ -1600,6 +1626,7 @@ mod controls {
         let mut rows = edge_rows::<f64>();
         rows.push((ImplicitControl::PlainScale, "underflow", underflow));
         rows.push((ImplicitControl::PlainReciprocal, "reciprocal", reciprocal));
+        rows.push((ImplicitControl::PlainRho, "rho_scale", rho_scale));
         edge_controls(&rows);
     }
 

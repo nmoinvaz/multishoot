@@ -1090,8 +1090,25 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if a[1].to_f64() == 0.0 {
             return None;
         }
-        // in s: A0' = a1, A0'' = 2 a2
-        let rho = (a[0] * a[2]).mulf(2.0) / (a[1] * a[1]);
+        // in s: A0' = a1, A0'' = 2 a2. The three scaled by one power of two, which a quotient of products does not see,
+        // so that `a1 * a1` does not underflow where `a1` is representable
+        let big = a.iter().map(|v| v.to_f64().abs()).fold(0.0f64, f64::max);
+        if !big.is_finite() {
+            return None;
+        }
+        #[allow(unused_mut)]
+        let mut e = big.log2().floor() as i32;
+        #[cfg(feature = "mutate")]
+        if self.control == ImplicitControl::PlainRho {
+            e = 0;
+        }
+        let sc = |v: T| match e {
+            0 => v,
+            1.. => mul_pow(v, 0.5, e as usize),
+            _ => mul_pow(v, 2.0, e.unsigned_abs() as usize),
+        };
+        let (s0, s1, s2) = (sc(a[0]), sc(a[1]), sc(a[2]));
+        let rho = (s0 * s2).mulf(2.0) / (s1 * s1);
         #[allow(unused_mut)]
         let mut beta = T::one() / (T::one() - rho);
         #[cfg(feature = "mutate")]
