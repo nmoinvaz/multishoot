@@ -95,14 +95,14 @@ and, at each step's start, the Taylor coefficients of every A_g (`Coefficients`)
 | `implicit::Recursion` | the Taylor series of one step: order k of N set to zero and solved for `y''_k`, one division by `A0 = dN/dy''` per step |
 | `implicit::Walker`, `WalkOpts`, `WalkOut` | a walk by the planner's rule (`taylor::step_from_norms`) with checkpoints, `form`, `planned` and `advance` for a caller that watches each step |
 | `implicit::Branch` | `Project`: one Newton correction of y'' at each step's start; `Conserve`: none, N stays at its start value |
-| `Stop::ZeroPivot`, `Stop::Pivot`, `WalkOut::zero`, `WalkOut::crossings` | where `A0` vanishes: a step that starts at `A0 = 0`, one that starts with `\|A0\| <= pivot_abs` and the estimate of the zero, the roots of N in y'' of even multiplicity the branch passes (a sign change of `A0` between step starts) |
+| `Stop::ZeroPivot`, `Stop::Pivot`, `WalkOut::zero`, `WalkOut::crossings` | where `A0` vanishes: a step that starts at `A0 = 0`, one that starts with `\|A0\| <= pivot_abs` and the estimate of the zero, the sign changes of `A0` between step starts that the walk steps over (crossings) |
 | `implicit::taylor_shift` | the jet of a polynomial in x about x0 in the scalar's precision |
 
 The branch is chosen once, by the data, and carried; no root is picked by its order among the roots. Two branches can be
-confused only where roots meet, where `A0 = 0`. A sign change of `A0` between two step starts is a crossing: the branch
-passes a root of N in y'' of even multiplicity (a double root generically, a quadruple one where four roots meet) with its
-analytic continuation and the zero of `A0`'s series in the step is located. A step that passes two zeros of `A0` and ends
-with the sign it started with reports none. A step that
+confused only where roots meet, where `A0 = 0`. A sign change of `A0` between two step starts is a crossing: the walk
+steps over it and locates the zero of `A0`'s series in the step. A crossing says nothing of the multiplicity of the root of
+N in y'' there: for `N = z^3 - x z` on the branch `z = 0`, `A0 = -x` changes sign at `x = 0`. A step that passes two zeros
+of `A0` and ends with the sign it started with reports none. A step that
 starts with `|A0| <= pivot_abs` stops the walk with an estimate of the zero, `x* = x - beta A0 / A0'` with
 `beta = 1 / (1 - A0 A0'' / A0'^2)`: exact for `A0 ~ c |x* - x|^beta`, an estimate otherwise.
 
