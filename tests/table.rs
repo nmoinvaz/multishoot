@@ -595,10 +595,12 @@ fn c2<T: Lane>(case: &Case, tab: &Table<T>, last: usize) -> Vec<String> {
 
 // ---------------------------------------------------------------- C3 and the digest
 
-/// the violations of C3 against `table_steps.in` (none if the case and lane are not listed)
-fn c3<T: Lane>(name: &str, tab: &Table<T>) -> Vec<String> {
+/// the violations of C3 against the records `rows` (a missing record is one: C3 requires a record for every case and lane
+/// it covers)
+fn c3_rows<T: Lane>(rows: &[StepRow], name: &str, tab: &Table<T>) -> Vec<String> {
     let mut v = vec![];
-    let Some(&(_, _, count, samples)) = STEPS.iter().find(|r| r.0 == name && r.1 == T::NAME) else {
+    let Some(&(_, _, count, samples)) = rows.iter().find(|r| r.0 == name && r.1 == T::NAME) else {
+        v.push(format!("{name} {}: no record in the prototype's step lists", T::NAME));
         return v;
     };
     if tab.steps() != count {
@@ -620,6 +622,11 @@ fn c3<T: Lane>(name: &str, tab: &Table<T>) -> Vec<String> {
         }
     }
     v
+}
+
+/// C3 against `table_steps.in`
+fn c3<T: Lane>(name: &str, tab: &Table<T>) -> Vec<String> {
+    c3_rows(STEPS, name, tab)
 }
 
 /// FNV-1a over the bits of every step point and every part of every coefficient
@@ -1295,4 +1302,209 @@ fn ph_controls_dd() {
 #[test]
 fn ph_controls_qd() {
     ph_controls::<QD>(true);
+}
+
+// ---------------------------------------------------------------- the review's edge cases, and C3's control
+
+/// C3's control: the comparator is fed a wrong prototype (a count one too many, a start moved by 1e-6, no record) and
+/// must report each
+#[test]
+fn c3_fires() {
+    let case = case_named("PA");
+    let tab = build::<DD>(&case, 4, Ctl::None);
+    assert!(c3::<DD>("PA", &tab).is_empty());
+    let count: Vec<StepRow> = STEPS.iter().map(|&(a, b, n, s)| (a, b, n + 1, s)).collect();
+    assert_eq!(c3_rows::<DD>(&count, "PA", &tab).len(), 1);
+    let moved: Vec<StepRow> = STEPS
+        .iter()
+        .map(|&(a, b, n, s)| {
+            let v: Vec<StepStart> = s
+                .iter()
+                .map(|&(i, x)| (i, if i == 20 { x * (1.0 + 1e-6) } else { x }))
+                .collect();
+            (a, b, n, &*Box::leak(v.into_boxed_slice()))
+        })
+        .collect();
+    assert_eq!(c3_rows::<DD>(&moved, "PA", &tab).len(), 1);
+    assert_eq!(c3_rows::<DD>(&[], "PA", &tab).len(), 1);
+}
+
+/// a source of one function with given coefficients (the rest zero) about every point, whose series stop holding at
+/// `valid_fwd` when the path runs forward from below it
+struct Fixed {
+    c: Vec<f64>,
+    valid_fwd: f64,
+}
+
+impl<T: Lane> SeriesSource<T> for Fixed {
+    fn functions(&self) -> usize {
+        1
+    }
+    fn series(&self, x0: f64, dir: f64, nb: usize, out: &mut [T]) -> f64 {
+        for (k, o) in out[..nb].iter_mut().enumerate() {
+            *o = T::from_f64(self.c.get(k).copied().unwrap_or(0.0));
+        }
+        if dir > 0.0 && x0 < self.valid_fwd {
+            self.valid_fwd
+        } else {
+            dir * f64::INFINITY
+        }
+    }
+}
+
+/// two coefficients per function and `last` 1 set outright (`last` 2 would read c_0, which no tail passes; the default
+/// is tested by itself)
+fn opts2(tail: f64) -> Opts {
+    let mut o = Opts::new(2, tail);
+    o.last = 1;
+    o
+}
+
+fn fixed(c: &[f64]) -> Fixed {
+    Fixed {
+        c: c.to_vec(),
+        valid_fwd: f64::INFINITY,
+    }
+}
+
+/// `Opts::new(2, ..)` is a valid setting: the default `last` is at most nb - 1 (a `last` of nb reads c_0, which no tail passes)
+#[test]
+fn default_last_fits_small_nb() {
+    let o = Opts::new(2, 1e-6);
+    assert!(o.last <= 1);
+    let t = Table::<f64>::build(&fixed(&[1.0, 0.0]), 0.0, 1.0, &o).unwrap();
+    assert_eq!(t.bounds(t.steps() - 1).1, 1.0);
+}
+
+/// a path shorter than the widths the search used to give up at: coefficients [1, 1e300] on [0, 1e-300], where the test
+/// fails at 5e-301 and passes at 6.25e-302
+#[test]
+fn tiny_path_is_not_a_stall() {
+    let mut o = Opts::new(2, 0.1);
+    o.last = 1;
+    o.fraction = 1.0;
+    let t = Table::<f64>::build(&fixed(&[1.0, 1e300]), 0.0, 1e-300, &o).expect("a step of 6e-302 moves x");
+    assert_eq!(t.bounds(t.steps() - 1).1, 1e-300);
+    assert!(t.steps() > 1);
+}
+
+/// a path of 1e308 with fraction 0.5: `limit / fraction` overflows, and the search must still end
+#[test]
+fn huge_path_ends() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut o = Opts::new(2, 0.1);
+        o.last = 1;
+        o.fraction = 0.5;
+        // the function 1 + x: its series about x0 is [1 + x0, 1]
+        struct Linear;
+        impl SeriesSource<f64> for Linear {
+            fn functions(&self) -> usize {
+                1
+            }
+            fn series(&self, x0: f64, dir: f64, nb: usize, out: &mut [f64]) -> f64 {
+                out[..nb].iter_mut().for_each(|o| *o = 0.0);
+                out[0] = 1.0 + x0;
+                out[1] = 1.0;
+                dir * f64::INFINITY
+            }
+        }
+        let r = Table::<f64>::build(&Linear, 0.0, 1e308, &o).map(|t| (t.steps(), t.bounds(t.steps() - 1).1));
+        let _ = tx.send(r);
+    });
+    let r = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("the width search does not end");
+    let (steps, end) = r.unwrap();
+    println!("path of 1e308: {steps} steps");
+    assert_eq!(end, 1e308);
+}
+
+/// the source's piece ends at 0, the path at 1, and x = -2^54: both distances round to 2^54, and the step must end at the
+/// nearer, 0
+#[test]
+fn piece_end_before_path_end() {
+    let x = -(2.0f64.powi(54));
+    let src = Fixed {
+        c: vec![1.0, 0.0],
+        valid_fwd: 0.0,
+    };
+    let mut o = opts2(1e-6);
+    o.fraction = 1.0;
+    let t = Table::<f64>::build(&src, x, 1.0, &o).unwrap();
+    assert_eq!(t.bounds(0), (x, 0.0), "the first step ends at the piece end");
+    assert_eq!(t.bounds(t.steps() - 1).1, 1.0);
+}
+
+/// `hmax` bounds the stored endpoint: from 1 to the next f64, one ulp of 2^-52, with `hmax` 3 2^-54 no step fits
+#[test]
+fn hmax_bounds_the_stored_step() {
+    let ulp = 2.0f64.powi(-52);
+    let mut o = opts2(1e-6);
+    o.hmax = 3.0 * 2.0f64.powi(-54);
+    match Table::<f64>::build(&fixed(&[1.0, 0.0]), 1.0, 1.0 + ulp, &o) {
+        Err(Error::Stall { x }) => assert_eq!(x, 1.0),
+        other => panic!("{other:?}"),
+    }
+    // and with room for the ulp the step is the ulp
+    o.hmax = 2.0 * ulp;
+    let t = Table::<f64>::build(&fixed(&[1.0, 0.0]), 1.0, 1.0 + ulp, &o).unwrap();
+    assert_eq!(t.bounds(0), (1.0, 1.0 + ulp));
+}
+
+/// a step or function index outside the table is not read as another step's series
+#[test]
+#[should_panic(expected = "function")]
+fn series_index_is_checked() {
+    let mut o = opts2(1e-6);
+    o.hmax = 0.25;
+    let t = Table::<f64>::build(&fixed(&[1.0, 0.0]), 0.0, 1.0, &o).unwrap();
+    assert!(t.steps() >= 4);
+    let _ = t.series(0, 1);
+}
+
+#[test]
+#[should_panic(expected = "twice")]
+fn tablejets_rejects_a_repeated_entry() {
+    struct Two;
+    impl<T: Lane> SeriesSource<T> for Two {
+        fn functions(&self) -> usize {
+            2
+        }
+        fn series(&self, _x0: f64, dir: f64, nb: usize, out: &mut [T]) -> f64 {
+            out.iter_mut().for_each(|o| *o = T::zero());
+            out[0] = T::one();
+            out[nb] = T::one();
+            dir * f64::INFINITY
+        }
+    }
+    let t = Table::<f64>::build(&Two, 0.0, 1.0, &opts2(1e-6)).unwrap();
+    let _ = TableJets::new(&t, vec![(0, 0), (0, 0)]);
+}
+
+/// a request for more coefficients than the table stores stops with a message, not by silently dropping orders
+#[test]
+#[should_panic(expected = "exceeds the table's nb")]
+fn tablejets_names_an_order_beyond_nb() {
+    use multishoot::plane::{JetSource, Jets};
+    let t = Table::<f64>::build(&fixed(&[1.0, 0.0]), 0.0, 1.0, &opts2(1e-6)).unwrap();
+    let j = TableJets::new(&t, vec![(0, 0)]);
+    let mut out = Jets::<f64>::new(&[(0, 0)], 3);
+    j.jets(0.5, 3, &mut out);
+}
+
+/// The width is where the search ended, not an interval: a series [1, 0, 10, 1] with `last` 2 and tail 0.6 passes at 10
+/// (the last two terms are 1000 and 1000 of 2001) and fails at 2 (40 and 8 of 49). With fraction 1 the width is 10, and
+/// `headroom` is the distance to it; the module's docs say this is pointwise outside the cases they derive.
+#[test]
+fn width_is_a_point_where_the_test_passes() {
+    let mut o = Opts::new(4, 0.6);
+    o.last = 2;
+    o.fraction = 1.0;
+    let t = Table::<f64>::build(&fixed(&[1.0, 0.0, 10.0, 1.0]), 0.0, 10.0, &o).unwrap();
+    assert_eq!(t.width(0), 10.0);
+    assert_eq!(t.headroom(0.0), 10.0);
+    let c = [vec![1.0, 0.0, 10.0, 1.0]];
+    assert_eq!(width_log(&c, 10.0, 0.6, 2), 10.0);
+    assert!(width_log(&c, 2.0, 0.6, 2) < 2.0, "the test fails at 2");
 }
