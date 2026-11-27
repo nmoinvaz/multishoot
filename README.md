@@ -109,9 +109,10 @@ starts with `|A0| <= pivot_abs` stops the walk with an estimate of the zero, `x*
 Near a double root of N in y'' use `Project`. `Conserve` keeps N at its start value, a rounding eps and not 0, and for
 N = eps a double root is two roots: the crossing becomes an avoided crossing, the Taylor series about a point at distance d
 has radius about d, the steps shrink toward it and the walk ends with `Stop::Tiny`. `Project` makes one Newton correction of
-y'' at each step's start, which brings N back to about roundoff when the state is near the branch and so keeps the double
-root a double root. It is one correction, not a projection onto N = 0: for `N = y''^2 - 1` at `y'' = 2` it gives
-`y'' = 1.25`, where N is still 0.5625. It promises neither a zero of N nor a crossing. Away from `A0 = 0` the two agree to
+y'' at each step's start, which brings N back to about roundoff when the state is near the branch, and then the double root
+stays a double root. It is one correction, not a projection onto N = 0: for `N = y''^2 - 1` at `y'' = 2` it gives
+`y'' = 1.25`, where N is still 0.5625, and a residual that stays nonzero can still turn the crossing into an avoided one.
+`Project` promises neither a zero of N nor a crossing. Away from `A0 = 0` the two agree to
 roundoff and `Conserve` costs less.
 
 The coefficients of a series are accurate to about eps times the series' size, not to eps each: the relative error of
