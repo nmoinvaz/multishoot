@@ -115,4 +115,7 @@ pub enum ImplicitControl {
     ExponentHalf,
     /// `pivot_abs` ignored
     NoPivotStop,
+    /// `l^j` rounded to `f64` before it scales a jet's coefficient, as it underflows or overflows where the product
+    /// does not
+    PlainScale,
 }

@@ -247,6 +247,17 @@ fn plain_cauchy<T: Scalar>(a: &[T], b: &[T], k: usize) -> T {
     s
 }
 
+/// `x * base^n`, with `base^n` applied in pieces that stay normal in `f64` where it does not: the pieces move `x` the
+/// same way, so none leaves the range that `x` and the product are in
+fn mul_pow<T: Scalar>(x: T, base: f64, n: usize) -> T {
+    let f = base.powi(n as i32);
+    if n <= 1 || f.is_normal() {
+        x.mulf(f)
+    } else {
+        mul_pow(mul_pow(x, base, n / 2), base, n - n / 2)
+    }
+}
+
 /// The series of one step: the fields in `s = (x - x0) / l` to order kt, and `A0 = dN/dy''` at order 0
 #[derive(Clone, Debug)]
 pub struct Series<T> {
@@ -472,7 +483,8 @@ impl<T: Scalar> Recursion<T> {
     }
 
     /// Taylor coefficients 1..=kt of (y, y', y'') in `s = (x - x0) / l` from the data `y0` and the jets of the coefficients
-    /// about x0 (`l` a power of two, so the scaling of the jets is exact). Returns the series; `a0` is zero or not finite
+    /// about x0 (`l` a power of two, so the scaling of the jets is exact, and `l^j` is applied in pieces where it is not an
+    /// `f64`). Returns the series; `a0` is zero or not finite
     /// where the division fails, and the coefficients are then not finite.
     pub fn form(&mut self, jets: &Jets<T>, l: f64, y0: [T; 3]) -> &Series<T> {
         let kt = self.kt;
@@ -483,6 +495,10 @@ impl<T: Scalar> Recursion<T> {
             jets.ent.len(),
             self.pat.len()
         );
+        #[cfg(feature = "mutate")]
+        let plain = self.control == ImplicitControl::PlainScale;
+        #[cfg(not(feature = "mutate"))]
+        let plain = false;
         let mut lp = 1.0f64;
         let mut lps = vec![1.0f64; kt + 2];
         for v in lps.iter_mut().skip(1) {
@@ -494,7 +510,14 @@ impl<T: Scalar> Recursion<T> {
             self.nex[g] = n;
             for (j, e) in self.ex[g].iter_mut().enumerate().take(n) {
                 let c = jets.ent[g].c[j];
-                *e = if j == 0 { c } else { c.mulf(lps[j]) };
+                // `l^j` itself may underflow or overflow where `c l^j` does not
+                *e = if j == 0 {
+                    c
+                } else if plain || lps[j].is_normal() {
+                    c.mulf(lps[j])
+                } else {
+                    mul_pow(c, l, j)
+                };
             }
         }
         for (cf, &y) in self.series.c.iter_mut().zip(y0.iter()) {
