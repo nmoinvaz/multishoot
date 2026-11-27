@@ -80,7 +80,8 @@ pub fn sin_cos(x: DD) -> (DD, DD) {
 
 /// The reduction of the angle (p / q) pi, q > 0, in integers without overflow: p modulo 2q (a period), then
 /// (n, num, 2q) with n = round(2p / q), the nearest multiple of pi / 2, and the remainder (p / q) pi - n pi / 2 =
-/// num pi / 2q, |num| <= q. The results are those of the unreduced p wherever its products fit in i64.
+/// num pi / 2q, -q <= 2 num < q, so in [-pi / 4, pi / 4) (proved with `quadrant` in lean/Multishoot/ReducePi.lean).
+/// The results are those of the unreduced p wherever its products fit in i64.
 fn reduce_pi(p: i64, q: i64) -> (i64, i128, i128) {
     let (p, q) = (p as i128, q as i128);
     let p = p.rem_euclid(2 * q);

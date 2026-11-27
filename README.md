@@ -455,7 +455,8 @@ It also runs coverage, rustfmt, clippy on three backends, the documentation, and
 
 `lean/` holds Lean 4 proofs, on Mathlib alone, of facts the octo-double sines and cosines rest on.
 `Multishoot/PiOD.lean` proves that `PI_OD`'s eight parts are π's greedy round-to-nearest expansion, from π to 470 bits
-by Machin's formula. CI builds them, audits their axioms, and checks the parts against
+by Machin's formula. `Multishoot/ReducePi.lean` proves that `reduce_pi` and `quadrant` give the sine and cosine of
+(p/q)π exactly from a remainder within π/4. CI builds them, audits their axioms, and checks the parts against
 `src/periodic.rs`:
 
 ```sh

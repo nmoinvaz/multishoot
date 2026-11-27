@@ -35,7 +35,8 @@ theorem controlTheorem : (0 : Nat) = 0 := controlAxiom
 
 /-- the theorems the audit must find -/
 def mainTheorems : Array Name :=
-  #[``Multishoot.pi_od_greedy, ``Multishoot.pi_od_error, ``Multishoot.pi_od_literal, ``Multishoot.pi_enclosure]
+  #[``Multishoot.pi_od_greedy, ``Multishoot.pi_od_error, ``Multishoot.pi_od_literal, ``Multishoot.pi_enclosure,
+    ``Multishoot.sin_cos_reducePi]
 
 run_cmd liftCoreM do
   unless (← otherAxioms ``controlTheorem) == #[``controlAxiom] do
