@@ -33,6 +33,9 @@ trait TestReal: Real {
     const NAME: &'static str;
     const KT: usize;
     const TOL: f64;
+    /// how many f64 parts of a value the digests hash: its whole value, which is four for f64, dd and qd (hashed with
+    /// four from the first version of the digests, which #190 and #214 quote) and eight for od
+    const PARTS: usize;
     /// the `digests` of the lane's planted cells: [base, full], as printed on aarch64 NEON, both backends of multidouble
     /// there agreeing (README, SIMD backends); a different value on any backend or target is a failure of the engine's
     /// claim that results do not depend on it, and a deliberate change of the numerics changes these
@@ -47,6 +50,7 @@ impl TestReal for f64 {
     const NAME: &'static str = "f64";
     const KT: usize = 22;
     const TOL: f64 = 1e-14;
+    const PARTS: usize = 4;
     const DIGEST: [u64; 2] = [0xb124d44e9758f1a1, 0x50775575530f4fa9];
     fn exp(self) -> f64 {
         f64::exp(self)
@@ -63,11 +67,12 @@ impl TestReal for f64 {
 }
 
 macro_rules! test_real {
-    ($t:ty, $name:expr, $kt:expr, $tol:expr, $digest:expr) => {
+    ($t:ty, $name:expr, $kt:expr, $tol:expr, $parts:expr, $digest:expr) => {
         impl TestReal for $t {
             const NAME: &'static str = $name;
             const KT: usize = $kt;
             const TOL: f64 = $tol;
+            const PARTS: usize = $parts;
             const DIGEST: [u64; 2] = $digest;
             fn exp(self) -> $t {
                 <$t>::exp(self)
@@ -84,10 +89,10 @@ macro_rules! test_real {
         }
     };
 }
-test_real!(DD, "dd", 42, 1e-30, [0x92ec461781147d77, 0x13ac06786e54ccb1]);
-test_real!(QD, "qd", 80, 1e-62, [0x75902b0bf76ced2a, 0xb37fa8d9cb20094f]);
-// the digests of `digest_od`'s cells, not of all of them
-test_real!(OD, "od", 154, 1e-126, [0xc542a935a4215b82, 0x801e3f57cd16e9b1]);
+test_real!(DD, "dd", 42, 1e-30, 4, [0x92ec461781147d77, 0x13ac06786e54ccb1]);
+test_real!(QD, "qd", 80, 1e-62, 4, [0x75902b0bf76ced2a, 0xb37fa8d9cb20094f]);
+// the digests of `od_digests`' cells, not of all of them
+test_real!(OD, "od", 154, 1e-126, 8, [0x10f1b89a823ad3c3, 0x21d526b7c72a4319]);
 
 fn bar<T: TestReal>() -> f64 {
     1e6 * T::EPS
@@ -812,7 +817,14 @@ fn path_steps<T: TestReal>(p: Pth, ctl: Ctl) -> (Vec<(f64, f64, f64)>, PolyEq, S
 /// path must have ended where it is planned to (a branch with `Stop::End`, a fold with `Stop::Pivot`) after at least one
 /// accepted step: a path that stopped early has been measured on a prefix, or on nothing.
 fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
+    step_sum_run::<T>(p, ctl).0
+}
+
+/// `step_sum` and what it measured, for the digests: the stop and the step count, then for each planned step its x, l and
+/// every coefficient of the series (all parts), and last `worst`
+fn step_sum_run<T: TestReal>(p: Pth, ctl: Ctl) -> (Check, Vec<f64>) {
     let (pts, eq, stop) = path_steps::<T>(p, ctl);
+    let mut data = vec![stop as u8 as f64, pts.len() as f64];
     let want = if matches!(p, Pth::B(_)) { Stop::End } else { Stop::Pivot };
     let kt = T::KT;
     let mut rec = Recursion::<T>::new(&eq.pat, kt);
@@ -831,6 +843,10 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
             s.c[1][kt / 2] = T::from_f64(f64::NAN);
         }
         let sh = h / l;
+        data.extend([x, l]);
+        for c in s.c.iter().flatten() {
+            data.extend(parts(*c));
+        }
         for (cf, ef) in s.c.iter().zip(ex.iter()) {
             let (mut num, mut den, mut sk) = (0.0f64, 0.0f64, 1.0f64);
             for (c, e) in cf.iter().zip(ef.iter()).take(kt + 1) {
@@ -841,7 +857,8 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
             worst = nanmax(worst, num / (T::EPS * den));
         }
     }
-    Check {
+    data.push(worst);
+    let check = Check {
         pass: stop == want && !pts.is_empty() && worst <= 1e6,
         detail: format!(
             "{} {:?} {:?}: stop {:?} (wanted {:?}), {} steps, worst sum|dc_k| h^k / (eps sum|c_k| h^k) {:.2e} (bar 1e6)",
@@ -853,7 +870,8 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
             pts.len(),
             worst
         ),
-    }
+    };
+    (check, data)
 }
 
 fn show(c: &Check) {
@@ -1096,14 +1114,21 @@ fn lanes_controls() {
     }
 }
 
-/// the four leading parts of a lane value, as bits
-fn parts<T: TestReal>(v: T) -> [f64; 4] {
-    let (mut out, mut r) = ([0.0; 4], v);
-    for o in out.iter_mut() {
-        *o = r.to_f64();
-        r = r - T::from_f64(*o);
-    }
-    out
+/// the `n` leading parts of a lane value: each is the leading f64 of what the ones before leave
+fn parts_n<T: TestReal>(v: T, n: usize) -> Vec<f64> {
+    let mut r = v;
+    (0..n)
+        .map(|_| {
+            let o = r.to_f64();
+            r = r - T::from_f64(o);
+            o
+        })
+        .collect()
+}
+
+/// all the parts of a lane value that the digests hash
+fn parts<T: TestReal>(v: T) -> Vec<f64> {
+    parts_n(v, T::PARTS)
 }
 
 /// FNV-1a over the bits of f64s
@@ -1123,19 +1148,39 @@ impl Fnv {
     }
 }
 
-/// The digests of the planted results of some cells and folds, two of them, to compare across the SIMD backends bit for bit:
+/// What a control of `digests` changes in the result before it is hashed
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Poke {
+    None,
+    /// the last bit of the first checkpoint's y: `full` must change, and `base` does not
+    Checkpoint,
+    /// the first cell's end y[0] times (1 + 2^-300), a change below its fourth part: `base` and `full` must change
+    EndLower,
+    /// the last bit of the last part of the first coefficient of the first step-sum series: `full` must change, and
+    /// `base` does not
+    SumLast,
+}
+
+/// The digests of the planted results of some cells, folds and step-sum paths, two of them, to compare across the SIMD
+/// backends bit for bit:
 /// - `base` hashes the end state, the crossings' positions and the step count of each cell, and the end, step count and
-///   zero estimate of each fold, all parts: the first version of this check, whose values #190 and #214 quote;
+///   zero estimate of each fold, all parts of a value (`TestReal::PARTS`): the first version of this check, whose values
+///   #190 and #214 quote for f64, dd and qd;
 /// - `full` hashes those too, and what `base` leaves out: the state and step count at every checkpoint, each stop, each
-///   crossing's step and whether it was located, `n_rel_max` and `n_rel_pre_max`, a fold's `beta` and stop.
+///   crossing's step and whether it was located, `n_rel_max` and `n_rel_pre_max`, a fold's `beta` and stop, and for each
+///   path of `sums` what `step_sum_run` measured, every coefficient of every planned step's series included.
 ///
-/// `flip` flips the last bit of the first checkpoint's y (a control: `full` must change, and `base` does not).
-fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], flip: bool) -> (u64, u64) {
+/// `poke` is a control: it changes one thing in the result.
+fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], sums: &[Pth], poke: Poke) -> (u64, u64) {
     let (mut base, mut full) = (Fnv::new(), Fnv::new());
-    for &(br, mode) in cells {
+    for (ci, &(br, mode)) in cells.iter().enumerate() {
         let c = run_case::<T>(br, mode, Ctl::None);
+        let mut y = c.out.y;
+        if poke == Poke::EndLower && ci == 0 {
+            y[0] = y[0] + y[0].mulf(2f64.powi(-300));
+        }
         for h in [&mut base, &mut full] {
-            for v in c.out.y {
+            for v in y {
                 h.put_all(&parts(v));
             }
             for k in &c.out.crossings {
@@ -1152,7 +1197,7 @@ fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], flip: bool) -> (u6
             full.put(*x);
             for (f, v) in y.iter().enumerate() {
                 let mut p = parts(*v);
-                if flip && i == 0 && f == 0 {
+                if poke == Poke::Checkpoint && i == 0 && f == 0 {
                     p[0] = f64::from_bits(p[0].to_bits() ^ 1);
                 }
                 full.put_all(&p);
@@ -1185,6 +1230,15 @@ fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], flip: bool) -> (u6
             full.put(z.beta);
         }
     }
+    for &p in sums {
+        let (_, mut data) = step_sum_run::<T>(p, Ctl::None);
+        if poke == Poke::SumLast {
+            // data: stop, steps, then x, l and the parts of c[0][0] of the first step
+            let at = 3 + T::PARTS;
+            data[at] = f64::from_bits(data[at].to_bits() ^ 1);
+        }
+        full.put_all(&data);
+    }
     (base.0, full.0)
 }
 
@@ -1199,7 +1253,7 @@ fn all_cells() -> Vec<(Br, Branch)> {
 /// Pass: the two digests of a lane (`digest NAME base`, `digest-full NAME full`) equal `TestReal::DIGEST`, on every backend
 /// and target the suite runs on (the CI's SSE2, portable, AVX2 with `-C target-feature=+avx2,+fma`, NEON and MSVC jobs)
 fn digest_lane<T: TestReal>() {
-    let (base, full) = digests::<T>(&all_cells(), &[1, 2], false);
+    let (base, full) = digests::<T>(&all_cells(), &[1, 2], &[], Poke::None);
     println!("digest {} {:016x}", T::NAME, base);
     println!("digest-full {} {:016x}", T::NAME, full);
     check_digests::<T>(base, full);
@@ -1230,15 +1284,21 @@ fn digest_qd() {
     digest_lane::<QD>();
 }
 
-/// the octo-double cells of `octo_double`: K-A on both modes, K-B on `Project`, and the fold F1
-#[test]
-fn digest_od() {
+/// the octo-double results of `octo_double`: the cells K-A on both modes and K-B on `Project`, the fold F1 and the step
+/// sum of K-A
+fn od_digests(poke: Poke) -> (u64, u64) {
     let cells = [
         (Br::KA, Branch::Project),
         (Br::KA, Branch::Conserve),
         (Br::KB, Branch::Project),
     ];
-    let (base, full) = digests::<OD>(&cells, &[1], false);
+    digests::<OD>(&cells, &[1], &[Pth::B(Br::KA)], poke)
+}
+
+/// Pass: the two digests of the octo-double results, all eight parts of each value, equal `TestReal::DIGEST`
+#[test]
+fn digest_od() {
+    let (base, full) = od_digests(Poke::None);
     println!("digest {} {:016x}", <OD as TestReal>::NAME, base);
     println!("digest-full {} {:016x}", <OD as TestReal>::NAME, full);
     check_digests::<OD>(base, full);
@@ -1248,7 +1308,7 @@ fn digest_od() {
 /// pinned `base` still matches
 #[test]
 fn digest_pinned_fails_on_a_flip() {
-    let (base, full) = digests::<DD>(&all_cells(), &[1, 2], true);
+    let (base, full) = digests::<DD>(&all_cells(), &[1, 2], &[], Poke::Checkpoint);
     assert_eq!(base, <DD as TestReal>::DIGEST[0]);
     assert_ne!(
         full,
@@ -1262,11 +1322,42 @@ fn digest_pinned_fails_on_a_flip() {
 #[test]
 fn digest_sees_a_checkpoint() {
     let cells = [(Br::KA, Branch::Project)];
-    let (b0, f0) = digests::<DD>(&cells, &[], false);
-    let (b1, f1) = digests::<DD>(&cells, &[], true);
+    let (b0, f0) = digests::<DD>(&cells, &[], &[], Poke::None);
+    let (b1, f1) = digests::<DD>(&cells, &[], &[], Poke::Checkpoint);
     println!("flipped bit of a checkpoint: base {b0:016x} -> {b1:016x}, full {f0:016x} -> {f1:016x}");
     assert_eq!(b0, b1, "base hashes a checkpoint");
     assert_ne!(f0, f1, "full does not see a checkpoint");
+}
+
+/// Control of `parts` for an octo-double: a value changed below its fourth part has the same first four parts and
+/// different eight (`TestReal::PARTS`), and the eight are the whole value (the ninth is 0, the eighth is not)
+#[test]
+fn parts_see_a_lower_part() {
+    let v = OD::one() / OD::from_f64(3.0);
+    let w = v + v.mulf(2f64.powi(-300));
+    assert_eq!(parts_n(v, 4), parts_n(w, 4), "the change reaches the first four parts");
+    assert_ne!(
+        parts(v),
+        parts(w),
+        "the parts hashed do not see a change below the fourth"
+    );
+    let all = parts_n(w, 9);
+    assert!(all[7] != 0.0 && all[8] == 0.0, "an od is not its eight parts: {all:?}");
+}
+
+/// Control of the octo-double digests, from one run to the next: a change below the fourth part of an end state changes
+/// `base` and `full`, and one bit of a step-sum series' coefficient changes `full` and not `base`
+#[test]
+fn digest_od_sees_the_lower_parts() {
+    let (b0, f0) = od_digests(Poke::None);
+    let (b1, f1) = od_digests(Poke::EndLower);
+    let (b2, f2) = od_digests(Poke::SumLast);
+    println!("lower part of an end state: base {b0:016x} -> {b1:016x}, full {f0:016x} -> {f1:016x}");
+    println!("last part of a step-sum coefficient: base {b0:016x} -> {b2:016x}, full {f0:016x} -> {f2:016x}");
+    assert_ne!(b0, b1, "base does not see a lower part of an end state");
+    assert_ne!(f0, f1, "full does not see a lower part of an end state");
+    assert_eq!(b0, b2, "base hashes a step sum");
+    assert_ne!(f0, f2, "full does not see a step sum");
 }
 
 /// Pass (review of `Recursion::form`, `l^j` in `f64`): N = y'' - 2^1000 x^2 about x0 = 0 with l = 2^-600 has
