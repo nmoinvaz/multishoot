@@ -33,6 +33,10 @@ trait TestReal: Real {
     const NAME: &'static str;
     const KT: usize;
     const TOL: f64;
+    /// the `digests` of the lane's planted cells: [base, full], as printed on aarch64 NEON, both backends of multidouble
+    /// there agreeing (README, SIMD backends); a different value on any backend or target is a failure of the engine's
+    /// claim that results do not depend on it, and a deliberate change of the numerics changes these
+    const DIGEST: [u64; 2];
     fn exp(self) -> Self;
     fn sqrt(self) -> Self;
     fn sin(self) -> Self;
@@ -43,6 +47,7 @@ impl TestReal for f64 {
     const NAME: &'static str = "f64";
     const KT: usize = 22;
     const TOL: f64 = 1e-14;
+    const DIGEST: [u64; 2] = [0xb124d44e9758f1a1, 0x50775575530f4fa9];
     fn exp(self) -> f64 {
         f64::exp(self)
     }
@@ -58,11 +63,12 @@ impl TestReal for f64 {
 }
 
 macro_rules! test_real {
-    ($t:ty, $name:expr, $kt:expr, $tol:expr) => {
+    ($t:ty, $name:expr, $kt:expr, $tol:expr, $digest:expr) => {
         impl TestReal for $t {
             const NAME: &'static str = $name;
             const KT: usize = $kt;
             const TOL: f64 = $tol;
+            const DIGEST: [u64; 2] = $digest;
             fn exp(self) -> $t {
                 <$t>::exp(self)
             }
@@ -78,9 +84,10 @@ macro_rules! test_real {
         }
     };
 }
-test_real!(DD, "dd", 42, 1e-30);
-test_real!(QD, "qd", 80, 1e-62);
-test_real!(OD, "od", 154, 1e-126);
+test_real!(DD, "dd", 42, 1e-30, [0x92ec461781147d77, 0x13ac06786e54ccb1]);
+test_real!(QD, "qd", 80, 1e-62, [0x75902b0bf76ced2a, 0xb37fa8d9cb20094f]);
+// the digests of `digest_od`'s cells, not of all of them
+test_real!(OD, "od", 154, 1e-126, [0xc542a935a4215b82, 0x801e3f57cd16e9b1]);
 
 fn bar<T: TestReal>() -> f64 {
     1e6 * T::EPS
@@ -1189,12 +1196,23 @@ fn all_cells() -> Vec<(Br, Branch)> {
         .collect()
 }
 
-/// Prints the two digests of a lane (`digest NAME base`, `digest-full NAME full`) for `cargo test --release`, `--features
-/// portable` and `-C target-feature=+avx2,+fma`, which must print the same
+/// Pass: the two digests of a lane (`digest NAME base`, `digest-full NAME full`) equal `TestReal::DIGEST`, on every backend
+/// and target the suite runs on (the CI's SSE2, portable, AVX2 with `-C target-feature=+avx2,+fma`, NEON and MSVC jobs)
 fn digest_lane<T: TestReal>() {
     let (base, full) = digests::<T>(&all_cells(), &[1, 2], false);
     println!("digest {} {:016x}", T::NAME, base);
     println!("digest-full {} {:016x}", T::NAME, full);
+    check_digests::<T>(base, full);
+}
+
+fn check_digests<T: TestReal>(base: u64, full: u64) {
+    assert!(
+        [base, full] == T::DIGEST,
+        "{}: digests {base:016x} {full:016x}, pinned {:016x} {:016x}",
+        T::NAME,
+        T::DIGEST[0],
+        T::DIGEST[1]
+    );
 }
 
 #[test]
@@ -1223,6 +1241,20 @@ fn digest_od() {
     let (base, full) = digests::<OD>(&cells, &[1], false);
     println!("digest {} {:016x}", <OD as TestReal>::NAME, base);
     println!("digest-full {} {:016x}", <OD as TestReal>::NAME, full);
+    check_digests::<OD>(base, full);
+}
+
+/// Control of the pinned digests: the flipped checkpoint bit makes the comparison with the pinned `full` fail, and the
+/// pinned `base` still matches
+#[test]
+fn digest_pinned_fails_on_a_flip() {
+    let (base, full) = digests::<DD>(&all_cells(), &[1, 2], true);
+    assert_eq!(base, <DD as TestReal>::DIGEST[0]);
+    assert_ne!(
+        full,
+        <DD as TestReal>::DIGEST[1],
+        "the pinned digest does not see one flipped bit"
+    );
 }
 
 /// Control of the digests: one flipped bit of one checkpoint's state changes `full` and not `base`, which cannot see a
