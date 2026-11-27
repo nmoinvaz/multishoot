@@ -12,10 +12,11 @@
 //! among the roots. [`Branch::Project`] makes one Newton correction of y'' at each step's start, [`Branch::Conserve`]
 //! none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there the walk reports: a step
 //! that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is [`Stop::Pivot`] with an
-//! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`]: the branch
-//! passes a root of N in y'' of even multiplicity (a double root generically, a quadruple one where four roots meet) with
-//! its analytic continuation intact, and the zero of A0's series inside the step is located. Only a sign change between
-//! two step starts is seen: a step that passes two zeros of A0 and ends with the sign it started with reports none.
+//! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`]: the walk
+//! steps over it and locates the zero of A0's series inside the step. A crossing says nothing of the multiplicity of the
+//! root of N in y'' there: for `N = z^3 - x z` on the branch `z = 0`, `A0 = -x` changes sign at `x = 0`. Only a sign
+//! change between two step starts is seen: a step that passes two zeros of A0 and ends with the sign it started with
+//! reports none.
 //!
 //! Near a double root of N in y'' use [`Branch::Project`]; `Conserve` turns the crossing into an avoided one (see [`Branch`]).
 //!
@@ -718,9 +719,9 @@ pub enum Stop {
     NotFormed,
 }
 
-/// A sign change of A0 between two step starts: the branch passes a root of N in y'' of even multiplicity, as A0 has a zero
-/// of odd order there. `x` is the zero of A0's series inside the step (`located`), else the step's start. A step across
-/// two zeros of A0 changes no sign and has none.
+/// A sign change of A0 between two step starts, with no claim of the multiplicity of the root of N in y'' there (for
+/// `N = z^3 - x z` on `z = 0`, `A0 = -x` changes sign at the triple root `x = 0`). `x` is the zero of A0's series
+/// inside the step (`located`), else the step's start. A step across two zeros of A0 changes no sign and has none.
 
 #[derive(Clone, Debug)]
 pub struct Crossing<T> {
