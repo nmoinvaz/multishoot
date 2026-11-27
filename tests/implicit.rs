@@ -1325,6 +1325,37 @@ fn zero_only_pivot<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `taylor_shift`): an empty polynomial writes nothing and does not panic, a constant keeps its value, and
+/// 1 + 2x + 3x^2 about 2 is 17 + 14 h + 3 h^2
+fn shift_edges<T: TestReal>(ctl: Ctl) -> Check {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    let call = |poly: &[T], x0: f64, out: &mut [T]| {
+        #[cfg(feature = "mutate")]
+        if let Ctl::Lib(c) = ctl {
+            return taylor_shift_with(poly, x0, out, c);
+        }
+        taylor_shift(poly, x0, out)
+    };
+    let empty = catch_unwind(AssertUnwindSafe(|| call(&[], 0.5, &mut []))).is_ok();
+    let mut one = [T::from_f64(-1.0)];
+    call(&[T::from_f64(7.0)], 3.0, &mut one);
+    let mut quad = [T::zero(); 3];
+    call(&[T::one(), T::from_f64(2.0), T::from_f64(3.0)], 2.0, &mut quad);
+    let want = [17.0, 14.0, 3.0];
+    let (const_ok, quad_ok) = (one[0].to_f64() == 7.0, (0..3).all(|j| quad[j].to_f64() == want[j]));
+    Check {
+        pass: empty && const_ok && quad_ok,
+        detail: format!(
+            "{} {:?}: empty polynomial returns {}, constant kept {}, 1 + 2x + 3x^2 about 2 exact {}",
+            T::NAME,
+            ctl,
+            empty,
+            const_ok,
+            quad_ok
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1333,6 +1364,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, last_crossing::<T>(Ctl::None), false);
     tally(&mut bad, dup_checkpoints::<T>(Ctl::None), false);
     tally(&mut bad, zero_only_pivot::<T>(Ctl::None), false);
+    tally(&mut bad, shift_edges::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1453,7 +1485,8 @@ mod controls {
             | ImplicitControl::RepeatCrossing
             | ImplicitControl::NoEndCrossing
             | ImplicitControl::NoDedup
-            | ImplicitControl::KeepZero => [false; 6],
+            | ImplicitControl::KeepZero
+            | ImplicitControl::EmptyShift => [false; 6],
         }
     }
 
@@ -1521,6 +1554,7 @@ mod controls {
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
             (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
             (ImplicitControl::KeepZero, "zero_only_pivot", zero_only_pivot::<T>),
+            (ImplicitControl::EmptyShift, "shift_edges", shift_edges::<T>),
         ]
     }
 

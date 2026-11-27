@@ -128,4 +128,6 @@ pub enum ImplicitControl {
     NoDedup,
     /// the estimate of the zero returned with every `run` after a pivot stop, not only the one that stopped there
     KeepZero,
+    /// `taylor_shift` without its return on an empty polynomial
+    EmptyShift,
 }

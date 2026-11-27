@@ -201,8 +201,22 @@ pub trait Coefficients<T: Scalar> {
 }
 
 /// The coefficients of `p(x0 + h)` for `p(x) = sum_m poly[m] x^m`, in the scalar's precision, into `out[..poly.len()]`:
-/// `out[j] = sum_(m >= j) poly[m] C(m, j) x0^(m - j)`. Binomials are exact in `f64` up to degree 56.
+/// `out[j] = sum_(m >= j) poly[m] C(m, j) x0^(m - j)`. Binomials are exact in `f64` up to degree 56. An empty `poly` writes
+/// nothing.
 pub fn taylor_shift<T: Scalar>(poly: &[T], x0: f64, out: &mut [T]) {
+    shift(poly, x0, out, true)
+}
+
+/// [`taylor_shift`] under a control (feature `mutate`)
+#[cfg(feature = "mutate")]
+pub fn taylor_shift_with<T: Scalar>(poly: &[T], x0: f64, out: &mut [T], control: ImplicitControl) {
+    shift(poly, x0, out, control != ImplicitControl::EmptyShift)
+}
+
+fn shift<T: Scalar>(poly: &[T], x0: f64, out: &mut [T], empty_returns: bool) {
+    if empty_returns && poly.is_empty() {
+        return;
+    }
     let deg = poly.len().saturating_sub(1);
     assert!(deg <= 56, "taylor_shift: degree {deg} > 56");
     assert!(
