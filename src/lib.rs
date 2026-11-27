@@ -49,7 +49,7 @@
 //! * [`mobius`]: the Moebius variable of a series about a singular end, which keeps a far singularity far;
 //! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
 //! * [`relayout`]: a solution moved to new node positions or another number of collocation points;
-//! * [`plane`]: a k-plane of solutions of a linear system y' = J(x) y carried through Taylor steps with an
+//! * [`plane`]: a k-plane of solutions of a linear system y' = J(x) y, real or complex, carried through Taylor steps with an
 //!   orthonormalization after each, and the log of its volume;
 //! * [`lane`]: the lane types the engine is generic over, and constants in each lane's own precision;
 //! * `control` (feature `mutate`): deliberate errors, the controls of the accuracy checks.

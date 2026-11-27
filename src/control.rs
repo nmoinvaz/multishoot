@@ -96,6 +96,10 @@ pub enum PlaneControl {
     /// the advance), and so no `ln R_ii` of them: in exact arithmetic the next orthonormalization carries what these
     /// left, and `SkipQr(i, 1)` skips one
     SkipQr(usize, usize),
+    /// the projections of the orthonormalization use the product without the conjugate (and the norm the sum of z z, not
+    /// |z|^2): on a complex plane the phase of the projection coefficients and of the norms is lost, and the plane's
+    /// columns come back in a gauge without the rotation the system gave them (a real plane is unchanged)
+    NoConj,
 }
 
 /// A deliberate error in the implicit-ODE recursion or walk ([`crate::implicit`]), the controls of its planted checks
