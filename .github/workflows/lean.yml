@@ -1,0 +1,88 @@
+name: Lean
+# The proofs of lean/. The build fails on a proof left as sorry, on any warning, on an axiom other than Lean's three,
+# and on a kernel check that does not hold. The parts of PI_OD it proves things of are checked against the source.
+on:
+  pull_request:
+    paths:
+      - lean/**
+      - src/periodic.rs
+      - .github/workflows/lean.yml
+  push:
+    branches: [main]
+    paths:
+      - lean/**
+      - src/periodic.rs
+      - .github/workflows/lean.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: lean
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # elan reads the toolchain from lean/lean-toolchain on the first lake command
+      - name: Install elan
+        run: |
+          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # A build can start from any earlier one with the same toolchain and dependencies
+      - name: Set cache key
+        run: |
+          deps=$(cat lean-toolchain lake-manifest.json | sha256sum | cut -c1-16)
+          echo "CACHE_KEY=lean-${{ runner.os }}-${{ runner.arch }}-$deps" >> "$GITHUB_ENV"
+
+      - name: Restore build
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: lean/.lake
+          key: ${{ env.CACHE_KEY }}-${{ github.sha }}
+          restore-keys: ${{ env.CACHE_KEY }}-
+
+      # Mathlib's prebuilt files for the modules the proofs import
+      - name: Fetch Mathlib cache
+        run: |
+          lake exe cache get Mathlib.Tactic Mathlib.Analysis.SpecialFunctions.Complex.Arctan \
+            Mathlib.Analysis.SpecificLimits.Normed Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+
+      - name: Build
+        run: lake build
+
+      # Only main saves, so that pull requests do not fill the repository's cache with builds no other run restores.
+      - name: Save build
+        if: github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: lean/.lake
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+  parts:
+    name: PI_OD's parts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The integers the proof is of are the literals of src/periodic.rs
+      - name: Check the parts against the source
+        run: python3 -B lean/pi_od_parts.py

@@ -453,6 +453,15 @@ It also runs coverage, rustfmt, clippy on three backends, the documentation, and
 
 ![NEON and the portable backend give the same bits for the usage example's roots; on SSE2 and AVX2, CI checks the tests' pinned hashes instead](docs/figures/backends.svg)
 
+`lean/` holds Lean 4 proofs, on Mathlib alone, of facts the octo-double sines and cosines rest on.
+`Multishoot/PiOD.lean` proves that `PI_OD`'s eight parts are π's greedy round-to-nearest expansion, from π to 470 bits
+by Machin's formula. CI builds them, audits their axioms, and checks the parts against
+`src/periodic.rs`:
+
+```sh
+cd lean && lake exe cache get && lake build
+```
+
 ## References
 
 1. R. E. Wengert, "A simple automatic derivative evaluation program", Commun. ACM 7(8), 463–464, 1964,

@@ -9,7 +9,7 @@ repository = "https://github.com/nmoinvaz/multishoot"
 readme = "README.md"
 keywords = ["boundary-value", "multiple-shooting", "taylor-series", "extended-precision", "newton"]
 categories = ["mathematics", "science"]
-exclude = ["/.github", "/.claude", "/CLAUDE.md", "/docs", "/scripts"]
+exclude = ["/.github", "/.claude", "/CLAUDE.md", "/docs", "/lean", "/scripts"]
 
 [dependencies]
 # 4.1.0: the Precision trait over double-, quad- and octo-double (Double, Quad, Octo); 4.5.0: the blocked complex LU
