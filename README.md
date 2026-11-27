@@ -106,6 +106,8 @@ the distance at which its last coefficient leaves `f64`'s range (`NotFinite`; `S
 `fraction` has to leave room for the consumer's longest step: a plane stepper at tol 100 eps passes at the default 0.3, passes at 0.5
 and fails its volume check at 0.7 (double-double).
 
+![The steps of a Taylor table following 0.097 of the distance to a pole of its stored functions, and its lookup within 1.6e-29 where the source's own series summed to its piece end diverge](docs/figures/table.svg)
+
 ### Implicit ODEs
 
 For `N(x, y, y', y'') = sum_g A_g(x) y^a y'^b y''^c = 0`, a polynomial in y'' of any degree. The caller gives the monomials
