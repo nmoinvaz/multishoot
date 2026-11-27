@@ -286,6 +286,17 @@ enum Ctl {
     SwitchMid,
     /// the walk compared with another branch's closed form
     WrongForm,
+    /// one computed coefficient of the series replaced by a NaN
+    NanCoeff,
+}
+
+/// the larger of two numbers, NaN if either is: `f64::max` returns the other number, which hides a NaN measurement
+fn nanmax(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
 }
 
 /// max_f |a_f - b_f| / max_f |b_f|
@@ -726,7 +737,10 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
         let ex = exact_series::<T>(p, x, l, kt);
         let y0 = [ex[0][0], ex[1][0], ex[2][0]];
         eq.jets(x, kt, &mut jets);
-        let s = rec.form(&jets, l, y0).clone();
+        let mut s = rec.form(&jets, l, y0).clone();
+        if ctl == Ctl::NanCoeff {
+            s.c[1][kt / 2] = T::from_f64(f64::NAN);
+        }
         let sh = h / l;
         for (cf, ef) in s.c.iter().zip(ex.iter()) {
             let (mut num, mut den, mut sk) = (0.0f64, 0.0f64, 1.0f64);
@@ -735,7 +749,7 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
                 den += c.to_f64().abs() * sk;
                 sk *= sh;
             }
-            worst = worst.max(num / (T::EPS * den));
+            worst = nanmax(worst, num / (T::EPS * den));
         }
     }
     Check {
@@ -1215,9 +1229,21 @@ fn edges_qd() {
     edges_lane::<QD>();
 }
 
+/// a NaN coefficient fails the step sum, on a branch and on a fold
+fn nan_coeff_fires<T: TestReal>() {
+    for p in [Pth::B(Br::KA), Pth::F1] {
+        let c = step_sum::<T>(p, Ctl::NanCoeff);
+        show(&c);
+        assert!(!c.pass, "control NanCoeff did not fire: {}", c.detail);
+        assert!(step_sum::<T>(p, Ctl::None).pass);
+    }
+}
+
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    nan_coeff_fires::<f64>();
+    nan_coeff_fires::<DD>();
     for mode in all_modes() {
         for ctl in [Ctl::WrongStart, Ctl::SwitchMid, Ctl::WrongForm] {
             let c = closed_form::<DD>(Br::KA, mode, ctl);
