@@ -68,6 +68,35 @@ step that does not move x.
 
 ![Taylor step lengths near a pole and beyond it, and the cost of a layout at every Taylor order](docs/figures/taylor.svg)
 
+### Implicit ODEs
+
+For `N(x, y, y', y'') = sum_g A_g(x) y^a y'^b y''^c = 0`, a polynomial in y'' of any degree. The caller gives the monomials
+and, at each step's start, the Taylor coefficients of every A_g (`Coefficients`); the module knows nothing of any one problem.
+
+| Item | What it does |
+|---|---|
+| `implicit::Scalar`, `Real` | the numbers: `f64`, `DD`, `QD`, `OD`, and `Fl<T, 1>` of any lane (duals and jets included) |
+| `implicit::Recursion` | the Taylor series of one step: order k of N set to zero and solved for `y''_k`, one division by `A0 = dN/dy''` per step |
+| `implicit::Walker`, `WalkOpts`, `WalkOut` | a walk by the planner's rule (`taylor::step_from_norms`) with checkpoints, `form`, `planned` and `advance` for a caller that watches each step |
+| `implicit::Branch` | `Project`: one Newton correction of y'' at each step's start; `Conserve`: none, N stays at its start value |
+| `Stop::ZeroPivot`, `Stop::Pivot`, `WalkOut::zero`, `WalkOut::crossings` | where `A0` vanishes: a step that starts at `A0 = 0`, one that starts with `|A0| <= pivot_abs` and the estimate of the zero, the double roots the branch passes |
+| `implicit::taylor_shift` | the jet of a polynomial in x about x0 in the scalar's precision |
+
+The branch is chosen once, by the data, and carried; no root is picked by its order among the roots. Two branches can be
+confused only where roots meet, where `A0 = 0`. A sign change of `A0` between two step starts is a crossing: the branch
+passes a double root with its analytic continuation and the zero of `A0`'s series in the step is located. A step that
+starts with `|A0| <= pivot_abs` stops the walk with an estimate of the zero, `x* = x - beta A0 / A0'` with
+`beta = 1 / (1 - A0 A0'' / A0'^2)`: exact for `A0 ~ c |x* - x|^beta`, an estimate otherwise.
+
+Near a double root of N in y'' use `Project`. `Conserve` keeps N at its start value, a rounding eps and not 0, and for
+N = eps a double root is two roots: the crossing becomes an avoided crossing, the Taylor series about a point at distance d
+has radius about d, the steps shrink toward it and the walk ends with `Stop::Tiny`. `Project` sets N = 0 at each step's start
+and crosses. Away from `A0 = 0` the two agree to roundoff and `Conserve` costs less.
+
+The coefficients of a series are accurate to about eps times the series' size, not to eps each: the relative error of
+`c_k` grows about threefold per order (order k of N is a cancelling convolution), and what a step uses, `sum |dc_k| h^k`,
+stays within roundoff of `sum |c_k| h^k`.
+
 ### The layout
 
 | Item | What it does |

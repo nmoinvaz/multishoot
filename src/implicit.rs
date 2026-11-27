@@ -15,6 +15,8 @@
 //! estimate of the zero of A0 ([`Zero`]), and a sign change of A0 between two step starts is a [`Crossing`], a double root
 //! that the branch passes with its analytic continuation intact (the zero of A0's series inside the step is located).
 //!
+//! Near a double root of N in y'' use [`Branch::Project`]; `Conserve` turns the crossing into an avoided one (see [`Branch`]).
+//!
 //! The scalar is [`Scalar`]: `f64`, double-, quad- and octo-double, and a field of any lane (`Fl<T, 1>`, with duals).
 //! A walk ([`Walker`]) plans each step by multishoot's rule ([`Plan`], [`crate::taylor::step_from_norms`]) on the largest
 //! coefficients of orders kt - 1 and kt, relative to each field's own size by default, and sums the series by Horner's rule.
