@@ -1050,12 +1050,92 @@ fn underflow(ctl: Ctl) -> Check {
     }
 }
 
+/// y'' = 1
+fn unit_eq() -> PolyEq {
+    PolyEq::new(&[((0, 0, 1), &[1]), ((0, 0, 0), &[-1])])
+}
+
+/// whether two states are equal in every part
+fn same<T: TestReal>(a: &[T; 3], b: &[T; 3]) -> bool {
+    (0..3).all(|f| parts(a[f]) == parts(b[f]))
+}
+
+/// Pass (review of `Walker::advance`): a step uses the series of the `form` for its state and no other. For y'' = 1 from
+/// [0, 0, 1] at x = 0: `form`, `advance` to 1, and `advance` again without a `form` is `Stop::NotFormed` and leaves
+/// the walk where it was (a stale series would sum the series about 0 from 1 to 2 and give [1/2, 1, 1], not the state at
+/// 2); with a `form` before each `advance` the walk reaches [2, 2, 1] within the bar. `advance` after `set_y`, and after
+/// a `form` that stopped at a pivot, is `NotFormed` as well.
+fn stale<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = unit_eq();
+    let mut w = Walker::<T, _>::new(
+        &eq,
+        0.0,
+        [T::zero(), T::zero(), T::one()],
+        opts::<T>(Branch::Project, 1.0),
+    );
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let mut ok = w.form().is_ok() && w.advance(1.0, 3.0).is_ok();
+    let (x1, y1) = (w.x(), w.y());
+    let refused = w.advance(1.0, 3.0) == Err(Stop::NotFormed) && w.x() == x1 && same(&w.y(), &y1);
+    ok &= w.form().is_ok() && w.advance(1.0, 3.0).is_ok();
+    let want = [T::from_f64(2.0), T::from_f64(2.0), T::one()];
+    let err = rel_err(&w.y(), &want);
+    ok &= w.form().is_ok();
+    w.set_y(w.y());
+    let after_set = w.advance(1.0, 3.0) == Err(Stop::NotFormed);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 1e-4;
+    let y0 = [T::one(), T::from_f64(-2.5), T::from_f64(3.75)];
+    let f1 = PolyEq::f1();
+    let mut f = Walker::<T, _>::new(&f1, -1.0, y0, o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        f.set_control(c);
+    }
+    let stopped = f.run(1.0, &[]).stop == Stop::Pivot;
+    let h = f.planned();
+    let after_stop = stopped && f.advance(h, 1.0) == Err(Stop::NotFormed);
+    Check {
+        pass: ok && refused && err <= bar::<T>() && after_set && after_stop,
+        detail: format!(
+            "{} {:?}: advance without form refused {}, walk to 2 off by {:.2e}, refused after set_y {}, after a stop {}",
+            T::NAME,
+            ctl,
+            refused,
+            err,
+            after_set,
+            after_stop
+        ),
+    }
+}
+
+/// the edge cases of the review of multishoot#73 that hold in every lane
+fn edges_lane<T: TestReal>() {
+    let mut bad = Vec::new();
+    tally(&mut bad, stale::<T>(Ctl::None), false);
+    finish(bad);
+}
+
 /// the edge cases of the review of multishoot#73 whose exponents are beyond what the multi-doubles' splits take: f64 only
 #[test]
 fn edges_f64() {
+    edges_lane::<f64>();
     let mut bad = Vec::new();
     tally(&mut bad, underflow(Ctl::None), false);
     finish(bad);
+}
+
+#[test]
+fn edges_dd() {
+    edges_lane::<DD>();
+}
+
+#[test]
+fn edges_qd() {
+    edges_lane::<QD>();
 }
 
 /// The controls that need no hook: the check must fail on its stated case
@@ -1113,7 +1193,7 @@ mod controls {
             ImplicitControl::NoCrossing => [false, false, true, false, false, false],
             ImplicitControl::ExponentHalf => [false, false, false, false, true, false],
             ImplicitControl::NoPivotStop => [false, false, false, true, true, false],
-            ImplicitControl::None | ImplicitControl::PlainScale => [false; 6],
+            ImplicitControl::None | ImplicitControl::PlainScale | ImplicitControl::StaleSeries => [false; 6],
         }
     }
 
@@ -1173,9 +1253,26 @@ mod controls {
         finish(bad);
     }
 
+    /// the controls of the edge cases that hold in every lane
+    fn edge_rows<T: TestReal>() -> Vec<EdgeRow<'static>> {
+        vec![(ImplicitControl::StaleSeries, "stale", stale::<T>)]
+    }
+
     #[test]
     fn edge_controls_f64() {
-        edge_controls(&[(ImplicitControl::PlainScale, "underflow", underflow)]);
+        let mut rows = edge_rows::<f64>();
+        rows.push((ImplicitControl::PlainScale, "underflow", underflow));
+        edge_controls(&rows);
+    }
+
+    #[test]
+    fn edge_controls_dd() {
+        edge_controls(&edge_rows::<DD>());
+    }
+
+    #[test]
+    fn edge_controls_qd() {
+        edge_controls(&edge_rows::<QD>());
     }
 
     #[test]

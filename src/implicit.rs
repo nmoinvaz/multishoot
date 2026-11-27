@@ -681,6 +681,8 @@ pub enum Stop {
     /// a step shorter than `tiny * max(|x|, 1e-6)`
     Tiny,
     StepLimit,
+    /// [`Walker::advance`] without a [`Walker::form`] that succeeded for the current state
+    NotFormed,
 }
 
 /// A sign change of A0 between two step starts: the branch passes a double root of N in y''. `x` is the zero of A0's
@@ -754,6 +756,9 @@ pub struct Walker<'a, T: Real, S: Coefficients<T>> {
     l: f64,
     steps: usize,
     first: bool,
+    /// the series is that of the last successful `form` at the current state: `advance`, `set_y` and a `form` that stops
+    /// clear it
+    ready: bool,
     /// the sign of A0 at the current step's start
     cur_sign: f64,
     prev: Option<Prev<T>>,
@@ -820,6 +825,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             l,
             steps: 0,
             first: true,
+            ready: false,
             cur_sign: 0.0,
             prev: None,
             crossings: Vec::new(),
@@ -860,6 +866,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
     pub fn set_y(&mut self, y: [T; 3]) {
         self.y = y;
         self.prev = None;
+        self.ready = false;
     }
 
     /// N, `sum |terms|` (leading parts) and A0 at the state from the jets' order 0
@@ -883,8 +890,9 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
     }
 
     /// The jets about the current point, the state taken onto the branch (`Project`), and the series about the point.
-    /// A stop leaves the state as the projection made it.
+    /// A stop leaves the state as the projection made it, and [`Walker::advance`] then refuses until a `form` succeeds.
     pub fn form(&mut self) -> Result<&Series<T>, Stop> {
+        self.ready = false;
         let kt = self.opts.plan.kt;
         self.src.jets(self.x, kt, &mut self.jets);
         let (nv, sm, a0v) = self.eval(&self.y);
@@ -960,6 +968,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             self.zero = self.estimate_zero();
             return Err(Stop::Pivot);
         }
+        self.ready = true;
         Ok(&self.rec.series)
     }
 
@@ -1072,8 +1081,18 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
     /// Take a step of `h` (as planned) toward `target`, no further: a step that would leave less than 40% of the rest
     /// becomes half the rest, and one that reaches it lands on it. The state is summed by Horner's rule in s. Returns
     /// the step taken and whether it landed on `target`.
+    ///
+    /// The series must be the one [`Walker::form`] returned for the current state: [`Stop::NotFormed`] after a step, a
+    /// [`Walker::set_y`] or a `form` that stopped, with the walk unchanged.
     pub fn advance(&mut self, h: f64, target: f64) -> Result<Advance, Stop> {
         let kt = self.opts.plan.kt;
+        #[cfg(feature = "mutate")]
+        let stale_ok = self.control == ImplicitControl::StaleSeries;
+        #[cfg(not(feature = "mutate"))]
+        let stale_ok = false;
+        if !self.ready && !stale_ok {
+            return Err(Stop::NotFormed);
+        }
         if !(h.is_finite() && h > 0.0) {
             return Err(Stop::NonFinite);
         }
@@ -1112,6 +1131,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         self.l = 2f64.powi((h / self.opts.h_scale).log2().round() as i32).max(1e-300);
         self.steps += 1;
         self.first = false;
+        self.ready = false;
         Ok(Advance {
             landed: xn == target,
             h,

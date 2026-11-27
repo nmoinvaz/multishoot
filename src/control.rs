@@ -118,4 +118,6 @@ pub enum ImplicitControl {
     /// `l^j` rounded to `f64` before it scales a jet's coefficient, as it underflows or overflows where the product
     /// does not
     PlainScale,
+    /// `Walker::advance` sums the series the last `form` left, whether or not it was formed for the state
+    StaleSeries,
 }
