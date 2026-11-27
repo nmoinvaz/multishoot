@@ -137,4 +137,13 @@ pub enum ImplicitControl {
     /// the exponent of the zero estimate formed as a0 a2 / a1^2 of the coefficients of A0 as they are: not scaled by a
     /// power of two, with no shortcut for a linear A0 and no quotient form where the squares underflow
     PlainRho,
+    /// the quadratic coefficient of the zero estimate read from the scaled coefficients only, so that one that the
+    /// scaling rounds to zero makes the pivot look linear
+    ScaledQuad,
+    /// a zero estimate whose coordinate is not finite returned
+    NoFiniteZero,
+    /// 2 (a0 / a1) formed before it is multiplied by a2 / a1 in the quotient form of the exponent, which overflows
+    DoubleFirst,
+    /// beta a0 formed before it is divided by a1 in the zero estimate, which overflows
+    ProductFirst,
 }
