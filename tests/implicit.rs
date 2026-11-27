@@ -1263,12 +1263,47 @@ fn last_crossing<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::run`, equal checkpoints): `run(2, [1, 1])` of y'' = 1 from x = 0 ends with `Stop::End`, lands
+/// once on 1 and gives the state and the step count of `run(2, [1])`, bit for bit.
+fn dup_checkpoints<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = unit_eq();
+    let run = |cps: &[f64]| {
+        let y0 = [T::zero(), T::zero(), T::one()];
+        let mut w = Walker::<T, _>::new(&eq, 0.0, y0, opts::<T>(Branch::Project, 0.3));
+        #[cfg(feature = "mutate")]
+        if let Ctl::Lib(c) = ctl {
+            w.set_control(c);
+        }
+        w.run(2.0, cps)
+    };
+    let (twice, once) = (run(&[1.0, 1.0]), run(&[1.0]));
+    Check {
+        pass: twice.stop == Stop::End
+            && twice.x == 2.0
+            && twice.cps.len() == 1
+            && twice.cps[0].0 == 1.0
+            && twice.steps == once.steps
+            && same(&twice.y, &once.y),
+        detail: format!(
+            "{} {:?}: stop {:?} at {}, {} landings, {} steps against {} with the checkpoint once",
+            T::NAME,
+            ctl,
+            twice.stop,
+            twice.x,
+            twice.cps.len(),
+            twice.steps,
+            once.steps
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
     tally(&mut bad, stale::<T>(Ctl::None), false);
     tally(&mut bad, repeat_form::<T>(Ctl::None), false);
     tally(&mut bad, last_crossing::<T>(Ctl::None), false);
+    tally(&mut bad, dup_checkpoints::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1387,7 +1422,8 @@ mod controls {
             | ImplicitControl::PlainScale
             | ImplicitControl::StaleSeries
             | ImplicitControl::RepeatCrossing
-            | ImplicitControl::NoEndCrossing => [false; 6],
+            | ImplicitControl::NoEndCrossing
+            | ImplicitControl::NoDedup => [false; 6],
         }
     }
 
@@ -1453,6 +1489,7 @@ mod controls {
             (ImplicitControl::StaleSeries, "stale", stale::<T>),
             (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
             (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
+            (ImplicitControl::NoDedup, "dup_checkpoints", dup_checkpoints::<T>),
         ]
     }
 

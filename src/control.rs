@@ -124,4 +124,6 @@ pub enum ImplicitControl {
     RepeatCrossing,
     /// the end of the last accepted step of a `run` not looked at for a crossing
     NoEndCrossing,
+    /// equal checkpoints of a `run` not merged
+    NoDedup,
 }

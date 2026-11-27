@@ -1186,6 +1186,14 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             .filter(|&c| (c - x0) * dir > 0.0 && (x1 - c) * dir > 0.0)
             .collect();
         targets.sort_by(|a, b| (a * dir).partial_cmp(&(b * dir)).unwrap());
+        // a checkpoint given twice is one landing: the second would ask for a step of length 0
+        #[cfg(feature = "mutate")]
+        let dedup = self.control != ImplicitControl::NoDedup;
+        #[cfg(not(feature = "mutate"))]
+        let dedup = true;
+        if dedup {
+            targets.dedup();
+        }
         targets.push(x1);
         let mut ti = 0;
         let mut cp = Vec::new();
