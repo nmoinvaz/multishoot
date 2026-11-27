@@ -41,6 +41,8 @@
 //! * [`mode`]: the mode matrix, the linearization for perturbations growing at a complex rate, and its determinant,
 //!   whose zeros in the rate are counted by multisolver's argument principle;
 //! * [`periodic`]: collocation grids in the periodic variable and their derivative matrices;
+//! * [`implicit`]: Taylor steps of an implicit second-order ODE, a polynomial in y'', with its root branch carried by
+//!   continuity and the places where dN/dy'' vanishes reported;
 //! * [`interp`]: trigonometric interpolation in any precision, between uniform grids or at any points, and grids
 //!   mapped by Boyd's periodic arctan map with their derivative matrices;
 //! * [`series`]: the periodic solves of a series at a singular end, one per order, in every lane type;
@@ -56,6 +58,7 @@ pub mod control;
 pub mod equations;
 pub mod family;
 pub mod fast;
+pub mod implicit;
 pub mod interp;
 pub mod jacobian;
 pub mod jet;
