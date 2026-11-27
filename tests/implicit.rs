@@ -1673,6 +1673,37 @@ fn end_pole<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::estimate_zero`, a linear pivot with a tiny slope): N = (1 + 2^-550 x) y'' from the zero state
+/// at 0 with `pivot_abs` 2 stops with `Stop::Pivot` and the estimate x = -2^550 with beta = 1 (exact for a linear A0),
+/// though the slope squared is not an `f64`
+fn linear_pivot<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[1.0, pow2(-550)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 2.0;
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    let want = -pow2(550);
+    let (err, beta) = out
+        .zero
+        .as_ref()
+        .map_or((f64::NAN, f64::NAN), |z| (((z.x.to_f64() - want) / want).abs(), z.beta));
+    Check {
+        pass: out.stop == Stop::Pivot && err <= bar::<T>() && beta == 1.0,
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate off by {:.2e} of -2^550 with beta {}",
+            T::NAME,
+            ctl,
+            out.stop,
+            err,
+            beta
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1684,6 +1715,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, shift_edges::<T>(Ctl::None), false);
     tally(&mut bad, shift_zero_point::<T>(Ctl::None), false);
     tally(&mut bad, end_pole::<T>(Ctl::None), false);
+    tally(&mut bad, linear_pivot::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1722,12 +1754,13 @@ fn reciprocal(ctl: Ctl) -> Check {
     }
 }
 
-/// Pass (review of `Walker::form`, the zero estimate's exponent): N = 2^-550 (1 - x) y'' from the zero state at x = 0 has
-/// A0 = 2^-550 (1 - x), linear, zero at x = 1. With `pivot_abs` 1e-100 the walk stops at once with `Stop::Pivot`; the
-/// estimate is x = 1 with beta = 1, though the square of A0's slope, 2^-1100, is not an `f64`.
+/// Pass (review of `Walker::form`, the zero estimate's exponent): N = 2^-550 (1 - x)^2 y'' from the zero state at x = 0
+/// has A0 = 2^-550 (1 - x)^2, a pure power with beta = 2 and its zero at x = 1. With `pivot_abs` 1e-100 the walk stops at
+/// once with `Stop::Pivot`; the estimate is x = 1 with beta = 2, though the square of A0's slope, 2^-1098, is not an
+/// `f64`. A linear A0 has rho = 0 and needs no scaling (`linear_pivot`), so this one is quadratic.
 fn rho_scale(ctl: Ctl) -> Check {
     let c = pow2(-550);
-    let eq = RealEq::new(&[((0, 0, 1), &[c, -c])]);
+    let eq = RealEq::new(&[((0, 0, 1), &[c, -2.0 * c, c])]);
     let mut o = opts::<f64>(Branch::Project, 1.0);
     o.pivot_abs = 1e-100;
     let mut w = Walker::<f64, _>::new(&eq, 0.0, [0.0; 3], o);
@@ -1738,9 +1771,9 @@ fn rho_scale(ctl: Ctl) -> Check {
     let out = w.run(0.5, &[]);
     let (x, beta) = out.zero.as_ref().map_or((f64::NAN, f64::NAN), |z| (z.x, z.beta));
     Check {
-        pass: out.stop == Stop::Pivot && (x - 1.0).abs() <= bar::<f64>() && (beta - 1.0).abs() <= bar::<f64>(),
+        pass: out.stop == Stop::Pivot && (x - 1.0).abs() <= bar::<f64>() && (beta - 2.0).abs() <= bar::<f64>(),
         detail: format!(
-            "f64 {ctl:?}: stop {:?}, estimate x = {x}, beta = {beta} for x = 1, beta = 1",
+            "f64 {ctl:?}: stop {:?}, estimate x = {x}, beta = {beta} for x = 1, beta = 2",
             out.stop
         ),
     }

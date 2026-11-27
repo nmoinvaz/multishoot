@@ -1123,7 +1123,12 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             _ => mul_pow(v, 2.0, e.unsigned_abs() as usize),
         };
         let (s0, s1, s2) = (sc(a[0]), sc(a[1]), sc(a[2]));
-        let rho = (s0 * s2).mulf(2.0) / (s1 * s1);
+        // a linear A0 has rho = 0 and beta = 1, which `s1 * s1` may not show where it underflows
+        let rho = if s2.to_f64() == 0.0 {
+            T::zero()
+        } else {
+            (s0 * s2).mulf(2.0) / (s1 * s1)
+        };
         #[allow(unused_mut)]
         let mut beta = T::one() / (T::one() - rho);
         #[cfg(feature = "mutate")]
