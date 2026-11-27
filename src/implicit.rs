@@ -730,8 +730,11 @@ pub enum Stop {
 
 /// A sign change of A0 between two step starts, with no claim of the multiplicity of the root of N in y'' there (for
 /// `N = z^3 - x z` on `z = 0`, `A0 = -x` changes sign at the triple root `x = 0`). `x` is the zero of A0's series
-/// inside the step (`located`), else the step's start, which is not a zero. A step across two zeros of A0 changes no
-/// sign and has none.
+/// inside the step (`located`: the bracket of the sign change closed), else the step's start, which is not a zero. A
+/// step across two zeros of A0 changes no sign and has none. The sign of a start is the first `form`'s at it; the zero
+/// is found in the series of the state the step left from, the last one formed (under `Branch::Project` each `form`
+/// corrects the state again), so a start formed twice can give a location from a state other than the one whose sign
+/// was read.
 
 #[derive(Clone, Debug)]
 pub struct Crossing<T> {
@@ -949,6 +952,8 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
 
     /// The jets about the current point, the state taken onto the branch (`Project`), and the series about the point.
     /// A stop leaves the state as the projection made it, and [`Walker::advance`] then refuses until a `form` succeeds.
+    /// A `form` of a state already formed corrects it again under `Project`; the sign of A0 that a crossing is compared
+    /// with is that of the first, and the step that leaves is taken from the last.
     pub fn form(&mut self) -> Result<&Series<T>, Stop> {
         self.ready = false;
         let kt = self.opts.plan.kt;
@@ -1012,7 +1017,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if crossings_on {
             self.check_crossing(sg);
         }
-        if !self.sampled {
+        #[cfg(feature = "mutate")]
+        let last = self.control == ImplicitControl::LastSign;
+        #[cfg(not(feature = "mutate"))]
+        let last = false;
+        if !self.sampled || last {
             self.cur_sign = sg;
             self.sampled = true;
         }
@@ -1065,7 +1074,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         self.src.jets(self.x, kt, &mut self.jets);
         let (_, _, a0) = self.eval(&self.y);
         let a0 = a0.to_f64();
-        if !a0.is_finite() {
+        #[cfg(feature = "mutate")]
+        let read_any = self.control == ImplicitControl::NoFiniteEnd;
+        #[cfg(not(feature = "mutate"))]
+        let read_any = false;
+        if !read_any && !a0.is_finite() {
             return None;
         }
         let sg = sign(a0);
@@ -1090,7 +1103,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         let hs = p.hs;
         let (mut lo, mut hi) = (0.0f64, hs.to_f64());
         let s_lo = sign(at(T::zero()));
-        let bracketed = s_lo != 0.0 && sign(at(hs)) == -s_lo;
+        let bracketed = s_lo != 0.0 && sign(at(hs)) == -s_lo && hi.is_finite();
         let step = self.steps;
         if !bracketed {
             return Crossing {
@@ -1154,7 +1167,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             }
             let next = s - horner_t(&a, s) / d;
             // the refinement stays in the bracket
-            if !(next.to_f64() >= lo && next.to_f64() <= hi) {
+            if !(open || (next.to_f64() >= lo && next.to_f64() <= hi)) {
                 break;
             }
             s = next;
