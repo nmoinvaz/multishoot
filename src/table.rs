@@ -89,8 +89,9 @@ pub struct Opts {
     pub nb: usize,
     /// the share of the sum that the last `last` terms may carry, positive
     pub tail: f64,
-    /// how many of the last coefficients the test reads, 1 ..= nb. 4: a series whose last three coefficients vanish
-    /// by a symmetry of period 3 is still seen
+    /// how many of the last coefficients the test reads, 1 ..= nb (a `last` of nb reads `c_0`, which no tail passes).
+    /// The default is 4, or nb - 1 where nb is smaller: a series whose last three coefficients vanish by a symmetry of
+    /// period 3 is still seen
     pub last: usize,
     /// a step is this share of the width, in (0, 1]
     pub fraction: f64,
@@ -107,12 +108,13 @@ pub struct Opts {
 }
 
 impl Opts {
-    /// `nb` coefficients and `tail`, with `last` 4, `fraction` 0.3, no `hmax`, no `atol` and a million steps at most
+    /// `nb` coefficients and `tail`, with `last` 4 (nb - 1 where that is less), `fraction` 0.3, no `hmax`, no `atol` and a
+    /// million steps at most
     pub fn new(nb: usize, tail: f64) -> Opts {
         Opts {
             nb,
             tail,
-            last: 4,
+            last: 4.min(nb.saturating_sub(1).max(1)),
             fraction: 0.3,
             hmax: f64::INFINITY,
             atol: 0.0,
@@ -265,8 +267,14 @@ impl Terms {
     }
 }
 
-/// The width of a step: the largest `h` up to `cap` at which every function passes (module docs)
+/// The width of a step: the end of the search for the largest `h` up to `cap` at which every function passes (module
+/// docs); 0 where no positive `h` passes or `cap` is not a positive number
 fn width_of(terms: &[Terms], cap: f64, o: &Opts, tail: f64) -> f64 {
+    // a cap past f64's range (`limit / fraction` overflowing) is f64::MAX; the search never halves an infinity
+    let cap = cap.min(f64::MAX);
+    if cap.is_nan() || cap <= 0.0 {
+        return 0.0;
+    }
     let ok = |h: f64| {
         #[cfg(feature = "mutate")]
         if o.control == TableControl::Unscaled {
@@ -282,7 +290,7 @@ fn width_of(terms: &[Terms], cap: f64, o: &Opts, tail: f64) -> f64 {
     while !ok(lo) {
         hi = lo;
         lo *= 0.5;
-        if lo < 1e-300 {
+        if lo == 0.0 {
             return 0.0;
         }
     }
@@ -404,20 +412,20 @@ impl<T: Real> Table<T> {
                     });
                 }
             }
-            let rest = (xb - x).abs();
             let to_valid = (valid - x) * dir;
             if to_valid.is_nan() || to_valid <= 0.0 {
                 return Err(Error::Stall { x });
             }
+            // the nearer of the source's piece end and the path's end, compared by coordinate in the path's direction (a
+            // tie: the path's end), not by the rounded distances
             #[allow(unused_mut)]
-            let mut limit = rest.min(opts.hmax);
-            #[allow(unused_mut)]
-            let mut end_valid = to_valid;
+            let mut stop = if (valid - xb) * dir < 0.0 { valid } else { xb };
             #[cfg(feature = "mutate")]
             if opts.control == TableControl::IgnoreValidTo {
-                end_valid = f64::INFINITY;
+                stop = xb;
             }
-            limit = limit.min(end_valid);
+            let to_stop = (stop - x).abs();
+            let limit = to_stop.min(opts.hmax);
             let terms: Vec<Terms> = (0..nf).map(|f| Terms::of(&buf[f * nb..(f + 1) * nb])).collect();
             let w = width_of(&terms, limit / fraction, opts, tail);
             #[allow(unused_mut)]
@@ -426,13 +434,12 @@ impl<T: Real> Table<T> {
             if opts.control == TableControl::Wide {
                 h = limit;
             }
-            let x1 = if h >= rest {
-                xb
-            } else if h >= end_valid {
-                valid
-            } else {
-                x + dir * h
-            };
+            let at_stop = h >= to_stop;
+            let mut x1 = if at_stop { stop } else { x + dir * h };
+            // the endpoint is rounded to an f64: a step that came out longer than `hmax` is moved inward
+            while !at_stop && x1 != x && (x1 - x).abs() > opts.hmax {
+                x1 = if dir > 0.0 { x1.next_down() } else { x1.next_up() };
+            }
             if x1 == x || (x1 - x) * dir <= 0.0 {
                 return Err(Error::Stall { x });
             }
@@ -470,14 +477,21 @@ impl<T: Real> Table<T> {
         (self.start[i], self.end[i])
     }
 
-    /// The width found at the start of step `i`: the distance within which every stored series passes the tail test, at
-    /// most the search cap `limit / fraction`
+    /// The width found at the start of step `i`: the end of the search, a distance at which every stored series passes
+    /// the tail test and, unless it is the search cap `limit / fraction`, twice which fails. Where the passing set is an
+    /// interval (the cases the module's derivation covers) every shorter distance passes too; where it is not (a series
+    /// dominated by its last terms) only this point is certain, and the width is a point, not an interval.
     pub fn width(&self, i: usize) -> f64 {
         self.width[i]
     }
 
     /// The stored coefficients `0..nb` of function `f` about the start of step `i`
+    ///
+    /// # Panics
+    /// A step or function outside the table.
     pub fn series(&self, i: usize, f: usize) -> &[T] {
+        assert!(i < self.steps(), "Table::series: step {i} of {}", self.steps());
+        assert!(f < self.nf, "Table::series: function {f} of {}", self.nf);
         let o = (i * self.nf + f) * self.nb;
         &self.c[o..o + self.nb]
     }
@@ -530,7 +544,9 @@ impl<T: Real> Table<T> {
         out[..kj].copy_from_slice(&buf[..kj]);
     }
 
-    /// How far a step from `x0` stays inside the converged width of its table step: `width - |x0 - start|`, at least 0
+    /// How far a step from `x0` stays inside the width of its table step: `width - |x0 - start|`, at least 0. It is a
+    /// distance to the point [`Table::width`] names, with the same limit: it says the tail test passes at the end of the
+    /// reach, and at every point of it only where the passing set is an interval.
     ///
     /// # Panics
     /// `x0` outside the path.
@@ -573,7 +589,8 @@ pub struct TableJets<'a, T: Real> {
 
 impl<'a, T: Real> TableJets<'a, T> {
     /// # Panics
-    /// A pattern that does not have one entry per function of the table.
+    /// A pattern that does not have one entry per function of the table, or that has an entry twice (`JetSource` takes
+    /// each entry once).
     pub fn new(table: &'a Table<T>, pattern: Vec<(usize, usize)>) -> Self {
         assert_eq!(
             pattern.len(),
@@ -581,6 +598,12 @@ impl<'a, T: Real> TableJets<'a, T> {
             "TableJets::new: {} pattern entries for {} functions",
             pattern.len(),
             table.functions()
+        );
+        let mut sorted = pattern.clone();
+        sorted.sort_unstable();
+        assert!(
+            sorted.windows(2).all(|w| w[0] != w[1]),
+            "TableJets::new: an entry occurs twice in the pattern"
         );
         TableJets { table, pattern }
     }
@@ -591,7 +614,15 @@ impl<T: Real> JetSource<T> for TableJets<'_, T> {
         self.pattern.clone()
     }
 
+    /// # Panics
+    /// `kj` above the table's `nb`: the orders past it are not stored, and a stepper that was handed zeros for them would
+    /// integrate a different system without saying so.
     fn jets(&self, x0: f64, kj: usize, out: &mut Jets<T>) {
+        assert!(
+            kj <= self.table.nb(),
+            "TableJets::jets: the plan asks for {kj} coefficients, which exceeds the table's nb = {}",
+            self.table.nb()
+        );
         for (e, en) in out.ent.iter_mut().enumerate() {
             self.table.shifted(x0, e, kj, &mut en.c[..kj]);
             en.n = kj;
