@@ -98,6 +98,30 @@ pub enum PlaneControl {
     SkipQr(usize, usize),
 }
 
+/// A deliberate error of the Taylor table ([`crate::table`]): `Wide`, `FractionOne`, `LooseTail`, `IgnoreValidTo` and
+/// `Unscaled` act when the table is built (`Opts::control`), `NoShift` and `ShiftF64` in its lookup
+/// (`Table::set_control`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableControl {
+    /// none
+    None,
+    /// every step runs to the end of the source's piece, of the path or to `hmax`, the width ignored
+    Wide,
+    /// `fraction` 1: a step is the whole width, with no room for a consumer's step
+    FractionOne,
+    /// `tail` 1e-5 in place of the setting
+    LooseTail,
+    /// the end of the source's piece not looked at, so that a step can run across it
+    IgnoreValidTo,
+    /// the tail test formed in plain `f64` products, which underflow where a coefficient is large and `h^k` small
+    Unscaled,
+    /// the lookup does not shift: the series about the step's start is read as the series about `x0`
+    NoShift,
+    /// the shift's `delta` formed as the difference of two `f64` numbers in `f64` and widened, where it is exact in the
+    /// lane's own type
+    ShiftF64,
+}
+
 /// A deliberate error in the implicit-ODE recursion or walk ([`crate::implicit`]), the controls of its planted checks
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImplicitControl {
