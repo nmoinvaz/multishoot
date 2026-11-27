@@ -20,7 +20,7 @@
 //! The scalar is [`Scalar`]: `f64`, double-, quad- and octo-double, and a field of any lane (`Fl<T, 1>`, with duals).
 //! A walk ([`Walker`]) plans each step by multishoot's rule ([`Plan`], [`crate::taylor::step_from_norms`]) on the largest
 //! coefficients of orders kt - 1 and kt, relative to each field's own size by default, and sums the series by Horner's rule.
-use crate::lane::Lane;
+use crate::lane::{BaseLane, Lane, DV, OV, QV};
 use crate::taylor::{step_from_norms, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
@@ -46,6 +46,12 @@ pub trait Scalar:
     fn mulf(self, s: f64) -> Self;
     /// rounded to double-double and back: the identity on `f64`, double-double and the lanes' fields (a control's tool)
     fn round_dd(self) -> Self;
+    /// `sum_(j = 0..=k) a[j] b[k - j]`, the Cauchy product's coefficient. The default is the plain sum of products; the
+    /// multi-double scalars and the lanes' fields accumulate in multidouble's dot accumulators (`Lane::acc`), as
+    /// `field::cs` does, which keeps the rounding of a sum that cancels (as the orders of N do) below the plain sum's.
+    fn cauchy(a: &[Self], b: &[Self], k: usize) -> Self {
+        plain_cauchy(a, b, k)
+    }
 }
 
 /// The scalars of a walk: a number with a leading `f64` and a unit roundoff
@@ -85,7 +91,7 @@ impl Real for f64 {
 }
 
 macro_rules! scalar_multidouble {
-    ($t:ty, $eps:expr, $from_dd:expr, $to_dd:expr, $mulf:expr) => {
+    ($t:ty, $eps:expr, $from_dd:expr, $to_dd:expr, $mulf:expr, $lane:ident) => {
         impl Scalar for $t {
             fn zero() -> $t {
                 <$t>::from_f64(0.0)
@@ -105,6 +111,13 @@ macro_rules! scalar_multidouble {
             fn round_dd(self) -> $t {
                 $from_dd($to_dd(self))
             }
+            fn cauchy(a: &[$t], b: &[$t], k: usize) -> $t {
+                let mut acc = $lane::acc0();
+                for j in 0..=k {
+                    acc = $lane::acc(acc, $lane::splat(a[j]), $lane::splat(b[k - j]));
+                }
+                Fl([$lane::fin(acc)]).get(0)
+            }
         }
         impl Real for $t {
             const EPS: f64 = $eps;
@@ -115,9 +128,16 @@ macro_rules! scalar_multidouble {
     };
 }
 
-scalar_multidouble!(DD, 1.232595164407831e-32, |x| x, |x| x, |x: DD, s| x.mul_f(s));
-scalar_multidouble!(QD, 1.504632769052528e-64, QD::from_dd, QD::to_dd, |x: QD, s| x.mul_f(s));
-scalar_multidouble!(OD, 2.3e-128, OD::from_dd, OD::to_dd, |x: OD, s| x.mul_f(s));
+scalar_multidouble!(DD, 1.232595164407831e-32, |x| x, |x| x, |x: DD, s| x.mul_f(s), DV);
+scalar_multidouble!(
+    QD,
+    1.504632769052528e-64,
+    QD::from_dd,
+    QD::to_dd,
+    |x: QD, s| x.mul_f(s),
+    QV
+);
+scalar_multidouble!(OD, 2.3e-128, OD::from_dd, OD::to_dd, |x: OD, s| x.mul_f(s), OV);
 
 impl<T: Lane> Scalar for Fl<T, 1> {
     fn zero() -> Self {
@@ -137,6 +157,9 @@ impl<T: Lane> Scalar for Fl<T, 1> {
     }
     fn round_dd(self) -> Self {
         self
+    }
+    fn cauchy(a: &[Self], b: &[Self], k: usize) -> Self {
+        multidouble::field::cs(a, b, k)
     }
 }
 
@@ -215,8 +238,8 @@ pub fn taylor_shift<T: Scalar>(poly: &[T], x0: f64, out: &mut [T]) {
 #[cfg(feature = "mutate")]
 pub use crate::control::ImplicitControl;
 
-/// `sum_(j = 0..=k) a[j] b[k - j]`
-fn cauchy<T: Scalar>(a: &[T], b: &[T], k: usize) -> T {
+/// `sum_(j = 0..=k) a[j] b[k - j]` by the plain sum of products
+fn plain_cauchy<T: Scalar>(a: &[T], b: &[T], k: usize) -> T {
     let mut s = a[0] * b[k];
     for j in 1..=k {
         s = s + a[j] * b[k - j];
@@ -368,30 +391,30 @@ impl<T: Scalar> Recursion<T> {
             self.pw0[a][k] = if a == 1 {
                 self.series.c[0][k]
             } else {
-                cauchy(&self.pw0[a - 1], &self.series.c[0], k)
+                T::cauchy(&self.pw0[a - 1], &self.series.c[0], k)
             };
         }
         for b in 1..=self.bmax {
             self.pw1[b][k] = if b == 1 {
                 self.series.c[1][k]
             } else {
-                cauchy(&self.pw1[b - 1], &self.series.c[1], k)
+                T::cauchy(&self.pw1[b - 1], &self.series.c[1], k)
             };
         }
         self.pw2[1][k] = self.series.c[2][k];
         for c in 2..=self.cmax {
-            let v = cauchy(&self.pw2[c - 1], &self.series.c[2], k);
+            let v = T::cauchy(&self.pw2[c - 1], &self.series.c[2], k);
             self.pw2[c][k] = v;
         }
         for i in 0..self.pair_keys.len() {
             let (a, b) = self.pair_keys[i];
-            let v = cauchy(&self.pw0[a], &self.pw1[b], k);
+            let v = T::cauchy(&self.pw0[a], &self.pw1[b], k);
             self.pairs[i][k] = v;
         }
         for g in 0..self.pat.len() {
             let c = self.pat[g].2;
             if c > 0 {
-                let v = cauchy(self.base_of(g), &self.pw2[c], k);
+                let v = T::cauchy(self.base_of(g), &self.pw2[c], k);
                 self.q[g][k] = v;
             }
         }
@@ -549,12 +572,8 @@ impl<T: Scalar> Recursion<T> {
             for (k, o) in out.iter_mut().enumerate() {
                 let mut t = T::zero();
                 // (ex * base * y''^(c-1))_k as the double Cauchy sum
-                for j in 0..self.nex[g].min(k + 1) {
-                    let mut inner = base[0] * low[k - j];
-                    for i in 1..=(k - j) {
-                        inner = inner + base[i] * low[k - j - i];
-                    }
-                    t = t + inner * self.ex[g][j];
+                for (j, &e) in self.ex[g].iter().enumerate().take(self.nex[g].min(k + 1)) {
+                    t = t + T::cauchy(base, low, k - j) * e;
                 }
                 *o = *o + t.mulf(c as f64);
             }
