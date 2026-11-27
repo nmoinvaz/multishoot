@@ -288,6 +288,8 @@ enum Ctl {
     WrongForm,
     /// one computed coefficient of the series replaced by a NaN
     NanCoeff,
+    /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
+    Cut(usize),
 }
 
 /// the larger of two numbers, NaN if either is: `f64::max` returns the other number, which hides a NaN measurement
@@ -675,8 +677,9 @@ fn exact_series<T: TestReal>(p: Pth, x0: f64, l: f64, kt: usize) -> [Vec<T>; 3] 
     ]
 }
 
-/// The steps of a planted path: (x_i, l_i, planned h_i) at each step start
-fn path_steps<T: TestReal>(p: Pth) -> (Vec<(f64, f64, f64)>, PolyEq) {
+/// The accepted steps of a planted path, (x_i, l_i, planned h_i) at each step start, the equation, and the stop that ended
+/// the path: `Stop::End` for a branch, the `Stop::Pivot` of a fold
+fn path_steps<T: TestReal>(p: Pth, ctl: Ctl) -> (Vec<(f64, f64, f64)>, PolyEq, Stop) {
     let (eq, x0, y0, x1, o) = match p {
         Pth::B(br) => (
             eq_of(br),
@@ -708,23 +711,34 @@ fn path_steps<T: TestReal>(p: Pth) -> (Vec<(f64, f64, f64)>, PolyEq) {
     };
     let mut w = Walker::<T, _>::new(&eq, x0, y0, o);
     let mut pts = Vec::new();
+    let mut stop = Stop::End;
     while (x1 - w.x()) > 0.0 {
-        if w.form().is_err() {
+        if ctl == Ctl::Cut(pts.len()) {
+            stop = Stop::StepLimit;
+            break;
+        }
+        if let Err(s) = w.form() {
+            stop = s;
             break;
         }
         let h = w.planned();
-        pts.push((w.x(), w.series().l, h));
-        if w.advance(h, x1).is_err() {
+        let at = (w.x(), w.series().l, h);
+        if let Err(s) = w.advance(h, x1) {
+            stop = s;
             break;
         }
+        pts.push(at);
     }
-    (pts, eq)
+    (pts, eq, stop)
 }
 
 /// The recursion's series against the closed form's at the planned step of each step of a path, started from the exact
-/// state at the step's start: sum_k |dc_k| h^k <= 1e6 eps sum_k |c_k| h^k for each field (README, amendment A1)
+/// state at the step's start: sum_k |dc_k| h^k <= 1e6 eps sum_k |c_k| h^k for each field (README, amendment A1). The
+/// path must have ended where it is planned to (a branch with `Stop::End`, a fold with `Stop::Pivot`) after at least one
+/// accepted step: a path that stopped early has been measured on a prefix, or on nothing.
 fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
-    let (pts, eq) = path_steps::<T>(p);
+    let (pts, eq, stop) = path_steps::<T>(p, ctl);
+    let want = if matches!(p, Pth::B(_)) { Stop::End } else { Stop::Pivot };
     let kt = T::KT;
     let mut rec = Recursion::<T>::new(&eq.pat, kt);
     #[cfg(feature = "mutate")]
@@ -753,12 +767,14 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
         }
     }
     Check {
-        pass: worst <= 1e6,
+        pass: stop == want && !pts.is_empty() && worst <= 1e6,
         detail: format!(
-            "{} {:?} {:?}: {} steps, worst sum|dc_k| h^k / (eps sum|c_k| h^k) {:.2e} (bar 1e6)",
+            "{} {:?} {:?}: stop {:?} (wanted {:?}), {} steps, worst sum|dc_k| h^k / (eps sum|c_k| h^k) {:.2e} (bar 1e6)",
             T::NAME,
             p,
             ctl,
+            stop,
+            want,
             pts.len(),
             worst
         ),
@@ -1239,9 +1255,22 @@ fn nan_coeff_fires<T: TestReal>() {
     }
 }
 
+/// a path that stops early, at its first `form` or after three steps, fails the step sum, on a branch and on a fold
+fn cut_fires<T: TestReal>() {
+    for p in [Pth::B(Br::KA), Pth::F1] {
+        for n in [0, 3] {
+            let c = step_sum::<T>(p, Ctl::Cut(n));
+            show(&c);
+            assert!(!c.pass, "control Cut({n}) did not fire: {}", c.detail);
+        }
+    }
+}
+
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    cut_fires::<f64>();
+    cut_fires::<DD>();
     nan_coeff_fires::<f64>();
     nan_coeff_fires::<DD>();
     for mode in all_modes() {
