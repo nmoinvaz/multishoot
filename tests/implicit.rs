@@ -512,8 +512,8 @@ fn coeffs<T: TestReal>(l: f64, ctl: Ctl) -> Check {
             (a[k + 1] * T::from_f64((k + 1) as f64)).mulf(lk),
             (a[k + 2] * T::from_f64(((k + 1) * (k + 2)) as f64)).mulf(lk),
         ];
-        for f in 0..3 {
-            worst = worst.max(((s.c[f][k] - ex[f]) / ex[f]).to_f64().abs());
+        for (cf, e) in s.c.iter().zip(ex.iter()) {
+            worst = worst.max(((cf[k] - *e) / *e).to_f64().abs());
         }
     }
     Check {
@@ -691,11 +691,11 @@ fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
         eq.jets(x, kt, &mut jets);
         let s = rec.form(&jets, l, y0).clone();
         let sh = h / l;
-        for f in 0..3 {
+        for (cf, ef) in s.c.iter().zip(ex.iter()) {
             let (mut num, mut den, mut sk) = (0.0f64, 0.0f64, 1.0f64);
-            for k in 0..=kt {
-                num += (s.c[f][k] - ex[f][k]).to_f64().abs() * sk;
-                den += s.c[f][k].to_f64().abs() * sk;
+            for (c, e) in cf.iter().zip(ef.iter()).take(kt + 1) {
+                num += (*c - *e).to_f64().abs() * sk;
+                den += c.to_f64().abs() * sk;
                 sk *= sh;
             }
             worst = worst.max(num / (T::EPS * den));
