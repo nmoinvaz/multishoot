@@ -1681,7 +1681,10 @@ fn shift_edges<T: TestReal>(ctl: Ctl) -> Check {
 /// Pass (review of `taylor_shift`, a shift by 0): [0, 0, 2^1023] about 0 and about -0 is itself, not a NaN from the
 /// binomial 2 times 2^1023 times 0
 fn shift_zero_point<T: TestReal>(ctl: Ctl) -> Check {
-    let poly = [T::zero(), T::zero(), T::from_f64(pow2(1023))];
+    let mut poly = [T::zero(), T::zero(), T::from_f64(pow2(1023))];
+    if ctl == Ctl::NanCoeff {
+        poly[1] = T::from_f64(f64::NAN);
+    }
     let ok: Vec<bool> = [0.0, -0.0]
         .iter()
         .map(|&x0| {
@@ -2045,6 +2048,14 @@ fn flip_bit_fires<T: TestReal>() {
     assert!(planner::<T>(Ctl::None).pass);
 }
 
+/// a NaN coefficient, which is what the overflowing binomial wrote, fails `shift_zero_point`
+fn shift_nan_fires<T: TestReal>() {
+    let c = shift_zero_point::<T>(Ctl::NanCoeff);
+    show(&c);
+    assert!(!c.pass, "control NanCoeff did not fire: {}", c.detail);
+    assert!(shift_zero_point::<T>(Ctl::None).pass);
+}
+
 /// a NaN position of a crossing fails `crossings`, and a NaN end state fails `closed_form`
 fn nan_position_fires<T: TestReal>() {
     for (c, name) in [
@@ -2061,6 +2072,9 @@ fn nan_position_fires<T: TestReal>() {
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    shift_nan_fires::<f64>();
+    shift_nan_fires::<DD>();
+    shift_nan_fires::<QD>();
     flip_bit_fires::<f64>();
     flip_bit_fires::<DD>();
     flip_bit_fires::<QD>();
