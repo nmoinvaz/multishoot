@@ -1047,7 +1047,11 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         let kt = self.opts.plan.kt;
         self.src.jets(self.x, kt, &mut self.jets);
         let (_, _, a0) = self.eval(&self.y);
-        self.check_crossing(sign(a0.to_f64()));
+        let a0 = a0.to_f64();
+        if !a0.is_finite() {
+            return;
+        }
+        self.check_crossing(sign(a0));
     }
 
     /// The zero of A0's series in the step before, between its start and its end (A0 changes sign there)
