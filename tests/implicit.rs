@@ -1099,28 +1099,61 @@ fn parts<T: TestReal>(v: T) -> [f64; 4] {
     out
 }
 
-/// Prints one digest per lane of every planted result (the states at the landings, the crossings and the zero estimates, all
-/// parts), to compare across the SIMD backends bit for bit: `cargo test --release` and `--features portable` print the same
-fn digest_lane<T: TestReal>() {
-    let mut h = 0xcbf29ce484222325u64;
-    let mut put = |x: f64| {
+/// FNV-1a over the bits of f64s
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf29ce484222325)
+    }
+    fn put(&mut self, x: f64) {
         for b in x.to_bits().to_le_bytes() {
-            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
-        }
-    };
-    for br in BRANCHES {
-        for mode in all_modes() {
-            let c = run_case::<T>(br, mode, Ctl::None);
-            for v in c.out.y {
-                parts(v).iter().for_each(|&p| put(p));
-            }
-            for k in &c.out.crossings {
-                parts(k.x).iter().for_each(|&p| put(p));
-            }
-            put(c.out.steps as f64);
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x100000001b3);
         }
     }
-    for which in [1u8, 2] {
+    fn put_all(&mut self, xs: &[f64]) {
+        xs.iter().for_each(|&x| self.put(x));
+    }
+}
+
+/// The digests of the planted results of some cells and folds, two of them, to compare across the SIMD backends bit for bit:
+/// - `base` hashes the end state, the crossings' positions and the step count of each cell, and the end, step count and
+///   zero estimate of each fold, all parts: the first version of this check, whose values #190 and #214 quote;
+/// - `full` hashes those too, and what `base` leaves out: the state and step count at every checkpoint, each stop, each
+///   crossing's step and whether it was located, `n_rel_max` and `n_rel_pre_max`, a fold's `beta` and stop.
+///
+/// `flip` flips the last bit of the first checkpoint's y (a control: `full` must change, and `base` does not).
+fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], flip: bool) -> (u64, u64) {
+    let (mut base, mut full) = (Fnv::new(), Fnv::new());
+    for &(br, mode) in cells {
+        let c = run_case::<T>(br, mode, Ctl::None);
+        for h in [&mut base, &mut full] {
+            for v in c.out.y {
+                h.put_all(&parts(v));
+            }
+            for k in &c.out.crossings {
+                h.put_all(&parts(k.x));
+            }
+            h.put(c.out.steps as f64);
+        }
+        full.put(c.out.stop as u8 as f64);
+        full.put_all(&[c.out.n_rel_max, c.out.n_rel_pre_max]);
+        for k in &c.out.crossings {
+            full.put_all(&[k.step as f64, k.located as u8 as f64]);
+        }
+        for (i, (x, y, n)) in c.out.cps.iter().enumerate() {
+            full.put(*x);
+            for (f, v) in y.iter().enumerate() {
+                let mut p = parts(*v);
+                if flip && i == 0 && f == 0 {
+                    p[0] = f64::from_bits(p[0].to_bits() ^ 1);
+                }
+                full.put_all(&p);
+            }
+            full.put(*n as f64);
+        }
+    }
+    for &which in folds {
         let (eq, y0, pivot) = if which == 1 {
             (PolyEq::f1(), [T::one(), T::from_f64(-2.5), T::from_f64(3.75)], 1e-4)
         } else {
@@ -1133,13 +1166,35 @@ fn digest_lane<T: TestReal>() {
         let mut o = opts::<T>(Branch::Project, 1.0);
         o.pivot_abs = pivot;
         let out = Walker::<T, _>::new(&eq, -1.0, y0, o).run(1.0, &[]);
-        put(out.x);
-        put(out.steps as f64);
-        if let Some(z) = out.zero {
-            parts(z.x).iter().for_each(|&p| put(p));
+        for h in [&mut base, &mut full] {
+            h.put(out.x);
+            h.put(out.steps as f64);
+            if let Some(z) = &out.zero {
+                h.put_all(&parts(z.x));
+            }
+        }
+        full.put(out.stop as u8 as f64);
+        if let Some(z) = &out.zero {
+            full.put(z.beta);
         }
     }
-    println!("digest {} {:016x}", T::NAME, h);
+    (base.0, full.0)
+}
+
+/// every cell of the planted walks, and both folds
+fn all_cells() -> Vec<(Br, Branch)> {
+    BRANCHES
+        .iter()
+        .flat_map(|&br| all_modes().into_iter().map(move |m| (br, m)))
+        .collect()
+}
+
+/// Prints the two digests of a lane (`digest NAME base`, `digest-full NAME full`) for `cargo test --release`, `--features
+/// portable` and `-C target-feature=+avx2,+fma`, which must print the same
+fn digest_lane<T: TestReal>() {
+    let (base, full) = digests::<T>(&all_cells(), &[1, 2], false);
+    println!("digest {} {:016x}", T::NAME, base);
+    println!("digest-full {} {:016x}", T::NAME, full);
 }
 
 #[test]
@@ -1155,6 +1210,31 @@ fn digest_dd() {
 #[test]
 fn digest_qd() {
     digest_lane::<QD>();
+}
+
+/// the octo-double cells of `octo_double`: K-A on both modes, K-B on `Project`, and the fold F1
+#[test]
+fn digest_od() {
+    let cells = [
+        (Br::KA, Branch::Project),
+        (Br::KA, Branch::Conserve),
+        (Br::KB, Branch::Project),
+    ];
+    let (base, full) = digests::<OD>(&cells, &[1], false);
+    println!("digest {} {:016x}", <OD as TestReal>::NAME, base);
+    println!("digest-full {} {:016x}", <OD as TestReal>::NAME, full);
+}
+
+/// Control of the digests: one flipped bit of one checkpoint's state changes `full` and not `base`, which cannot see a
+/// checkpoint; it is the case `full` was added for
+#[test]
+fn digest_sees_a_checkpoint() {
+    let cells = [(Br::KA, Branch::Project)];
+    let (b0, f0) = digests::<DD>(&cells, &[], false);
+    let (b1, f1) = digests::<DD>(&cells, &[], true);
+    println!("flipped bit of a checkpoint: base {b0:016x} -> {b1:016x}, full {f0:016x} -> {f1:016x}");
+    assert_eq!(b0, b1, "base hashes a checkpoint");
+    assert_ne!(f0, f1, "full does not see a checkpoint");
 }
 
 /// Pass (review of `Recursion::form`, `l^j` in `f64`): N = y'' - 2^1000 x^2 about x0 = 0 with l = 2^-600 has
