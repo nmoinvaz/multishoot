@@ -642,9 +642,9 @@ impl<T: Scalar> Recursion<T> {
 /// branch becomes an avoided crossing (or a fold). A Taylor series about a point at distance d from the crossing then has
 /// radius about d, the planner's steps shrink toward it and the walk ends with [`Stop::Tiny`], or it follows the other
 /// branch. `Project` makes one Newton correction at each step's start, which brings N back to about roundoff when the
-/// state is near the branch, so the double root stays a double root. It is one correction, not a projection onto N = 0
-/// (for `N = y''^2 - 1` at `y'' = 2` it gives `y'' = 1.25`, where N is still 0.5625): it promises neither a zero of N
-/// nor a crossing.
+/// state is near the branch, and then the double root stays a double root. It is one correction, not a projection onto
+/// N = 0 (for `N = y''^2 - 1` at `y'' = 2` it gives `y'' = 1.25`, where N is still 0.5625), and a residual that stays
+/// nonzero can still turn the crossing into an avoided one: it promises neither a zero of N nor a crossing.
 /// Where `|A0|` stays away from 0, both give the branch to roundoff; `Conserve` is then the cheaper (no evaluation of N
 /// per step) and its drift of N is bounded by the roundoff of the steps (`WalkOut::n_rel_max`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
