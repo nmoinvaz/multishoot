@@ -291,6 +291,10 @@ enum Ctl {
     NanCoeff,
     /// one coefficient of the series off by 10 bar of the series' size
     BadCoeff,
+    /// the position of every crossing found replaced by a NaN
+    NanPos,
+    /// the end state of the walk replaced by a NaN
+    NanState,
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -306,8 +310,8 @@ fn nanmax(a: f64, b: f64) -> f64 {
 
 /// max_f |a_f - b_f| / max_f |b_f|
 fn rel_err<T: TestReal>(a: &[T; 3], b: &[T; 3]) -> f64 {
-    let d = (0..3).map(|f| (a[f] - b[f]).to_f64().abs()).fold(0.0, f64::max);
-    let n = (0..3).map(|f| b[f].to_f64().abs()).fold(0.0, f64::max);
+    let d = (0..3).map(|f| (a[f] - b[f]).to_f64().abs()).fold(0.0, nanmax);
+    let n = (0..3).map(|f| b[f].to_f64().abs()).fold(0.0, nanmax);
     d / n
 }
 
@@ -339,7 +343,7 @@ fn run_case<T: TestReal>(br: Br, mode: Branch, ctl: Ctl) -> Case<T> {
         w.set_y([y0[0], y0[1], -y0[2]]);
     }
     let mut cps = Vec::new();
-    let out = if ctl == Ctl::SwitchMid {
+    let mut out = if ctl == Ctl::SwitchMid {
         let o1 = w.run(0.6, &CPS);
         cps.extend(o1.cps.iter().cloned());
         let y = o1.y;
@@ -349,6 +353,9 @@ fn run_case<T: TestReal>(br: Br, mode: Branch, ctl: Ctl) -> Case<T> {
         w.run(3.0, &CPS)
     };
     cps.extend(out.cps.iter().cloned());
+    if ctl == Ctl::NanState {
+        out.y[0] = T::from_f64(f64::NAN);
+    }
     let against = if ctl == Ctl::WrongForm { Br::KB } else { br };
     let mut errs = Vec::new();
     for (x, y, _) in &cps {
@@ -366,7 +373,7 @@ struct Check {
 fn closed_form<T: TestReal>(br: Br, mode: Branch, ctl: Ctl) -> Check {
     let c = run_case::<T>(br, mode, ctl);
     let b = bar::<T>();
-    let worst = c.errs.iter().cloned().fold(0.0, f64::max);
+    let worst = c.errs.iter().cloned().fold(0.0, nanmax);
     let pass = c.out.stop == Stop::End && c.errs.len() == 3 && worst <= b && c.out.n_rel_max <= b;
     Check {
         pass,
@@ -386,13 +393,18 @@ fn closed_form<T: TestReal>(br: Br, mode: Branch, ctl: Ctl) -> Check {
 }
 
 fn crossings<T: TestReal>(br: Br, mode: Branch, ctl: Ctl) -> Check {
-    let c = run_case::<T>(br, mode, ctl);
+    let mut c = run_case::<T>(br, mode, ctl);
+    if ctl == Ctl::NanPos {
+        for k in c.out.crossings.iter_mut() {
+            k.x = T::from_f64(f64::NAN);
+        }
+    }
     let list = crossing_list::<T>(br);
     let b = bar::<T>();
     let found: Vec<T> = c.out.crossings.iter().map(|k| k.x).collect();
     let mut worst = 0.0f64;
     for (a, e) in found.iter().zip(&list) {
-        worst = worst.max((*a - *e).to_f64().abs() / e.to_f64().abs().max(1.0));
+        worst = nanmax(worst, (*a - *e).to_f64().abs() / e.to_f64().abs().max(1.0));
     }
     let pass = found.len() == list.len() && c.out.crossings.iter().all(|k| k.located) && worst <= b;
     Check {
@@ -1478,9 +1490,25 @@ fn bad_coeff_fires<T: TestReal>() {
     }
 }
 
+/// a NaN position of a crossing fails `crossings`, and a NaN end state fails `closed_form`
+fn nan_position_fires<T: TestReal>() {
+    for (c, name) in [
+        (crossings::<T>(Br::KA, Branch::Project, Ctl::NanPos), "NanPos"),
+        (closed_form::<T>(Br::KA, Branch::Project, Ctl::NanState), "NanState"),
+    ] {
+        show(&c);
+        assert!(!c.pass, "control {name} did not fire: {}", c.detail);
+    }
+    assert!(crossings::<T>(Br::KA, Branch::Project, Ctl::None).pass);
+    assert!(closed_form::<T>(Br::KA, Branch::Project, Ctl::None).pass);
+}
+
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    nan_position_fires::<f64>();
+    nan_position_fires::<DD>();
+    nan_position_fires::<QD>();
     bad_coeff_fires::<f64>();
     bad_coeff_fires::<DD>();
     bad_coeff_fires::<QD>();
