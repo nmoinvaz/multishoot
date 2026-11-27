@@ -156,6 +156,43 @@ impl<T: Scalar> Coefficients<T> for PolyEq {
     }
 }
 
+/// N with `f64` coefficients, for the equations whose coefficients are beyond `PolyEq`'s integers (2^1000, 2^-1030)
+struct RealEq {
+    pat: Vec<Mono>,
+    polys: Vec<Vec<f64>>,
+}
+
+impl RealEq {
+    fn new(terms: &[(Mono, &[f64])]) -> Self {
+        RealEq {
+            pat: terms.iter().map(|t| t.0).collect(),
+            polys: terms.iter().map(|t| t.1.to_vec()).collect(),
+        }
+    }
+}
+
+impl<T: Scalar> Coefficients<T> for RealEq {
+    fn pattern(&self) -> Vec<Mono> {
+        self.pat.clone()
+    }
+    fn jets(&self, x0: f64, _kt: usize, out: &mut Jets<T>) {
+        for (g, p) in self.polys.iter().enumerate() {
+            let poly: Vec<T> = p.iter().map(|&c| T::from_f64(c)).collect();
+            taylor_shift(&poly, x0, &mut out.ent[g].c);
+            out.ent[g].n = poly.len();
+        }
+    }
+}
+
+/// 2^e exactly, for -1074 <= e <= 1023
+fn pow2(e: i32) -> f64 {
+    if e >= -1022 {
+        f64::from_bits(((e + 1023) as u64) << 52)
+    } else {
+        f64::from_bits(1u64 << (e + 1074))
+    }
+}
+
 /// the branches of the planted equations
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Br {
@@ -992,6 +1029,35 @@ fn digest_qd() {
     digest_lane::<QD>();
 }
 
+/// Pass (review of `Recursion::form`, `l^j` in `f64`): N = y'' - 2^1000 x^2 about x0 = 0 with l = 2^-600 has
+/// `y''_2 = 2^1000 l^2 = 2^-200` within the bar of f64, though `l^2 = 2^-1200` is not an `f64`
+fn underflow(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[1.0]), ((0, 0, 0), &[0.0, 0.0, -pow2(1000)])]);
+    let kt = 4;
+    let mut rec = Recursion::<f64>::new(&eq.pat, kt);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        rec.set_control(c);
+    }
+    let mut jets = Jets::<f64>::new(eq.pat.len(), kt);
+    Coefficients::<f64>::jets(&eq, 0.0, kt, &mut jets);
+    let got = rec.form(&jets, pow2(-600), [0.0; 3]).c[2][2];
+    let want = pow2(-200);
+    let err = ((got - want) / want).abs();
+    Check {
+        pass: err <= bar::<f64>(),
+        detail: format!("f64 {ctl:?}: y''_2 = {got:e} for 2^-200 = {want:e}, relative error {err:.2e}"),
+    }
+}
+
+/// the edge cases of the review of multishoot#73 whose exponents are beyond what the multi-doubles' splits take: f64 only
+#[test]
+fn edges_f64() {
+    let mut bad = Vec::new();
+    tally(&mut bad, underflow(Ctl::None), false);
+    finish(bad);
+}
+
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
@@ -1047,7 +1113,7 @@ mod controls {
             ImplicitControl::NoCrossing => [false, false, true, false, false, false],
             ImplicitControl::ExponentHalf => [false, false, false, false, true, false],
             ImplicitControl::NoPivotStop => [false, false, false, true, true, false],
-            ImplicitControl::None => [false; 6],
+            ImplicitControl::None | ImplicitControl::PlainScale => [false; 6],
         }
     }
 
@@ -1078,6 +1144,38 @@ mod controls {
             }
         }
         finish(bad);
+    }
+
+    /// a control, the name of the check it is run against, and the check
+    type EdgeRow<'a> = (ImplicitControl, &'a str, fn(Ctl) -> Check);
+
+    /// Pass: each edge check is met without its control and fails with it
+    fn edge_controls(rows: &[EdgeRow]) {
+        let mut bad = Vec::new();
+        for &(c, name, f) in rows {
+            let (clean, wrong) = (f(Ctl::None), f(Ctl::Lib(c)));
+            let ok = clean.pass && !wrong.pass;
+            println!(
+                "[{}] control {:?} against {}: met without {}, with: {}",
+                if ok { "FIRED" } else { "MISMATCH" },
+                c,
+                name,
+                clean.pass,
+                wrong.detail
+            );
+            if !ok {
+                bad.push(format!(
+                    "{c:?} against {name}: met without it {}, met with it {}",
+                    clean.pass, wrong.pass
+                ));
+            }
+        }
+        finish(bad);
+    }
+
+    #[test]
+    fn edge_controls_f64() {
+        edge_controls(&[(ImplicitControl::PlainScale, "underflow", underflow)]);
     }
 
     #[test]
