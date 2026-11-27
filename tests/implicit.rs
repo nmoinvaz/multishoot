@@ -1635,6 +1635,44 @@ fn shift_zero_point<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// N = A(x) y'' with A = -1 before x = 1 and +inf from there: the pole of a pivot -1/(1 - x) read at 1, where the pivot
+/// has been negative throughout
+struct PoleEq;
+
+impl<T: Scalar> Coefficients<T> for PoleEq {
+    fn pattern(&self) -> Vec<Mono> {
+        vec![(0, 0, 1)]
+    }
+    fn jets(&self, x0: f64, _kt: usize, out: &mut Jets<T>) {
+        out.ent[0].c[0] = T::from_f64(if x0 < 1.0 { -1.0 } else { f64::INFINITY });
+        out.ent[0].n = 1;
+    }
+}
+
+/// Pass (review of `Walker::check_end`, a non-finite pivot at the end): the zero branch of N = A(x) y'' with `PoleEq`'s A
+/// from 0 to 1 is one step to the pole. The pivot is negative throughout, so the walk ends with `Stop::End` at 1 and
+/// reports no crossing.
+fn end_pole<T: TestReal>(ctl: Ctl) -> Check {
+    let mut w = Walker::<T, _>::new(&PoleEq, 0.0, [T::zero(); 3], opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    Check {
+        pass: out.stop == Stop::End && out.x == 1.0 && out.steps == 1 && out.crossings.is_empty(),
+        detail: format!(
+            "{} {:?}: stop {:?} at {} after {} steps, {} crossings (none expected)",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.x,
+            out.steps,
+            out.crossings.len()
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1645,6 +1683,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, zero_only_pivot::<T>(Ctl::None), false);
     tally(&mut bad, shift_edges::<T>(Ctl::None), false);
     tally(&mut bad, shift_zero_point::<T>(Ctl::None), false);
+    tally(&mut bad, end_pole::<T>(Ctl::None), false);
     finish(bad);
 }
 
