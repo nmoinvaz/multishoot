@@ -320,12 +320,12 @@ def running_max(v):
 
 
 def line_key(svg, right, y, items):
-    """short line samples and labels right-aligned at right, items as (label, dash)"""
+    """short line samples and labels right-aligned at right, items as (label, dash) or (label, dash, color)"""
     lx = right
-    for label, dash in reversed(items):
+    for label, dash, *color in reversed(items):
         svg.text(lx, y, label, size=11, fill=INK, anchor="end")
         lx -= text_width(label, 11) + 8
-        svg.add(polyline([(lx - 22, y - 4), (lx, y - 4)], INK_SOFT, 2, dash=dash))
+        svg.add(polyline([(lx - 22, y - 4), (lx, y - 4)], color[0] if color else INK_SOFT, 2, dash=dash))
         lx -= 22 + 16
 
 
@@ -399,6 +399,127 @@ def plane():
                             f"ln(1/eps)/{gap:g}", "log-volume, largest"],
           [(L["name"], L["kt"], f"{L['steps_plane']}, {L['steps_apart']}", sci(max(L["plane"])), lost_at(L),
             f"{math.log(1 / L['eps']) / gap:.2f}", sci(max(L["vol_plane"]))) for L in lanes])
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Taylor tables
+
+
+def table_fig():
+    t = load("table")
+    s, e, w, err = t["start"], t["end"], t["width"], t["err"]
+    n = len(s)
+    xa, xb, piece, tail, poles = t["xa"], t["xb"], t["piece"], t["tail"], t["poles"]
+    hs = [b - a for a, b in zip(s, e)]
+    # a step that ends at a piece end or the path's end reports the search's cap as its width
+    stops = {k * piece for k in range(1, int(xb // piece) + 1)} | {xb}
+    capped = [b in stops for b in e]
+    dist = [min(abs(x - p) for p in poles) for x in s]
+    ratio = w[0] / dist[0]
+    svg = Svg(W)
+    period, a0, a1 = 8.0, 0.4, 6.4
+    px, pw = 84, W - 84 - 56
+    dash, dot_dash = "6 4", "2 3"
+
+    def decades(v):
+        return f"{v:g}" if f"{v:e}".startswith("1.") else ""
+
+    def when(xm, x):
+        """the time at which the reveal reaches x"""
+        return a0 + (a1 - a0) * (xm(x) - px) / pw
+
+    def appear(start, at):
+        """the parts added since index start, shown from time at"""
+        marks = svg.parts[start:]
+        del svg.parts[start:]
+        group(svg, marks, shown(at, None, period))
+
+    def cursor(cid, top, bottom):
+        if STATIC:
+            return
+        fa, fb = a0 / period, a1 / period
+        mv = (f'values="{px};{px};{px + pw};{px + pw}" keyTimes="0;{fa:.4f};{fb:.4f};1" dur="{period}s" '
+              f'repeatCount="indefinite"')
+        svg.add(f'<g>{shown(a0, a1, period)}<line x1="{px}" y1="{top:.1f}" x2="{px}" y2="{bottom:.1f}" '
+                f'stroke="{INK_SOFT}" stroke-width="1"><animate attributeName="x1" {mv}/>'
+                f'<animate attributeName="x2" {mv}/></line></g>')
+
+    y = caption(svg, 16, 22, f"Each step is {t['fraction']:g} of the width at which the stored series converge, "
+                f"not the source's piece",
+                f"PA of tests/table.rs in DD: 1/x², 1/x and 1/(30 − x) on [{xa:g}, {xb:g}], the source's pieces of "
+                f"length {piece:g}, nb {t['nb']}, tail {tail:g}")
+    line_key(svg, px + pw, y - 10, [("step h", None, SERIES[0]), ("width w", dash, SERIES[0]),
+                                    ("to the piece end", None, NEUTRAL), ("to the pole", dot_dash, INK_SOFT)])
+    sh, h1 = 14, 170
+    py = y + sh + 10
+    xm, ym = axes(svg, px, py, pw, h1, (xa, xb, "log"), (-5, 2), "x", "length", xfmt=decades, yfmt=exp_fmt)
+    pc = clip(svg, "table-plot", px, py, pw, h1)
+    # what the path allows: the distance to the nearest pole, and the reach to the source's piece end
+    gx = t["grid_x"]
+    reach = [(xm(x), ym(math.log10(min((x // piece + 1) * piece, xb) - x))) for x in gx]
+    pole = [(xm(x), ym(math.log10(min(abs(x - p) for p in poles)))) for x in gx]
+    svg.add(f"<g {pc}>{polyline(reach, NEUTRAL, 1.6)}{polyline(pole, INK_SOFT, 1.6, dash=dot_dash)}</g>")
+    cp = reveal(svg, "table-reveal", px, y - 2, pw, py + h1 - y + 2, a0, a1, period)
+    inner = []
+    for i in range(n):
+        x0, x1 = xm(s[i]), xm(e[i])
+        fo = "1" if i % 2 == 0 else "0.45"
+        inner.append(f'<rect x="{x0:.2f}" y="{y:.1f}" width="{max(x1 - x0, 0.4):.2f}" height="{sh}" '
+                     f'fill="{SERIES[0]}" fill-opacity="{fo}"><title>step {i + 1}: [{s[i]:.6g}, {e[i]:.6g}], '
+                     f'h = {sci(hs[i])}, w = {sci(w[i])}</title></rect>')
+    inner.append(polyline([(xm(a), ym(math.log10(h))) for a, h in zip(s, hs)], SERIES[0], 2))
+    inner.append(polyline([(xm(a), ym(math.log10(v))) for a, v, c in zip(s, w, capped) if not c], SERIES[0], 1.8,
+                          dash=dash))
+    svg.add(f"<g {cp}>{''.join(inner)}</g>")
+    svg.text(px - 6, y + 11, "steps", size=10, anchor="end")
+    i = min(range(n), key=lambda k: abs(s[k] - 0.01))
+    mark = len(svg.parts)
+    callout(svg, xm(s[i]), ym(math.log10(w[i])), f"w = {ratio:.3f} × the distance to the pole at 0", dx=34, dy=42)
+    appear(mark, when(xm, s[i]))
+    i = next(k for k in range(n) if capped[k])
+    mark = len(svg.parts)
+    callout(svg, xm(s[i]), ym(math.log10(hs[i])), f"cut at the piece end x = {e[i]:g}", dx=-34, dy=38)
+    appear(mark, when(xm, s[i]))
+    cursor("table-cursor", y, py + h1)
+    better_hint(svg, px, py, pw, h1, "right", label="longer")
+    y = py + h1 + 62
+
+    gerr = t["grid_err"]
+    y = caption(svg, 16, y, "Shifted to any point of its step, the stored series hold; summed to the piece end, "
+                "they diverge near the pole",
+                "|Σ c_k h^k − f(x0 + h)| / |f|, the worst of the three: the table's at x0 for h ≤ 0.7 w, the "
+                "source's to its piece end")
+    line_key(svg, px + pw, y - 10, [("from the table", None, SERIES[0]),
+                                    ("the source's series to its piece end", None, NEUTRAL)])
+    h2 = 150
+    xm, ym = axes(svg, px, y, pw, h2, (xa, xb, "log"), (-34, 4), "x", "relative error", xfmt=decades, yfmt=exp_fmt)
+    svg.add(polyline([(px, ym(math.log10(tail))), (px + pw, ym(math.log10(tail)))], INK_SOFT, 1.2, dash=dash))
+    svg.text(px + 8, ym(math.log10(tail)) - 5, f"tail {tail:g}", size=10, anchor="start")
+    pc = clip(svg, "table-err-plot", px, y, pw, h2)
+    cp = reveal(svg, "table-err-reveal", px, y, pw, h2, a0, a1, period)
+    src_pts = [(xm(x), ym(math.log10(max(v, 1e-40)))) for x, v in zip(gx, gerr)]
+    tab_pts = [(xm(a), ym(math.log10(max(v, 1e-40)))) for a, v in zip(s, err)]
+    svg.add(f"<g {pc}><g {cp}>{polyline(src_pts, NEUTRAL, 1.6)}{polyline(tab_pts, SERIES[0], 2)}</g></g>")
+    svg.text(px + 8, y + 14, f"↑ off the scale to the left: {sci(gerr[0])} at x = {gx[0]:g}", size=10,
+             anchor="start")
+    i = min(range(n), key=lambda k: abs(s[k] - 0.003))
+    mark = len(svg.parts)
+    callout(svg, xm(s[i]), ym(math.log10(err[i])), f"every lookup within {sci(max(err))}", dx=30, dy=-40)
+    appear(mark, when(xm, s[i]))
+    lo = min((k for k, x in enumerate(gx) if 6 < x < 12), key=lambda k: gerr[k])
+    mark = len(svg.parts)
+    callout(svg, xm(gx[lo]), ym(math.log10(gerr[lo])), "right only near the end of a piece", dx=-150, dy=-84)
+    appear(mark, when(xm, gx[lo]))
+    cursor("table-err-cursor", y, y + h2)
+    better_hint(svg, px, y, pw, h2, "right", label="smaller", reverse=True)
+    h = footnote(svg, [source(t), f"{n} steps at fraction {t['fraction']:g}; the lookup by Table::shifted, "
+                       f"{len(gx)} log-spaced x0 for the source"], "", [], y + h2 + 40, REPO)
+    write("table", svg.finish(h))
+    rows = []
+    for k in [0, n // 4, n // 2, 3 * n // 4] + [k for k in range(n) if capped[k]]:
+        rows.append((k + 1, f"{s[k]:.4g}", sci(hs[k]), sci(w[k]), "cap" if capped[k] else f"{w[k] / dist[k]:.3f}",
+                     sci(err[k])))
+    table("Taylor table of PA in DD", ["step", "start", "h", "w", "w / pole distance", "lookup error"], rows)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -980,6 +1101,7 @@ FIGURES = {
     "backends": backends,
     "taylor": taylor,
     "plane": plane,
+    "table": table_fig,
     "layout": layout,
     "jacobian": jacobian,
     "series": series_fig,

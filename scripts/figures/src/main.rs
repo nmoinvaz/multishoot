@@ -19,6 +19,7 @@ use multishoot::multisolver::winding::WindOpts;
 use multishoot::multisolver::NewtonOpts;
 use multishoot::periodic::{dmat, sin_cos_grid, theta, Parity, Resampler};
 use multishoot::plane::{orthonormalize, JetSource, Jets, Plane, Real};
+use multishoot::table::{Opts, SeriesSource, Table};
 use multishoot::taylor::{plan_path, step_cost, taylor_path, taylor_step};
 use multishoot::{cs, Double, Equations, ExtraRow, Fl, InGlobal, Plan, Quad, Rate, Shooting, State, Storage, Work, DD};
 use std::time::Instant;
@@ -529,6 +530,153 @@ fn plane(dir: &str) {
             ("rates", arr(PL_RATES)),
             ("end", num(PL_END)),
             ("lanes", format!("[{}]", lanes.join(","))),
+        ]),
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Taylor tables
+
+/// PA of tests/table.rs: 1/x^2, 1/x and 1/(30 - x) from x = 1e-3 to 25, the source's series holding to the end of
+/// pieces of length 6, at the tests' double-double setting (nb 30, tail 1e-25)
+const TB_A: f64 = 1e-3;
+const TB_B: f64 = 25.0;
+const TB_PIECE: f64 = 6.0;
+const TB_NB: usize = 30;
+const TB_TAIL: f64 = 1e-25;
+const TB_GRID: usize = 600;
+
+struct PoleSrc;
+
+impl PoleSrc {
+    /// the end of the source's piece that starts at or holds `x0`
+    fn piece_end(x0: f64) -> f64 {
+        (x0 / TB_PIECE).floor() * TB_PIECE + TB_PIECE
+    }
+
+    /// the coefficients of function `f` about `x0` by the recurrences of tests/table.rs
+    fn coef<T: Real>(f: usize, x0: f64, out: &mut [T]) {
+        let c = T::from_f64;
+        let x = c(x0);
+        let nb = out.len();
+        match f {
+            0 => {
+                out[0] = (x * x).recip();
+                for k in 0..nb - 1 {
+                    out[k + 1] = -out[k] * c((k + 2) as f64) / (c((k + 1) as f64) * x);
+                }
+            }
+            1 => {
+                out[0] = x.recip();
+                for k in 0..nb - 1 {
+                    out[k + 1] = -out[k] / x;
+                }
+            }
+            _ => {
+                let d = c(30.0) - x;
+                out[0] = d.recip();
+                for k in 0..nb - 1 {
+                    out[k + 1] = out[k] / d;
+                }
+            }
+        }
+    }
+
+    fn val<T: Real>(f: usize, x: T) -> T {
+        match f {
+            0 => (x * x).recip(),
+            1 => x.recip(),
+            _ => (T::from_f64(30.0) - x).recip(),
+        }
+    }
+}
+
+impl<T: Real> SeriesSource<T> for PoleSrc {
+    fn functions(&self) -> usize {
+        3
+    }
+    fn series(&self, x0: f64, dir: f64, nb: usize, out: &mut [T]) -> f64 {
+        assert!(dir > 0.0, "PoleSrc: the figure's path runs forward");
+        for f in 0..3 {
+            PoleSrc::coef(f, x0, &mut out[f * nb..(f + 1) * nb]);
+        }
+        PoleSrc::piece_end(x0)
+    }
+}
+
+/// `|sum_k c_k h^k - f(x0 + h)| / |f(x0 + h)|` in the lane, the largest over the three functions
+fn tb_err<T: Real>(c: &[T], nb: usize, x0: f64, h: f64) -> f64 {
+    let hh = T::from_f64(h);
+    (0..3)
+        .map(|f| {
+            let p = c[f * nb..(f + 1) * nb].iter().rev().fold(T::zero(), |p, &a| p * hh + a);
+            let r = PoleSrc::val(f, T::from_f64(x0) + hh);
+            (p - r).to_f64().abs() / r.to_f64().abs()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// The table of PA in DD: every step's ends and width, and the largest error of its lookup over the points and reaches
+/// of C1 (x0 = start + t len, h = u min(0.7 w, piece end - x0)); against it, on a grid of x0, the source's own series
+/// summed to its piece end (the path's end in the last piece), the step a table cut by the source alone would take
+fn table_fig(dir: &str) {
+    let opts = Opts::new(TB_NB, TB_TAIL);
+    let tab = Table::<DD>::build(&PoleSrc, TB_A, TB_B, &opts).expect("PA builds");
+    let nb = tab.nb();
+    let mut jets = vec![DD::zero(); 3 * nb];
+    let (mut starts, mut ends, mut widths, mut errs) = (vec![], vec![], vec![], vec![]);
+    for i in 0..tab.steps() {
+        let (s, e) = tab.bounds(i);
+        let w = tab.width(i);
+        let v = PoleSrc::piece_end(s);
+        let mut worst = 0.0f64;
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let x0 = if t == 1.0 { e.next_down() } else { s + t * (e - s) };
+            for f in 0..3 {
+                tab.shifted(x0, f, nb, &mut jets[f * nb..(f + 1) * nb]);
+            }
+            let hm = (0.7 * w).min(v - x0).max(0.0);
+            for u in [0.25, 0.5, 0.75, 1.0] {
+                worst = worst.max(tb_err(&jets, nb, x0, u * hm));
+            }
+        }
+        starts.push(s);
+        ends.push(e);
+        widths.push(w);
+        errs.push(worst);
+    }
+    let mut buf = vec![DD::zero(); 3 * nb];
+    let (mut gx, mut gerr) = (vec![], vec![]);
+    for g in 0..TB_GRID {
+        let x0 = TB_A * (TB_B / TB_A).powf(g as f64 / TB_GRID as f64);
+        let stop = SeriesSource::<DD>::series(&PoleSrc, x0, 1.0, nb, &mut buf).min(TB_B);
+        gx.push(x0);
+        gerr.push(tb_err(&buf, nb, x0, stop - x0));
+    }
+    println!(
+        "table: {} steps, the lookup's largest error {:.1e}; summed to the piece end, {:.1e} at x = {TB_A}",
+        tab.steps(),
+        errs.iter().copied().fold(0.0, f64::max),
+        gerr[0]
+    );
+    save(
+        dir,
+        "table",
+        obj(&[
+            ("nb", nb.to_string()),
+            ("tail", num(TB_TAIL)),
+            ("fraction", num(opts.fraction)),
+            ("last", opts.last.to_string()),
+            ("piece", num(TB_PIECE)),
+            ("xa", num(TB_A)),
+            ("xb", num(TB_B)),
+            ("poles", arr([0.0, 30.0])),
+            ("start", arr(starts)),
+            ("end", arr(ends)),
+            ("width", arr(widths)),
+            ("err", arr(errs)),
+            ("grid_x", arr(gx)),
+            ("grid_err", arr(gerr)),
         ]),
     );
 }
@@ -1113,11 +1261,12 @@ fn main() {
     let only: Vec<String> = args.collect();
     let want = |n: &str| only.is_empty() || only.iter().any(|o| o == n);
     type Figure = (&'static str, fn(&str));
-    let figs: [Figure; 10] = [
+    let figs: [Figure; 11] = [
         ("backend", backend),
         ("layout", layout),
         ("taylor", taylor),
         ("plane", plane),
+        ("table", table_fig),
         ("jacobian", jacobian),
         ("series", series_fig),
         ("continuation", continuation_fig),
