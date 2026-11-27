@@ -7,8 +7,8 @@ description = "The data of the README's figures, from runs of multishoot on mode
 
 [dependencies]
 multishoot = { path = "../.." }
-multidouble = "5.1.0"
-multisolver = "0.2.2"
+multidouble = "6.1.0"
+multisolver = "0.3.0"
 rayon = "1.10"
 
 [features]
