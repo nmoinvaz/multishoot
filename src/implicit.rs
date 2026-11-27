@@ -759,6 +759,8 @@ pub struct Walker<'a, T: Real, S: Coefficients<T>> {
     /// the series is that of the last successful `form` at the current state: `advance`, `set_y` and a `form` that stops
     /// clear it
     ready: bool,
+    /// the crossing of the step before has been looked for (reported or not): once per step, however many times `form` runs
+    checked: bool,
     /// the sign of A0 at the current step's start
     cur_sign: f64,
     prev: Option<Prev<T>>,
@@ -826,6 +828,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             steps: 0,
             first: true,
             ready: false,
+            checked: true,
             cur_sign: 0.0,
             prev: None,
             crossings: Vec::new(),
@@ -866,6 +869,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
     pub fn set_y(&mut self, y: [T; 3]) {
         self.y = y;
         self.prev = None;
+        self.checked = true;
         self.ready = false;
     }
 
@@ -952,12 +956,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         #[cfg(not(feature = "mutate"))]
         let crossings_on = true;
         if crossings_on {
-            if let Some(p) = &self.prev {
-                if p.a0_sign != 0.0 && sg != 0.0 && p.a0_sign != sg {
-                    let c = self.locate_crossing();
-                    self.crossings.push(c);
-                }
-            }
+            self.check_crossing(sg);
         }
         self.cur_sign = sg;
         #[cfg(feature = "mutate")]
@@ -970,6 +969,24 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         }
         self.ready = true;
         Ok(&self.rec.series)
+    }
+
+    /// The crossing of the step before, if A0 (of sign `sg` here) changed sign across it: located and recorded once per step
+    fn check_crossing(&mut self, sg: f64) {
+        #[cfg(feature = "mutate")]
+        let again = self.control == ImplicitControl::RepeatCrossing;
+        #[cfg(not(feature = "mutate"))]
+        let again = false;
+        if self.checked && !again {
+            return;
+        }
+        self.checked = true;
+        if let Some(p) = &self.prev {
+            if p.a0_sign != 0.0 && sg != 0.0 && p.a0_sign != sg {
+                let c = self.locate_crossing();
+                self.crossings.push(c);
+            }
+        }
     }
 
     /// The zero of A0's series in the step before, between its start and its end (A0 changes sign there)
@@ -1132,6 +1149,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         self.steps += 1;
         self.first = false;
         self.ready = false;
+        self.checked = false;
         Ok(Advance {
             landed: xn == target,
             h,
