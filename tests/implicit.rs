@@ -1931,14 +1931,17 @@ fn backward_crossing<T: TestReal>(ctl: Ctl) -> Check {
     if let Ctl::Lib(c) = ctl {
         w.set_control(c);
     }
-    let out = w.run(-1.0, &[]);
+    let mut out = w.run(-1.0, &[]);
+    if ctl == Ctl::NanPos {
+        out.crossings.iter_mut().for_each(|k| k.x = T::from_f64(f64::NAN));
+    }
     let third = T::one() / T::from_f64(3.0);
     let (located, err) = out
         .crossings
         .first()
         .map_or((false, f64::NAN), |k| (k.located, (k.x - third).to_f64().abs()));
     Check {
-        pass: out.stop == Stop::End && out.crossings.len() == 1 && located && err <= bar::<T>(),
+        pass: out.stop == Stop::End && out.steps == 1 && out.crossings.len() == 1 && located && err <= bar::<T>(),
         detail: format!(
             "{} {:?}: stop {:?}, {} crossings, located {}, {:.2e} from 1/3 (bar {:.1e})",
             T::NAME,
@@ -2029,7 +2032,7 @@ fn coordinate_overflow<T: TestReal>(ctl: Ctl) -> Check {
     }
     let out = w.run(1.5 * pow2(1023), &[]);
     let (err, beta) = out.zero.as_ref().map_or((f64::NAN, f64::NAN), |z| {
-        (((z.x.to_f64() + pow2(1023)) / pow2(1023)).abs(), z.beta)
+        ((((z.x - T::from_f64(-pow2(1023))).to_f64()) / pow2(1023)).abs(), z.beta)
     });
     Check {
         pass: out.stop == Stop::Pivot && err <= bar::<T>() && (beta - 1.0).abs() <= bar::<T>(),
@@ -2330,6 +2333,14 @@ fn shift_nan_fires<T: TestReal>() {
     assert!(shift_zero_point::<T>(Ctl::None).pass);
 }
 
+/// a NaN position of a crossing fails `backward_crossing` in every lane, f64 included
+fn backward_nan_fires<T: TestReal>() {
+    let c = backward_crossing::<T>(Ctl::NanPos);
+    show(&c);
+    assert!(!c.pass, "control NanPos did not fire: {}", c.detail);
+    assert!(backward_crossing::<T>(Ctl::None).pass);
+}
+
 /// a NaN position of a crossing fails `crossings`, and a NaN end state fails `closed_form`
 fn nan_position_fires<T: TestReal>() {
     for (c, name) in [
@@ -2346,6 +2357,9 @@ fn nan_position_fires<T: TestReal>() {
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    backward_nan_fires::<f64>();
+    backward_nan_fires::<DD>();
+    backward_nan_fires::<QD>();
     wrong_step_fires::<f64>();
     wrong_step_fires::<DD>();
     wrong_step_fires::<QD>();
