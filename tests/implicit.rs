@@ -92,7 +92,7 @@ macro_rules! test_real {
 test_real!(DD, "dd", 42, 1e-30, 4, [0x92ec461781147d77, 0x13ac06786e54ccb1]);
 test_real!(QD, "qd", 80, 1e-62, 4, [0x75902b0bf76ced2a, 0xb37fa8d9cb20094f]);
 // the digests of `od_digests`' cells, not of all of them
-test_real!(OD, "od", 154, 1e-126, 8, [0x10f1b89a823ad3c3, 0x21d526b7c72a4319]);
+test_real!(OD, "od", 154, 1e-126, 8, [0x10f1b89a823ad3c3, 0x1d9549c94134d037]);
 
 fn bar<T: TestReal>() -> f64 {
     1e6 * T::EPS
@@ -824,12 +824,13 @@ fn path_steps<T: TestReal>(p: Pth, ctl: Ctl) -> (Vec<(f64, f64, f64)>, PolyEq, S
 /// path must have ended where it is planned to (a branch with `Stop::End`, a fold with `Stop::Pivot`) after at least one
 /// accepted step: a path that stopped early has been measured on a prefix, or on nothing.
 fn step_sum<T: TestReal>(p: Pth, ctl: Ctl) -> Check {
-    step_sum_run::<T>(p, ctl).0
+    step_sum_run::<T>(p, ctl, false).0
 }
 
-/// `step_sum` and what it measured, for the digests: the stop and the step count, then for each planned step its x, l and
-/// every coefficient of the series (all parts), and last `worst`
-fn step_sum_run<T: TestReal>(p: Pth, ctl: Ctl) -> (Check, Vec<f64>) {
+/// `step_sum` and what it measured, for the digests: the stop and the step count, then for each planned step its x, l, the
+/// planned step h and every coefficient of the series (all parts), and last `worst`. `flip_h` is a control of the digests:
+/// it flips the last bit of the first step's h in what is returned, and nowhere in what is measured.
+fn step_sum_run<T: TestReal>(p: Pth, ctl: Ctl, flip_h: bool) -> (Check, Vec<f64>) {
     let (pts, eq, stop) = path_steps::<T>(p, ctl);
     let mut data = vec![stop as u8 as f64, pts.len() as f64];
     let want = if matches!(p, Pth::B(_)) { Stop::End } else { Stop::Pivot };
@@ -850,7 +851,12 @@ fn step_sum_run<T: TestReal>(p: Pth, ctl: Ctl) -> (Check, Vec<f64>) {
             s.c[1][kt / 2] = T::from_f64(f64::NAN);
         }
         let sh = h / l;
-        data.extend([x, l]);
+        let h_hashed = if flip_h && data.len() == 2 {
+            f64::from_bits(h.to_bits() ^ 1)
+        } else {
+            h
+        };
+        data.extend([x, l, h_hashed]);
         for c in s.c.iter().flatten() {
             data.extend(parts(*c));
         }
@@ -1165,6 +1171,8 @@ enum Poke {
     /// the last bit of the last part of the first coefficient of the first step-sum series: `full` must change, and
     /// `base` does not
     SumLast,
+    /// the last bit of the first step-sum step's planned length h, as hashed: `full` must change, and `base` does not
+    SumStep,
 }
 
 /// The digests of the planted results of some cells, folds and step-sum paths, two of them, to compare across the SIMD
@@ -1237,10 +1245,10 @@ fn digests<T: TestReal>(cells: &[(Br, Branch)], folds: &[u8], sums: &[Pth], poke
         }
     }
     for &p in sums {
-        let (_, mut data) = step_sum_run::<T>(p, Ctl::None);
+        let (_, mut data) = step_sum_run::<T>(p, Ctl::None, poke == Poke::SumStep);
         if poke == Poke::SumLast {
-            // data: stop, steps, then x, l and the parts of c[0][0] of the first step
-            let at = 3 + T::PARTS;
+            // data: stop, steps, then x, l, h and the parts of c[0][0] of the first step
+            let at = 4 + T::PARTS;
             data[at] = f64::from_bits(data[at].to_bits() ^ 1);
         }
         full.put_all(&data);
@@ -1352,18 +1360,23 @@ fn parts_see_a_lower_part() {
 }
 
 /// Control of the octo-double digests, from one run to the next: a change below the fourth part of an end state changes
-/// `base` and `full`, and one bit of a step-sum series' coefficient changes `full` and not `base`
+/// `base` and `full`, and one bit of a step-sum series' coefficient or of a planned step's length changes `full` and not
+/// `base`
 #[test]
 fn digest_od_sees_the_lower_parts() {
     let (b0, f0) = od_digests(Poke::None);
     let (b1, f1) = od_digests(Poke::EndLower);
     let (b2, f2) = od_digests(Poke::SumLast);
+    let (b3, f3) = od_digests(Poke::SumStep);
     println!("lower part of an end state: base {b0:016x} -> {b1:016x}, full {f0:016x} -> {f1:016x}");
     println!("last part of a step-sum coefficient: base {b0:016x} -> {b2:016x}, full {f0:016x} -> {f2:016x}");
+    println!("last bit of a step-sum step length: base {b0:016x} -> {b3:016x}, full {f0:016x} -> {f3:016x}");
     assert_ne!(b0, b1, "base does not see a lower part of an end state");
     assert_ne!(f0, f1, "full does not see a lower part of an end state");
     assert_eq!(b0, b2, "base hashes a step sum");
     assert_ne!(f0, f2, "full does not see a step sum");
+    assert_eq!(b0, b3, "base hashes a step length");
+    assert_ne!(f0, f3, "full does not see a planned step length");
 }
 
 /// Pass (review of `Recursion::form`, `l^j` in `f64`): N = y'' - 2^1000 x^2 about x0 = 0 with l = 2^-600 has
