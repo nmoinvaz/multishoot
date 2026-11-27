@@ -307,10 +307,17 @@ pub fn kth_root(a: f64, k: u32) -> f64 {
 /// the k-th roots of tol / e_k by [`kth_root`], the same on every platform.
 pub fn step_size<const B: usize>(w: &Work<DV, B>, plan: &Plan) -> f64 {
     let kt = w.kt;
+    step_from_norms(coef_norm(w, kt - 1), coef_norm(w, kt), kt, plan)
+}
+
+/// The planner's step from the largest coefficients `e_km1` of order kt - 1 and `e_k` of order kt (`coef_norm`'s
+/// maxima over whatever the series are of), before the cap at the end of the segment: the largest h with
+/// `e_km1 h^(kt - 1) <= tol` and `e_k h^kt <= tol`, capped at `hmax`, by [`kth_root`]. A NaN norm gives a NaN step.
+pub fn step_from_norms(e_km1: f64, e_k: f64, kt: usize, plan: &Plan) -> f64 {
     // the floor keeps a zero coefficient from dividing by zero; a NaN stays NaN, and so does the step
     let floor = |e: f64| if e.is_nan() { e } else { e.max(1e-300) };
-    let e1 = floor(coef_norm(w, kt - 1));
-    let e2 = floor(coef_norm(w, kt));
+    let e1 = floor(e_km1);
+    let e2 = floor(e_k);
     // an infinite quotient (a vanishing coefficient against a large tol) allows any step; a NaN stays NaN; a quotient
     // that underflows to zero (a tiny tol) gives the step 0, which plan_path reports
     let root = |a: f64, k: usize| {
