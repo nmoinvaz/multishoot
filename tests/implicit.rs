@@ -22,6 +22,7 @@
 //! a development run (raw README, amendment), the prediction being the name's own check. `println!` lines are the log.
 use multishoot::implicit::*;
 use multishoot::lane::{Du, DV};
+use multishoot::multidouble::od::OD;
 use multishoot::multidouble::qd::QD;
 use multishoot::taylor::{step_from_norms, Plan};
 use multishoot::{Fl, DD};
@@ -78,6 +79,7 @@ macro_rules! test_real {
 }
 test_real!(DD, "dd", 42, 1e-30);
 test_real!(QD, "qd", 80, 1e-62);
+test_real!(OD, "od", 154, 1e-126);
 
 fn bar<T: TestReal>() -> f64 {
     1e6 * T::EPS
@@ -840,6 +842,21 @@ fn fold_dd() {
 #[test]
 fn fold_qd() {
     fold_lane::<QD>();
+}
+
+/// Pass, octo-double smoke (bar 1e6 eps = 2.3e-122, order 154 at tol 1e-126): K-A on both modes, K-B on `Project` with its
+/// two crossings, the step sum of K-A, and F1 with its estimate
+#[test]
+fn octo_double() {
+    let mut bad = Vec::new();
+    for mode in all_modes() {
+        tally(&mut bad, closed_form::<OD>(Br::KA, mode, Ctl::None), false);
+    }
+    tally(&mut bad, closed_form::<OD>(Br::KB, Branch::Project, Ctl::None), false);
+    tally(&mut bad, crossings::<OD>(Br::KB, Branch::Project, Ctl::None), false);
+    tally(&mut bad, step_sum::<OD>(Pth::B(Br::KA), Ctl::None), false);
+    tally(&mut bad, fold::<OD>(1, Branch::Project, Ctl::None), false);
+    finish(bad);
 }
 
 #[test]
