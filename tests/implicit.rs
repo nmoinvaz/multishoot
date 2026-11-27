@@ -1055,6 +1055,17 @@ fn unit_eq() -> PolyEq {
     PolyEq::new(&[((0, 0, 1), &[1]), ((0, 0, 0), &[-1])])
 }
 
+/// N = y''^2 - x^2, whose branch y'' = x meets its mirror y'' = -x at x = 0 (a double root of N in y'' there)
+fn mirror_eq() -> PolyEq {
+    PolyEq::new(&[((0, 0, 2), &[1]), ((0, 0, 0), &[0, 0, -1])])
+}
+
+/// the state of its branch y'' = x at x: y = x^3 / 6, y' = x^2 / 2
+fn mirror_state<T: TestReal>(x: f64) -> [T; 3] {
+    let x = T::from_f64(x);
+    [x * x * x / T::from_f64(6.0), (x * x).mulf(0.5), x]
+}
+
 /// whether two states are equal in every part
 fn same<T: TestReal>(a: &[T; 3], b: &[T; 3]) -> bool {
     (0..3).all(|f| parts(a[f]) == parts(b[f]))
@@ -1112,10 +1123,40 @@ fn stale<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::form`, a crossing once per step): on the branch y'' = x of N = y''^2 - x^2 a single step from -1
+/// to 1 crosses the double root at 0. After `form`, `advance`, then `form` twice at x = 1, the walk reports one crossing,
+/// located at 0 within the bar.
+fn repeat_form<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = mirror_eq();
+    let mut w = Walker::<T, _>::new(&eq, -1.0, mirror_state::<T>(-1.0), opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let mut ok = w.form().is_ok();
+    let h = w.planned();
+    ok &= w.advance(h, 1.0).is_ok() && w.steps() == 1;
+    ok &= w.form().is_ok() && w.form().is_ok();
+    let out = w.run(1.0, &[]);
+    let n = out.crossings.len();
+    let pos = out.crossings.first().map_or(f64::NAN, |k| k.x.to_f64().abs());
+    Check {
+        pass: ok && n == 1 && out.crossings[0].located && pos <= bar::<T>(),
+        detail: format!(
+            "{} {:?}: {} crossings after two forms at the end of one step, the first at {:.2e} from 0",
+            T::NAME,
+            ctl,
+            n,
+            pos
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
     tally(&mut bad, stale::<T>(Ctl::None), false);
+    tally(&mut bad, repeat_form::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1193,7 +1234,10 @@ mod controls {
             ImplicitControl::NoCrossing => [false, false, true, false, false, false],
             ImplicitControl::ExponentHalf => [false, false, false, false, true, false],
             ImplicitControl::NoPivotStop => [false, false, false, true, true, false],
-            ImplicitControl::None | ImplicitControl::PlainScale | ImplicitControl::StaleSeries => [false; 6],
+            ImplicitControl::None
+            | ImplicitControl::PlainScale
+            | ImplicitControl::StaleSeries
+            | ImplicitControl::RepeatCrossing => [false; 6],
         }
     }
 
@@ -1255,7 +1299,10 @@ mod controls {
 
     /// the controls of the edge cases that hold in every lane
     fn edge_rows<T: TestReal>() -> Vec<EdgeRow<'static>> {
-        vec![(ImplicitControl::StaleSeries, "stale", stale::<T>)]
+        vec![
+            (ImplicitControl::StaleSeries, "stale", stale::<T>),
+            (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
+        ]
     }
 
     #[test]

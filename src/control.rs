@@ -120,4 +120,6 @@ pub enum ImplicitControl {
     PlainScale,
     /// `Walker::advance` sums the series the last `form` left, whether or not it was formed for the state
     StaleSeries,
+    /// the crossing of the step before appended at every `form`, not once
+    RepeatCrossing,
 }
