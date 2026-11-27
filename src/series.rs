@@ -171,7 +171,8 @@ impl Base {
 
 /// The factors of the orders' systems L_k = omega D + diag kappa(k), k = 0..=order, at the double-double values, the
 /// diagonals from `kappa(k)` (M values each), at the rate (zero but for a mode-matrix evaluation), the orders on
-/// rayon tasks under `par`. omega D is formed once. An error names the order whose factorization failed.
+/// rayon tasks under `par`. omega D is formed once. An error names the lowest order whose factorization failed,
+/// with or without `par`.
 pub fn series_lus<const B: usize>(
     d: &DMat<B>,
     omega: DD,
@@ -186,7 +187,10 @@ pub fn series_lus<const B: usize>(
             .map_err(|e| format!("series_lus: order {k}: {e}"))
     };
     if par {
-        (0..=order).into_par_iter().map(one).collect()
+        // each order's result, then the first error in order: rayon's collect into a Result returns whichever
+        // error a task meets first, which varies from run to run
+        let all: Vec<Result<PeriodicLu, String>> = (0..=order).into_par_iter().map(one).collect();
+        all.into_iter().collect()
     } else {
         (0..=order).map(one).collect()
     }
