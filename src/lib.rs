@@ -49,7 +49,7 @@
 //! * [`mobius`]: the Moebius variable of a series about a singular end, which keeps a far singularity far;
 //! * [`projected`]: one field's rows of a block replaced by a projection onto its low harmonics;
 //! * [`relayout`]: a solution moved to new node positions or another number of collocation points;
-//! * [`plane`]: a k-plane of solutions of a linear system y' = J(x) y carried through Taylor steps with an
+//! * [`plane`]: a k-plane of solutions of a linear system y' = J(x) y, real or complex, carried through Taylor steps with an
 //!   orthonormalization after each, and the log of its volume;
 //! * [`table`]: the Taylor series of a problem's coefficient functions about the start of each step of a path, every
 //!   step cut by the width at which the stored series have converged, and the shifted jets at any point between;

@@ -19,6 +19,16 @@
 //! operations. [`Real`] is not [`crate::Precision`]'s scalar: that has no division, square root or logarithm, and `f64`
 //! is no [`crate::Precision`].
 //!
+//! A complex system is the same stepper over [`Complex`]`<R>`, a pair of lane values that is a scalar of the plane too
+//! (the trait keeps the name `Real` of the real lanes it began with). The orthonormalization then uses the Hermitian product
+//! `sum conj(y_p) y_c` and the norm `sqrt(sum |y|^2)`; R keeps a real positive diagonal, so [`Plane::ln_vol`] stays real
+//! (a `Complex` with a zero imaginary part) and **the phase the flow gives the columns stays in Q**, where the plane's
+//! orthonormal basis is the unique one with R positive: for a determinant of two planes, `det[Q_1 | Q_2]` carries the phase
+//! of the determinant of the unnormalized columns, and the volumes only its modulus. Real data on a `Complex` lane give
+//! the real lane's bits: the extra methods of [`Real`] (`conj`, `abs2`, `mag`, `re_f64`) are the identity, `z * z`, `|x|`
+//! and `x` on the real lanes, and `Complex` takes the real lane's own operation for quotient, reciprocal, square root and
+//! logarithm when its imaginary part is zero.
+//!
 //! The coefficients are scalars of one lane, so the plane does not use [`crate::Work`] or [`crate::Fl`] (fields on
 //! collocation points, eight lanes per value) or the series lanes (`Jet<N>`, a series in the eight lanes of a vector);
 //! it shares the planner's [`Plan`] and its step rule.
@@ -55,6 +65,22 @@ pub trait Real:
     fn recip(self) -> Self;
     fn sqrt(self) -> Self;
     fn ln(self) -> Self;
+    /// The complex conjugate; the identity on the real lanes.
+    fn conj(self) -> Self {
+        self
+    }
+    /// |z|^2 as a scalar of the lane; `z * z` on the real lanes.
+    fn abs2(self) -> Self {
+        self * self
+    }
+    /// |z| as `f64`; |x| on the real lanes.
+    fn mag(self) -> f64 {
+        self.to_f64().abs()
+    }
+    /// Re z as `f64`; the value on the real lanes.
+    fn re_f64(self) -> f64 {
+        self.to_f64()
+    }
 }
 
 impl Real for f64 {
@@ -121,6 +147,148 @@ real_multidouble!(DD, 1.232595164407831e-32, |x| x);
 real_multidouble!(QD, 1.504632769052528e-64, QD::from_dd);
 real_multidouble!(OD, 2.3e-128, OD::from_dd);
 
+/// A complex number as a pair of lane values, a scalar of the plane like the real lanes: a plane of a complex system
+/// `y' = J y` carries complex columns. With `im = 0` it behaves bit for bit as its real part: the product is
+/// `(ac - bd, ad + bc)`, and the quotient, reciprocal, square root and logarithm take the real lane's own operation when
+/// `im = 0`, so a complex plane whose data are real reproduces the real plane's bits.
+///
+/// `ln` is defined for a positive real only (the diagonal of R is real and positive, the only logarithm the stepper
+/// takes); `to_f64` is defined for `im = 0` only, since a silent drop of an imaginary part is a bug (`re_f64` and `mag` read
+/// the real part and the modulus). The square root is the principal one (Re >= 0).
+#[derive(Clone, Copy, Debug)]
+pub struct Complex<R: Real> {
+    pub re: R,
+    pub im: R,
+}
+
+impl<R: Real> Complex<R> {
+    pub fn new(re: R, im: R) -> Self {
+        Complex { re, im }
+    }
+
+    fn is_real(self) -> bool {
+        self.im.to_f64() == 0.0
+    }
+}
+
+impl<R: Real> Add for Complex<R> {
+    type Output = Complex<R>;
+    fn add(self, o: Complex<R>) -> Complex<R> {
+        Complex::new(self.re + o.re, self.im + o.im)
+    }
+}
+
+impl<R: Real> Sub for Complex<R> {
+    type Output = Complex<R>;
+    fn sub(self, o: Complex<R>) -> Complex<R> {
+        Complex::new(self.re - o.re, self.im - o.im)
+    }
+}
+
+impl<R: Real> Neg for Complex<R> {
+    type Output = Complex<R>;
+    fn neg(self) -> Complex<R> {
+        Complex::new(-self.re, -self.im)
+    }
+}
+
+impl<R: Real> Mul for Complex<R> {
+    type Output = Complex<R>;
+    fn mul(self, o: Complex<R>) -> Complex<R> {
+        Complex::new(self.re * o.re - self.im * o.im, self.re * o.im + self.im * o.re)
+    }
+}
+
+impl<R: Real> Div for Complex<R> {
+    type Output = Complex<R>;
+    fn div(self, o: Complex<R>) -> Complex<R> {
+        if o.is_real() {
+            return Complex::new(self.re / o.re, self.im / o.re);
+        }
+        let n = o.re * o.re + o.im * o.im;
+        Complex::new(
+            (self.re * o.re + self.im * o.im) / n,
+            (self.im * o.re - self.re * o.im) / n,
+        )
+    }
+}
+
+impl<R: Real> Real for Complex<R> {
+    const EPS: f64 = R::EPS;
+    fn zero() -> Self {
+        Complex::new(R::zero(), R::zero())
+    }
+    fn one() -> Self {
+        Complex::new(R::one(), R::zero())
+    }
+    fn from_f64(x: f64) -> Self {
+        Complex::new(R::from_f64(x), R::zero())
+    }
+    fn from_dd(x: DD) -> Self {
+        Complex::new(R::from_dd(x), R::zero())
+    }
+    fn to_f64(self) -> f64 {
+        assert!(
+            self.is_real(),
+            "Complex::to_f64 of a number with a nonzero imaginary part: use re_f64 or mag"
+        );
+        self.re.to_f64()
+    }
+    fn recip(self) -> Self {
+        if self.is_real() {
+            return Complex::new(self.re.recip(), R::zero());
+        }
+        let inv = (self.re * self.re + self.im * self.im).recip();
+        Complex::new(self.re * inv, -(self.im * inv))
+    }
+    fn sqrt(self) -> Self {
+        let (a, b) = (self.re, self.im);
+        if self.is_real() {
+            return if a.to_f64() >= 0.0 {
+                Complex::new(a.sqrt(), R::zero())
+            } else {
+                Complex::new(R::zero(), (-a).sqrt())
+            };
+        }
+        let m = (a * a + b * b).sqrt();
+        let abs_a = if a.to_f64() < 0.0 { -a } else { a };
+        let t = ((m + abs_a) * R::from_f64(0.5)).sqrt();
+        let two_t = t + t;
+        if a.to_f64() >= 0.0 {
+            Complex::new(t, b / two_t)
+        } else {
+            let abs_b = if b.to_f64() < 0.0 { -b } else { b };
+            Complex::new(abs_b / two_t, if b.to_f64() < 0.0 { -t } else { t })
+        }
+    }
+    fn ln(self) -> Self {
+        assert!(
+            self.is_real() && self.re.to_f64() > 0.0,
+            "Complex::ln is defined for a positive real number only (the diagonal of R)"
+        );
+        Complex::new(self.re.ln(), R::zero())
+    }
+    fn conj(self) -> Self {
+        Complex::new(self.re, -self.im)
+    }
+    fn abs2(self) -> Self {
+        if self.is_real() {
+            return self * self;
+        }
+        Complex::new(self.re * self.re + self.im * self.im, R::zero())
+    }
+    fn mag(self) -> f64 {
+        if self.is_real() {
+            self.re.to_f64().abs()
+        } else {
+            self.re.to_f64().hypot(self.im.to_f64())
+        }
+    }
+    fn re_f64(self) -> f64 {
+        self.re.to_f64()
+    }
+}
+
 /// The jets of one nonzero entry (i, j) of J about a step's start: `c[..n]` are the Taylor coefficients, the rest of
 /// `c` is scratch
 #[derive(Clone, Debug)]
@@ -181,20 +349,27 @@ pub struct Stats {
 /// # Panics
 /// A column whose norm after the projections is zero or not finite (the columns are dependent, or hold a NaN).
 pub fn orthonormalize<T: Real>(y: &mut [T], n: usize, k: usize, diag: &mut [T]) {
+    orthonormalize_with(y, n, k, diag, false)
+}
+
+/// `orthonormalize`; with `bilinear` the projections use the product without the conjugate (a control: on a complex
+/// plane it loses the phase of the projection coefficients and of the norms)
+fn orthonormalize_with<T: Real>(y: &mut [T], n: usize, k: usize, diag: &mut [T], bilinear: bool) {
     for c in 0..k {
         for _pass in 0..2 {
             for p in 0..c {
                 let mut d = T::zero();
                 for i in 0..n {
-                    d = d + y[p * n + i] * y[c * n + i];
+                    let yp = if bilinear { y[p * n + i] } else { y[p * n + i].conj() };
+                    d = d + yp * y[c * n + i];
                 }
                 for i in 0..n {
                     y[c * n + i] = y[c * n + i] - d * y[p * n + i];
                 }
             }
         }
-        let nrm = normalize(&mut y[c * n..(c + 1) * n]);
-        let v = nrm.to_f64();
+        let nrm = normalize(&mut y[c * n..(c + 1) * n], bilinear);
+        let v = nrm.re_f64();
         assert!(
             v > 0.0 && v.is_finite(),
             "orthonormalize: column {c} has norm {v:e} after its projections (dependent columns, or not finite)"
@@ -212,13 +387,17 @@ fn pow2(e: i32) -> f64 {
 /// of the normal range in some part of the lane: the column is first scaled by the power of two 2^-e of its largest
 /// entry (exactly, e clamped to 1022 in magnitude), and the length scaled back by 2^e. Inside that range the column is
 /// not rescaled, and the result is bitwise that of the plain sum of squares.
-fn normalize<T: Real>(col: &mut [T]) -> T {
-    let length = |col: &[T]| col.iter().fold(T::zero(), |s, &x| s + x * x).sqrt();
+fn normalize<T: Real>(col: &mut [T], bilinear: bool) -> T {
+    let length = |col: &[T]| {
+        col.iter()
+            .fold(T::zero(), |s, &x| s + if bilinear { x * x } else { x.abs2() })
+            .sqrt()
+    };
     let mut nrm = length(col);
     let mut back = None;
-    let v = nrm.to_f64();
+    let v = nrm.re_f64();
     if !(pow2(-256)..=pow2(256)).contains(&v) {
-        let m = col.iter().fold(0.0, |m, x| nan_max(m, x.to_f64().abs()));
+        let m = col.iter().fold(0.0, |m, x| nan_max(m, x.mag()));
         if m > 0.0 && m.is_finite() {
             // the unbiased exponent of m; a subnormal m reads as -1023, clamped
             let e = ((((m.to_bits() >> 52) & 0x7ff) as i32) - 1023).clamp(-1022, 1022);
@@ -237,7 +416,7 @@ fn normalize<T: Real>(col: &mut [T]) -> T {
 /// `diag[..k]` (a control's stand-in for `orthonormalize`)
 fn scale_columns<T: Real>(y: &mut [T], n: usize, k: usize, diag: &mut [T]) {
     for c in 0..k {
-        diag[c] = normalize(&mut y[c * n..(c + 1) * n]);
+        diag[c] = normalize(&mut y[c * n..(c + 1) * n], false);
     }
 }
 
@@ -400,7 +579,7 @@ impl<T: Real> Plane<T> {
             let norm = |m: usize| {
                 let mut e = 0.0f64;
                 for cn in 0..n * k {
-                    e = nan_max(e, co[cn * w + m].to_f64().abs());
+                    e = nan_max(e, co[cn * w + m].mag());
                 }
                 e
             };
@@ -430,7 +609,8 @@ impl<T: Real> Plane<T> {
                 scale_columns(&mut self.y, n, k, &mut diag);
                 self.add_ln(&diag);
             } else if self.orthonormalize_after(st.steps, x1 == xb) {
-                orthonormalize(&mut self.y, n, k, &mut diag);
+                let bilinear = self.bilinear();
+                orthonormalize_with(&mut self.y, n, k, &mut diag, bilinear);
                 self.add_ln(&diag);
             }
             st.steps += 1;
@@ -439,7 +619,8 @@ impl<T: Real> Plane<T> {
             x0 = x1;
         }
         if self.scale_only() && st.steps > 0 {
-            orthonormalize(&mut self.y, n, k, &mut diag);
+            let bilinear = self.bilinear();
+            orthonormalize_with(&mut self.y, n, k, &mut diag, bilinear);
             self.add_ln(&diag);
         }
         st
@@ -453,8 +634,10 @@ impl<T: Real> Plane<T> {
         if self.control == crate::control::PlaneControl::LogDrop {
             last -= 1;
         }
+        let bilinear = self.bilinear();
         for d in &diag[..last] {
-            self.ln_vol = self.ln_vol + d.ln();
+            // the control's "norm" is complex: it takes the log of its modulus, in the lane
+            self.ln_vol = self.ln_vol + if bilinear { d.abs2().sqrt().ln() } else { d.ln() };
         }
     }
 
@@ -468,6 +651,18 @@ impl<T: Real> Plane<T> {
             _ => {}
         }
         true
+    }
+
+    /// whether the projections use the product without the conjugate (a control)
+    fn bilinear(&self) -> bool {
+        #[cfg(feature = "mutate")]
+        {
+            self.control == crate::control::PlaneControl::NoConj
+        }
+        #[cfg(not(feature = "mutate"))]
+        {
+            false
+        }
     }
 
     /// whether the columns are only scaled between steps (a control)
