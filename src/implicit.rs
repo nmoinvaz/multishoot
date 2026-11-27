@@ -459,8 +459,8 @@ impl<T: Scalar> Recursion<T> {
             *cc = t.mulf(c as f64);
         }
         self.pw2[1][k] = dk;
-        for c in 2..=self.cmax {
-            self.pw2[c][k] = self.pw2[c][k] + corr[c];
+        for (c, &cc) in corr.iter().enumerate().skip(2) {
+            self.pw2[c][k] = self.pw2[c][k] + cc;
         }
         for g in 0..self.pat.len() {
             let c = self.pat[g].2;
@@ -492,19 +492,16 @@ impl<T: Scalar> Recursion<T> {
         for g in 0..self.pat.len() {
             let n = jets.ent[g].n.min(kt + 1).min(jets.ent[g].c.len());
             self.nex[g] = n;
-            for j in 0..n {
-                self.ex[g][j] = if j == 0 {
-                    jets.ent[g].c[0]
-                } else {
-                    jets.ent[g].c[j].mulf(lps[j])
-                };
+            for (j, e) in self.ex[g].iter_mut().enumerate().take(n) {
+                let c = jets.ent[g].c[j];
+                *e = if j == 0 { c } else { c.mulf(lps[j]) };
             }
         }
-        for i in 0..3 {
-            for v in self.series.c[i].iter_mut() {
+        for (cf, &y) in self.series.c.iter_mut().zip(y0.iter()) {
+            for v in cf.iter_mut() {
                 *v = T::zero();
             }
-            self.series.c[i][0] = y0[i];
+            cf[0] = y;
         }
         self.series.l = l;
         for v in self
