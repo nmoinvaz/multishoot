@@ -1090,13 +1090,27 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
                 located: false,
             };
         }
-        for _ in 0..80 {
+        // bisect until the bracket is two neighboring floats, however long the step: a bracket that has not closed is
+        // not a location
+        let mut closed = false;
+        for _ in 0..2200 {
             let mid = 0.5 * (lo + hi);
+            if mid == lo || mid == hi {
+                closed = true;
+                break;
+            }
             if sign(at(T::from_f64(mid))) == s_lo {
                 lo = mid;
             } else {
                 hi = mid;
             }
+        }
+        if !closed {
+            return Crossing {
+                x: T::from_f64(p.x),
+                step,
+                located: false,
+            };
         }
         let mut s = T::from_f64(0.5 * (lo + hi));
         for _ in 0..6 {
@@ -1104,7 +1118,12 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             if d.to_f64() == 0.0 {
                 break;
             }
-            s = s - horner_t(&a, s) / d;
+            let next = s - horner_t(&a, s) / d;
+            // the refinement stays in the bracket
+            if !(next.to_f64() >= lo && next.to_f64() <= hi) {
+                break;
+            }
+            s = next;
         }
         Crossing {
             x: T::from_f64(p.x) + s.mulf(p.l),
