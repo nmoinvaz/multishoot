@@ -1611,6 +1611,30 @@ fn shift_edges<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `taylor_shift`, a shift by 0): [0, 0, 2^1023] about 0 and about -0 is itself, not a NaN from the
+/// binomial 2 times 2^1023 times 0
+fn shift_zero_point<T: TestReal>(ctl: Ctl) -> Check {
+    let poly = [T::zero(), T::zero(), T::from_f64(pow2(1023))];
+    let ok: Vec<bool> = [0.0, -0.0]
+        .iter()
+        .map(|&x0| {
+            let mut out = [T::from_f64(-1.0); 3];
+            taylor_shift(&poly, x0, &mut out);
+            (0..3).all(|j| out[j].to_f64() == poly[j].to_f64())
+        })
+        .collect();
+    Check {
+        pass: ok.iter().all(|&b| b),
+        detail: format!(
+            "{} {:?}: [0, 0, 2^1023] kept about 0 {} and about -0 {}",
+            T::NAME,
+            ctl,
+            ok[0],
+            ok[1]
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1620,6 +1644,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, dup_checkpoints::<T>(Ctl::None), false);
     tally(&mut bad, zero_only_pivot::<T>(Ctl::None), false);
     tally(&mut bad, shift_edges::<T>(Ctl::None), false);
+    tally(&mut bad, shift_zero_point::<T>(Ctl::None), false);
     finish(bad);
 }
 

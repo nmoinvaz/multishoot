@@ -239,6 +239,11 @@ fn shift<T: Scalar>(poly: &[T], x0: f64, out: &mut [T], empty_returns: bool) {
         out.len(),
         poly.len()
     );
+    if x0 == 0.0 {
+        // the binomial times a zero power would be 0 * inf where a coefficient is within a factor of deg of overflow
+        out[..poly.len()].copy_from_slice(poly);
+        return;
+    }
     let mut pw = vec![T::one()];
     for i in 1..=deg {
         pw.push(pw[i - 1] * T::from_f64(x0));
