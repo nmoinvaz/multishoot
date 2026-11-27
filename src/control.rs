@@ -130,4 +130,6 @@ pub enum ImplicitControl {
     KeepZero,
     /// `taylor_shift` without its return on an empty polynomial
     EmptyShift,
+    /// the cached reciprocal of A0 used where it overflows (a pivot below 2^-1023 in `f64`)
+    PlainReciprocal,
 }

@@ -46,6 +46,8 @@ pub trait Scalar:
     fn mulf(self, s: f64) -> Self;
     /// rounded to double-double and back: the identity on `f64`, double-double and the lanes' fields (a control's tool)
     fn round_dd(self) -> Self;
+    /// whether the leading part is finite
+    fn is_finite(self) -> bool;
     /// `sum_(j = 0..=k) a[j] b[k - j]`, the Cauchy product's coefficient. The default is the plain sum of products; the
     /// multi-double scalars and the lanes' fields accumulate in multidouble's dot accumulators (`Lane::acc`), as
     /// `field::cs` does, which keeps the rounding of a sum that cancels (as the orders of N do) below the plain sum's.
@@ -81,6 +83,9 @@ impl Scalar for f64 {
     fn round_dd(self) -> f64 {
         self
     }
+    fn is_finite(self) -> bool {
+        f64::is_finite(self)
+    }
 }
 
 impl Real for f64 {
@@ -110,6 +115,9 @@ macro_rules! scalar_multidouble {
             }
             fn round_dd(self) -> $t {
                 $from_dd($to_dd(self))
+            }
+            fn is_finite(self) -> bool {
+                <$t>::to_f64(self).is_finite()
             }
             fn cauchy(a: &[$t], b: &[$t], k: usize) -> $t {
                 let mut acc = $lane::acc0();
@@ -157,6 +165,9 @@ impl<T: Lane> Scalar for Fl<T, 1> {
     }
     fn round_dd(self) -> Self {
         self
+    }
+    fn is_finite(self) -> bool {
+        self.0[0].val().lane(0).to_f64().is_finite()
     }
     fn cauchy(a: &[Self], b: &[Self], k: usize) -> Self {
         multidouble::field::cs(a, b, k)
@@ -561,13 +572,19 @@ impl<T: Scalar> Recursion<T> {
         self.pw1[0][0] = T::one();
         self.pw2[0][0] = T::one();
         self.partial(0);
-        self.series.a0 = self.a0();
+        let a0 = self.a0();
+        self.series.a0 = a0;
         #[allow(unused_mut)]
-        let mut inv = T::one() / self.series.a0;
+        let mut inv = T::one() / a0;
         #[cfg(feature = "mutate")]
         if self.control == ImplicitControl::RecipDD {
             inv = inv.round_dd();
         }
+        // a pivot so small that its reciprocal overflows divides instead, once per order
+        #[cfg(feature = "mutate")]
+        let cached = inv.is_finite() || self.control == ImplicitControl::PlainReciprocal;
+        #[cfg(not(feature = "mutate"))]
+        let cached = inv.is_finite();
         for k in 1..=kt {
             #[allow(unused_mut)]
             let mut ik = self.rk[k].mulf(l);
@@ -581,7 +598,7 @@ impl<T: Scalar> Recursion<T> {
             self.partial(k);
             let r = self.n_order(k);
             #[allow(unused_mut)]
-            let mut dk = -(r * inv);
+            let mut dk = if cached { -(r * inv) } else { -(r / a0) };
             #[cfg(feature = "mutate")]
             if self.control == ImplicitControl::SkipOrder(k) {
                 dk = T::zero();
