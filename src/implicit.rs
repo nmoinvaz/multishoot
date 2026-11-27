@@ -1101,27 +1101,52 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         }
         // bisect until the bracket is two neighboring floats, however long the step: a bracket that has not closed is
         // not a location
-        let mut closed = false;
-        for _ in 0..2200 {
-            let mid = 0.5 * (lo + hi);
-            if mid == lo || mid == hi {
+        #[cfg(feature = "mutate")]
+        let (open, sum_mid, zero_hi) = (
+            self.control == ImplicitControl::OpenBracket,
+            self.control == ImplicitControl::SumMidpoint,
+            self.control == ImplicitControl::ZeroMid,
+        );
+        #[cfg(not(feature = "mutate"))]
+        let (open, sum_mid, zero_hi) = (false, false, false);
+        let unlocated = |step| Crossing {
+            x: T::from_f64(p.x),
+            step,
+            located: false,
+        };
+        let mut closed = open;
+        for _ in 0..(if open { 80 } else { 2200 }) {
+            let mid = if sum_mid { 0.5 * (lo + hi) } else { lo.midpoint(hi) };
+            if !open && (mid == lo || mid == hi) {
                 closed = true;
                 break;
             }
-            if sign(at(T::from_f64(mid))) == s_lo {
+            let sg = sign(at(T::from_f64(mid)));
+            if sg == s_lo {
                 lo = mid;
-            } else {
+            } else if sg != 0.0 || zero_hi || sum_mid || open || hi - lo <= 1e-3 * hi {
+                // a midpoint of a bracket that has narrowed to where the pivot is rounding noise reads zero by chance:
+                // it ends the bracket like any other that is not of the sign of the start
                 hi = mid;
+            } else {
+                // a midpoint of a wide bracket that evaluates to exactly zero (or to a NaN): the signs well on
+                // either side say whether the sign changes here (a bracket ending at it) or beyond it (a zero that the
+                // pivot touches)
+                let below = sign(at(T::from_f64(lo + 0.7 * (mid - lo))));
+                let above = sign(at(T::from_f64(mid + 0.3 * (hi - mid))));
+                if below == s_lo && above == s_lo {
+                    lo = mid;
+                } else if above == -s_lo {
+                    hi = mid;
+                } else {
+                    return unlocated(step);
+                }
             }
         }
         if !closed {
-            return Crossing {
-                x: T::from_f64(p.x),
-                step,
-                located: false,
-            };
+            return unlocated(step);
         }
-        let mut s = T::from_f64(0.5 * (lo + hi));
+        let mut s = T::from_f64(lo.midpoint(hi));
         for _ in 0..6 {
             let d = horner_d(&a, s);
             if d.to_f64() == 0.0 {
