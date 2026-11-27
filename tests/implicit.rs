@@ -1850,6 +1850,58 @@ fn located_far<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// N = A(x) y'' with A = +1 before 0 and -1 after, and at 0 it reads +1 the first time and -1 after: the second sample
+/// of a pivot that a projection between two `form`s of one state moved across zero
+struct TwoSampleEq {
+    last: std::cell::Cell<f64>,
+    reads: std::cell::Cell<usize>,
+}
+
+impl<T: Scalar> Coefficients<T> for TwoSampleEq {
+    fn pattern(&self) -> Vec<Mono> {
+        vec![(0, 0, 1)]
+    }
+    fn jets(&self, x0: f64, _kt: usize, out: &mut Jets<T>) {
+        let n = if x0 == self.last.get() { self.reads.get() + 1 } else { 0 };
+        self.last.set(x0);
+        self.reads.set(n);
+        let a = if x0 < 0.0 || (x0 == 0.0 && n == 0) { 1.0 } else { -1.0 };
+        out.ent[0].c[0] = T::from_f64(a);
+        out.ent[0].n = 1;
+    }
+}
+
+/// Pass (review of `Walker::form`, the sign a crossing is compared with): on `TwoSampleEq`, a walk from -1 forms twice at
+/// 0, the first sample +1 as at -1 and the second -1, then steps to 1 where A is -1. The sign compared and the sign stored
+/// for the next comparison are one sample, the first, so the change from +1 to -1 is reported once, in the last step.
+fn two_samples<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = TwoSampleEq {
+        last: std::cell::Cell::new(f64::NAN),
+        reads: std::cell::Cell::new(0),
+    };
+    let mut w = Walker::<T, _>::new(&eq, -1.0, [T::zero(); 3], opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let ok = w.form().is_ok()
+        && w.advance(1.0, 0.0).is_ok()
+        && w.form().is_ok()
+        && w.form().is_ok()
+        && w.advance(1.0, 1.0).is_ok();
+    let out = w.run(1.0, &[]);
+    Check {
+        pass: ok && out.crossings.len() == 1,
+        detail: format!(
+            "{} {:?}: steps taken {}, {} crossings (one expected)",
+            T::NAME,
+            ctl,
+            ok,
+            out.crossings.len()
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
@@ -1866,6 +1918,7 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, quad_small_coeff::<T>(Ctl::None), false);
     tally(&mut bad, overflow_coordinate::<T>(Ctl::None), false);
     tally(&mut bad, located_far::<T>(Ctl::None), false);
+    tally(&mut bad, two_samples::<T>(Ctl::None), false);
     finish(bad);
 }
 

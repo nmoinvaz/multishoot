@@ -809,8 +809,11 @@ pub struct Walker<'a, T: Real, S: Coefficients<T>> {
     ready: bool,
     /// the crossing of the step before has been looked for (reported or not): once per step, however many times `form` runs
     checked: bool,
-    /// the sign of A0 at the current step's start
+    /// the sign of A0 at the current step's start: its first `form`'s, the one a crossing is compared with and the one
+    /// `advance` stores for the next comparison
     cur_sign: f64,
+    /// `cur_sign` is that of a `form` of the current state
+    sampled: bool,
     prev: Option<Prev<T>>,
     crossings: Vec<Crossing<T>>,
     zero: Option<Zero<T>>,
@@ -878,6 +881,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             ready: false,
             checked: true,
             cur_sign: 0.0,
+            sampled: false,
             prev: None,
             crossings: Vec::new(),
             zero: None,
@@ -918,6 +922,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         self.y = y;
         self.prev = None;
         self.checked = true;
+        self.sampled = false;
         self.ready = false;
     }
 
@@ -1006,7 +1011,10 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if crossings_on {
             self.check_crossing(sg);
         }
-        self.cur_sign = sg;
+        if !self.sampled {
+            self.cur_sign = sg;
+            self.sampled = true;
+        }
         #[cfg(feature = "mutate")]
         let pivot_on = self.control != ImplicitControl::NoPivotStop;
         #[cfg(not(feature = "mutate"))]
@@ -1276,6 +1284,7 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         self.first = false;
         self.ready = false;
         self.checked = false;
+        self.sampled = false;
         Ok(Advance {
             landed: xn == target,
             h,
