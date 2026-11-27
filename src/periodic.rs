@@ -122,7 +122,7 @@ pub fn sin_cos_pi(p: i64, q: i64) -> (DD, DD) {
 }
 
 /// pi in octo-double: the parts of its greedy round-to-nearest expansion, from 150 decimal digits (checked against
-/// `OD::parse` and Machin's formula in the tests)
+/// `OD::parse` and Machin's formula in the tests, and proved in lean/Multishoot/PiOD.lean)
 pub const PI_OD: OD = OD {
     x: [
         std::f64::consts::PI,

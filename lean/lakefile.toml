@@ -1,0 +1,19 @@
+name = "Multishoot"
+defaultTargets = ["Multishoot", "Controls"]
+
+[leanOptions]
+autoImplicit = false
+# a proof left as `sorry` warns, so this fails the build on one
+warningAsError = true
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.34.1"
+
+[[lean_lib]]
+name = "Multishoot"
+
+# The axioms of every declaration of Multishoot, and the kernel's checks on wrong data: each must come out false.
+[[lean_lib]]
+name = "Controls"
