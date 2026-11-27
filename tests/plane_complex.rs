@@ -156,6 +156,7 @@ fn digest(parts: impl Iterator<Item = f64>) -> u64 {
 }
 
 /// What a case reports
+#[derive(Clone, Copy)]
 struct Out {
     plane: f64,
     gauge: f64,
@@ -173,6 +174,7 @@ enum Wrong {
     None,
     FScaled,
     RefNoPhase,
+    RefNoGram,
     OtherPlane,
 }
 
@@ -297,7 +299,12 @@ fn p1c<T: Lane>(wrong: Wrong, nconj: bool, f: [f64; N]) -> Out {
         }
     }
     let lnv = pl.ln_vol();
-    let exact = T::from_f64(32.0 * X) + T::parse(HALF_LN5);
+    let gram = if wrong == Wrong::RefNoGram {
+        T::zero()
+    } else {
+        T::parse(HALF_LN5)
+    };
+    let exact = T::from_f64(32.0 * X) + gram;
     let ln_err = (lnv.re - exact).to_f64().abs();
     let ln_im = lnv.im.to_f64().abs();
     let parts = pl
@@ -339,8 +346,38 @@ fn p1_real<T: Lane>() -> (u64, usize) {
     (digest(parts.into_iter()), st.steps)
 }
 
-fn pass<T: Lane>(name: &str, o: &Out) {
+/// x <= bar, false for a NaN
+fn within(x: f64, bar: f64) -> bool {
+    x <= bar
+}
+
+/// the checks of a case that fail: each acceptance predicate by name (shared by `pass` and the controls)
+fn verdict<T: Lane>(o: &Out) -> Vec<&'static str> {
     let eps = T::EPS;
+    let mut bad = vec![];
+    // a NaN fails every predicate (the comparisons are written so that it does)
+    if !within(o.plane, 1e4 * eps) {
+        bad.push("plane");
+    }
+    if !within(o.gauge, 1e4 * eps) {
+        bad.push("gauge");
+    }
+    if !within(o.ln_err, o.ln_bar) {
+        bad.push("ln_err");
+    }
+    if o.ln_im != 0.0 {
+        bad.push("ln_im");
+    }
+    if !within(o.phase, 1e4 * eps) {
+        bad.push("phase");
+    }
+    if !within(o.orth, 1e2 * eps) {
+        bad.push("orth");
+    }
+    bad
+}
+
+fn pass<T: Lane>(name: &str, o: &Out) {
     println!(
         "{name} {}: steps {} plane {:.2e} gauge {:.2e} ln_err {:.2e} (bar {:.2e}) ln_im {:.1e} phase {:.2e} orth {:.2e} digest {:016x}",
         T::NAME,
@@ -354,28 +391,8 @@ fn pass<T: Lane>(name: &str, o: &Out) {
         o.orth,
         o.digest
     );
-    assert!(o.plane <= 1e4 * eps, "plane {:e} > {:e}", o.plane, 1e4 * eps);
-    assert!(o.gauge <= 1e4 * eps, "gauge {:e} > {:e}", o.gauge, 1e4 * eps);
-    assert!(o.ln_err <= o.ln_bar, "ln_vol error {:e} > {:e}", o.ln_err, o.ln_bar);
-    assert!(o.ln_im == 0.0, "ln_vol has an imaginary part {:e}", o.ln_im);
-    assert!(
-        o.phase <= 1e4 * eps,
-        "phase of the volume {:e} > {:e}",
-        o.phase,
-        1e4 * eps
-    );
-    assert!(o.orth <= 1e2 * eps, "orthonormality {:e} > {:e}", o.orth, 1e2 * eps);
-}
-
-/// whether the case fails some check (the control's target)
-fn fails<T: Lane>(o: &Out) -> bool {
-    let eps = T::EPS;
-    !(o.plane <= 1e4 * eps
-        && o.gauge <= 1e4 * eps
-        && o.ln_err <= o.ln_bar
-        && o.ln_im == 0.0
-        && o.phase <= 1e4 * eps
-        && o.orth <= 1e2 * eps)
+    let bad = verdict::<T>(o);
+    assert!(bad.is_empty(), "{name} {}: failed {bad:?}", T::NAME);
 }
 
 fn all_pass<T: Lane>() {
@@ -432,34 +449,74 @@ fn real_embedding_qd() {
     real_embedding::<QD>();
 }
 
-/// the wrong inputs, each failing its check in every lane (no feature needed)
+/// the wrong inputs, each failing the check it targets in every lane (no feature needed), and only the checks it should
 fn wrong_inputs<T: Lane>() {
-    assert!(fails::<T>(&p1c::<T>(Wrong::FScaled, false, F)), "f_scaled did not fail");
-    assert!(
-        fails::<T>(&p1c::<T>(Wrong::RefNoPhase, false, F)),
-        "ref_no_phase did not fail"
-    );
-    assert!(
-        fails::<T>(&p1c::<T>(Wrong::OtherPlane, false, F)),
-        "wrong_plane did not fail"
-    );
+    let show = |name: &str, o: &Out, bad: &[&str]| {
+        println!(
+            "control {name} {}: failed {bad:?}; plane {:.2e} gauge {:.2e} ln_err {:.2e} phase {:.2e} orth {:.2e}",
+            T::NAME,
+            o.plane,
+            o.gauge,
+            o.ln_err,
+            o.phase,
+            o.orth
+        )
+    };
+    // f_2 scaled by 1 + 1e-6 in the system, not in the reference: the phase of the volume and the gauge (the scaled entries of J are rounded
+    // to f64, so in the wide lanes the plane and the log-volume move at 1e-16 too)
     let o = p1c::<T>(Wrong::FScaled, false, F);
-    println!(
-        "control f_scaled {}: gauge {:.2e} phase {:.2e} (bars {:.2e})",
-        T::NAME,
-        o.gauge,
-        o.phase,
-        1e4 * T::EPS
-    );
+    let bad = verdict::<T>(&o);
+    show("f_scaled", &o, &bad);
+    assert!(bad.contains(&"gauge") && bad.contains(&"phase"), "f_scaled: {bad:?}");
+    assert!(!bad.contains(&"orth"));
+    // the reference without the phases: exactly the gauge and the phase of the volume
     let o = p1c::<T>(Wrong::RefNoPhase, false, F);
-    println!(
-        "control ref_no_phase {}: gauge {:.2e} phase {:.2e}",
-        T::NAME,
-        o.gauge,
-        o.phase
-    );
+    let bad = verdict::<T>(&o);
+    show("ref_no_phase", &o, &bad);
+    assert_eq!(bad, vec!["gauge", "phase"]);
+    // the reference log-volume without the starting basis' term: exactly the log-volume
+    let o = p1c::<T>(Wrong::RefNoGram, false, F);
+    let bad = verdict::<T>(&o);
+    show("ref_no_gram", &o, &bad);
+    assert_eq!(bad, vec!["ln_err"]);
+    // the other plane: the plane check
     let o = p1c::<T>(Wrong::OtherPlane, false, F);
-    println!("control wrong_plane {}: plane {:.2e}", T::NAME, o.plane);
+    let bad = verdict::<T>(&o);
+    show("wrong_plane", &o, &bad);
+    assert!(bad.contains(&"plane"), "wrong_plane: {bad:?}");
+}
+
+/// a way of spoiling one metric of a case, given the lane's epsilon
+type Wrong1 = fn(&mut Out, f64);
+
+/// each reported metric fed a wrong value in turn, from a case that passes: the predicate of that metric, and only it, rejects
+fn one_metric_at_a_time<T: Lane>() {
+    let base = p1c::<T>(Wrong::None, false, F);
+    assert!(verdict::<T>(&base).is_empty());
+    let eps = T::EPS;
+    let cases: [(&str, Wrong1); 6] = [
+        ("plane", |o, e| o.plane = 2e4 * e),
+        ("gauge", |o, e| o.gauge = 2e4 * e),
+        ("ln_err", |o, _| o.ln_err = 2.0 * o.ln_bar),
+        ("ln_im", |o, e| o.ln_im = e),
+        ("phase", |o, e| o.phase = 2e4 * e),
+        ("orth", |o, e| o.orth = 2e2 * e),
+    ];
+    for (name, wrong) in cases {
+        let mut o = base;
+        wrong(&mut o, eps);
+        assert_eq!(verdict::<T>(&o), vec![name], "metric {name}");
+    }
+    let mut o = base;
+    o.plane = f64::NAN;
+    assert_eq!(verdict::<T>(&o), vec!["plane"], "a NaN plane error passed");
+}
+
+#[test]
+fn metrics_one_at_a_time() {
+    one_metric_at_a_time::<f64>();
+    one_metric_at_a_time::<DD>();
+    one_metric_at_a_time::<QD>();
 }
 
 #[test]
@@ -477,12 +534,13 @@ fn wrong_inputs_qd() {
     wrong_inputs::<QD>();
 }
 
-/// the library control `NoConj`: the plane and the real part of the log-volume stay, the phase goes
+/// the library control `NoConj`: the plane, the log-volume and the orthonormality stay, the phase goes: exactly the gauge and the phase of the volume fail
 #[cfg(feature = "mutate")]
 fn no_conj<T: Lane>() {
     let o = p1c::<T>(Wrong::None, true, F);
+    let bad = verdict::<T>(&o);
     println!(
-        "control NoConj {}: plane {:.2e} gauge {:.2e} ln_err {:.2e} phase {:.2e} orth {:.2e}",
+        "control NoConj {}: failed {bad:?}; plane {:.2e} gauge {:.2e} ln_err {:.2e} phase {:.2e} orth {:.2e}",
         T::NAME,
         o.plane,
         o.gauge,
@@ -490,14 +548,7 @@ fn no_conj<T: Lane>() {
         o.phase,
         o.orth
     );
-    assert!(fails::<T>(&o), "NoConj did not fail");
-    assert!(
-        o.gauge > 1e4 * T::EPS && o.phase > 1e4 * T::EPS,
-        "NoConj left the phase intact"
-    );
-    // the real part of the plane and of the log-volume are not what it breaks
-    assert!(o.plane <= 1e4 * T::EPS, "NoConj broke the plane: {:e}", o.plane);
-    assert!(o.ln_err <= o.ln_bar, "NoConj broke the real part of the log-volume");
+    assert_eq!(bad, vec!["gauge", "phase"], "NoConj");
 }
 
 #[cfg(feature = "mutate")]
@@ -560,6 +611,35 @@ fn complex_sqrt_recip_div() {
         assert!((one.re - 1.0).abs() < 1e-15 && one.im.abs() < 1e-15);
         let w = z * z.recip();
         assert!((w.re - 1.0).abs() < 1e-15 && w.im.abs() < 1e-15);
+    }
+    // components whose squares leave f64's range: quotient, reciprocal and square root stay finite and right
+    for &big in &[1e200f64, 1e-200] {
+        let z = C::new(big, big);
+        let one = z / z;
+        assert!(
+            (one.re - 1.0).abs() < 1e-15 && one.im.abs() < 1e-15,
+            "z / z at {big:e}: {one:?}"
+        );
+        let w = z * z.recip();
+        assert!(
+            (w.re - 1.0).abs() < 1e-15 && w.im.abs() < 1e-15,
+            "z * 1/z at {big:e}: {w:?}"
+        );
+        let i = C::new(big, big) / C::new(big, -big);
+        assert!(
+            i.re.abs() < 1e-15 && (i.im - 1.0).abs() < 1e-15,
+            "(1 + i) / (1 - i) at {big:e}: {i:?}"
+        );
+        let r = z.sqrt();
+        assert!(
+            r.re.is_finite() && r.im.is_finite() && r.re > 0.0,
+            "sqrt at {big:e}: {r:?}"
+        );
+        let back = r * r;
+        assert!(
+            ((back.re - big) / big).abs() < 1e-14 && ((back.im - big) / big).abs() < 1e-14,
+            "sqrt squared at {big:e}: {back:?}"
+        );
     }
     let z = C::new(3.0, -4.0);
     assert_eq!((z.conj().re, z.conj().im), (3.0, 4.0));

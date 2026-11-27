@@ -12,7 +12,7 @@
 //! each step the plane is therefore replaced by an orthonormal basis of the same span, `Y = Q R`, R upper triangular
 //! with a positive diagonal (Gram-Schmidt, each column's projections removed in turn and the pass repeated once). The
 //! plane Q is the same plane, and the sum of `ln R_ii` over all steps is the log of the volume the plane gained:
-//! [`Plane::ln_vol`]. By the Liouville formula that volume grows like `exp(int tr J dx)` when k = n, and a plane
+//! [`Plane::ln_vol`]. By the Liouville formula that volume grows like `exp(Re int tr J dx)` when k = n (the integral is real for a real system), and a plane
 //! spanned by the k fastest growing modes with rates `g_1 > ... > g_k` gains `(g_1 + ... + g_k) x`.
 //!
 //! The scalar is one lane's number type ([`Real`]): `f64`, `DD`, `QD` or `OD`, with the usual
@@ -201,15 +201,20 @@ impl<R: Real> Mul for Complex<R> {
 
 impl<R: Real> Div for Complex<R> {
     type Output = Complex<R>;
+    /// the quotient by Smith's algorithm, which forms no squared denominator (a real divisor takes the lane's own quotient)
     fn div(self, o: Complex<R>) -> Complex<R> {
         if o.is_real() {
             return Complex::new(self.re / o.re, self.im / o.re);
         }
-        let n = o.re * o.re + o.im * o.im;
-        Complex::new(
-            (self.re * o.re + self.im * o.im) / n,
-            (self.im * o.re - self.re * o.im) / n,
-        )
+        if o.re.to_f64().abs() >= o.im.to_f64().abs() {
+            let r = o.im / o.re;
+            let den = o.re + o.im * r;
+            Complex::new((self.re + self.im * r) / den, (self.im - self.re * r) / den)
+        } else {
+            let r = o.re / o.im;
+            let den = o.re * r + o.im;
+            Complex::new((self.re * r + self.im) / den, (self.im * r - self.re) / den)
+        }
     }
 }
 
@@ -238,8 +243,7 @@ impl<R: Real> Real for Complex<R> {
         if self.is_real() {
             return Complex::new(self.re.recip(), R::zero());
         }
-        let inv = (self.re * self.re + self.im * self.im).recip();
-        Complex::new(self.re * inv, -(self.im * inv))
+        Complex::one() / self
     }
     fn sqrt(self) -> Self {
         let (a, b) = (self.re, self.im);
@@ -250,15 +254,35 @@ impl<R: Real> Real for Complex<R> {
                 Complex::new(R::zero(), (-a).sqrt())
             };
         }
+        // components outside 2^+-250 would overflow or underflow in a^2 + b^2: scaled by an even power of two 2^-2k
+        // (exactly), the root taken, and scaled back by 2^k
+        let big = a.to_f64().abs().max(b.to_f64().abs());
+        let k = if big.is_finite() && !(pow2(-250)..=pow2(250)).contains(&big) {
+            ((((big.to_bits() >> 52) & 0x7ff) as i32) - 1023).clamp(-1022, 1022) / 2
+        } else {
+            0
+        };
+        let (a, b) = if k == 0 {
+            (a, b)
+        } else {
+            let p = R::from_f64(pow2(-2 * k));
+            (a * p, b * p)
+        };
         let m = (a * a + b * b).sqrt();
         let abs_a = if a.to_f64() < 0.0 { -a } else { a };
         let t = ((m + abs_a) * R::from_f64(0.5)).sqrt();
         let two_t = t + t;
-        if a.to_f64() >= 0.0 {
-            Complex::new(t, b / two_t)
+        let (re, im) = if a.to_f64() >= 0.0 {
+            (t, b / two_t)
         } else {
             let abs_b = if b.to_f64() < 0.0 { -b } else { b };
-            Complex::new(abs_b / two_t, if b.to_f64() < 0.0 { -t } else { t })
+            (abs_b / two_t, if b.to_f64() < 0.0 { -t } else { t })
+        };
+        if k == 0 {
+            Complex::new(re, im)
+        } else {
+            let q = R::from_f64(pow2(k));
+            Complex::new(re * q, im * q)
         }
     }
     fn ln(self) -> Self {
@@ -491,7 +515,7 @@ impl<T: Real> Plane<T> {
 
     /// The log of the volume of the plane as carried from the basis `new` was given: the volume of that basis plus
     /// every step's `sum ln R_ii`. For the k fastest growing modes of rates `g_i` it is `(g_1 + ... + g_k) x` plus
-    /// the log volume of the starting basis; for k = n, `int tr J dx` plus the log of |det| of the starting basis.
+    /// the log volume of the starting basis; for k = n, `int tr J dx` (its real part for a complex system) plus the log of |det| of the starting basis.
     pub fn ln_vol(&self) -> T {
         #[cfg(feature = "mutate")]
         if self.control == crate::control::PlaneControl::NoGram {

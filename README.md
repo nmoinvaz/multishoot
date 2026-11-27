@@ -80,7 +80,7 @@ module knows nothing of the problem.
 | `plane::Complex` | a complex scalar of the plane, a pair of lane values: the orthonormalization takes the Hermitian product and R keeps a real positive diagonal, so the phase of the columns stays in Q and `ln_vol` stays real; real data on it give the real lane's bits |
 | `plane::JetSource`, `Jets`, `Entry` | J's nonzero pattern and its Taylor coefficients about any point, from the caller |
 | `plane::Plane::new`, `advance` | the plane from a basis (its volume recorded), carried from xa to xb by steps of the planner's rule (`Plan`), orthonormalized after each (positive diagonal) |
-| `Plane::columns`, `ln_vol` | the orthonormal basis, and the log of the volume gained: `sum ln R_ii` of every step, so `(g_1 + ... + g_k) x` for the k fastest modes and `int tr J dx` for k = n |
+| `Plane::columns`, `ln_vol` | the orthonormal basis, and the log of the volume gained: `sum ln R_ii` of every step, so `(g_1 + ... + g_k) x` for the k fastest modes and `Re int tr J dx` for k = n |
 | `plane::orthonormalize` | Gram-Schmidt of the columns of a column-major matrix (Hermitian product on a complex scalar), twice per column, the diagonal of R positive |
 
 ![The plane stepper keeping a plane of two modes and its log-volume to roundoff in f64, DD and QD, while the same columns carried alone lose it where 16x = ln(1/eps)](docs/figures/plane.svg)
