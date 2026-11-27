@@ -95,7 +95,7 @@ and, at each step's start, the Taylor coefficients of every A_g (`Coefficients`)
 | `implicit::Recursion` | the Taylor series of one step: order k of N set to zero and solved for `y''_k`, one division by `A0 = dN/dy''` per step |
 | `implicit::Walker`, `WalkOpts`, `WalkOut` | a walk by the planner's rule (`taylor::step_from_norms`) with checkpoints, `form`, `planned` and `advance` for a caller that watches each step |
 | `implicit::Branch` | `Project`: one Newton correction of y'' at each step's start; `Conserve`: none, N stays at its start value |
-| `Stop::ZeroPivot`, `Stop::Pivot`, `WalkOut::zero`, `WalkOut::crossings` | where `A0` vanishes: a step that starts at `A0 = 0`, one that starts with `|A0| <= pivot_abs` and the estimate of the zero, the double roots the branch passes |
+| `Stop::ZeroPivot`, `Stop::Pivot`, `WalkOut::zero`, `WalkOut::crossings` | where `A0` vanishes: a step that starts at `A0 = 0`, one that starts with `\|A0\| <= pivot_abs` and the estimate of the zero, the double roots the branch passes |
 | `implicit::taylor_shift` | the jet of a polynomial in x about x0 in the scalar's precision |
 
 The branch is chosen once, by the data, and carried; no root is picked by its order among the roots. Two branches can be
@@ -106,8 +106,11 @@ starts with `|A0| <= pivot_abs` stops the walk with an estimate of the zero, `x*
 
 Near a double root of N in y'' use `Project`. `Conserve` keeps N at its start value, a rounding eps and not 0, and for
 N = eps a double root is two roots: the crossing becomes an avoided crossing, the Taylor series about a point at distance d
-has radius about d, the steps shrink toward it and the walk ends with `Stop::Tiny`. `Project` sets N = 0 at each step's start
-and crosses. Away from `A0 = 0` the two agree to roundoff and `Conserve` costs less.
+has radius about d, the steps shrink toward it and the walk ends with `Stop::Tiny`. `Project` makes one Newton correction of
+y'' at each step's start, which brings N back to about roundoff when the state is near the branch and so keeps the double
+root a double root. It is one correction, not a projection onto N = 0: for `N = y''^2 - 1` at `y'' = 2` it gives
+`y'' = 1.25`, where N is still 0.5625. It promises neither a zero of N nor a crossing. Away from `A0 = 0` the two agree to
+roundoff and `Conserve` costs less.
 
 The coefficients of a series are accurate to about eps times the series' size, not to eps each: the relative error of
 `c_k` grows about threefold per order (order k of N is a cancelling convolution), and what a step uses, `sum |dc_k| h^k`,
