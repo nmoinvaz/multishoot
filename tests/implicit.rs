@@ -1368,12 +1368,48 @@ fn edges_lane<T: TestReal>() {
     finish(bad);
 }
 
+/// Pass (review of `Recursion::form`, an overflowing reciprocal): N = 2^-1030 (y'' - x) about x0 = 0, l = 1, from the zero
+/// state. The pivot 2^-1030 is a finite f64 whose reciprocal is not; the series of y'' = x (y''_1 = 1, y'_2 = 1/2,
+/// y_3 = 1/6, the rest 0) is found within the bar of f64.
+fn reciprocal(ctl: Ctl) -> Check {
+    let c = pow2(-1030);
+    let eq = RealEq::new(&[((0, 0, 1), &[c]), ((0, 0, 0), &[0.0, -c])]);
+    let kt = 4;
+    let mut rec = Recursion::<f64>::new(&eq.pat, kt);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        rec.set_control(c);
+    }
+    let mut jets = Jets::<f64>::new(eq.pat.len(), kt);
+    Coefficients::<f64>::jets(&eq, 0.0, kt, &mut jets);
+    let s = rec.form(&jets, 1.0, [0.0; 3]).clone();
+    let want = [
+        [0.0, 0.0, 0.0, 1.0 / 6.0, 0.0],
+        [0.0, 0.0, 0.5, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0],
+    ];
+    let mut worst = 0.0f64;
+    for (cf, wf) in s.c.iter().zip(want.iter()) {
+        for (c, w) in cf.iter().zip(wf.iter()) {
+            worst = nanmax(worst, (c - w).abs());
+        }
+    }
+    Check {
+        pass: worst <= bar::<f64>(),
+        detail: format!(
+            "f64 {ctl:?}: pivot 2^-1030, y''_1 = {:e}, worst difference from y'' = x's series {worst:.2e}",
+            s.c[2][1]
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 whose exponents are beyond what the multi-doubles' splits take: f64 only
 #[test]
 fn edges_f64() {
     edges_lane::<f64>();
     let mut bad = Vec::new();
     tally(&mut bad, underflow(Ctl::None), false);
+    tally(&mut bad, reciprocal(Ctl::None), false);
     finish(bad);
 }
 
@@ -1486,7 +1522,8 @@ mod controls {
             | ImplicitControl::NoEndCrossing
             | ImplicitControl::NoDedup
             | ImplicitControl::KeepZero
-            | ImplicitControl::EmptyShift => [false; 6],
+            | ImplicitControl::EmptyShift
+            | ImplicitControl::PlainReciprocal => [false; 6],
         }
     }
 
@@ -1562,6 +1599,7 @@ mod controls {
     fn edge_controls_f64() {
         let mut rows = edge_rows::<f64>();
         rows.push((ImplicitControl::PlainScale, "underflow", underflow));
+        rows.push((ImplicitControl::PlainReciprocal, "reciprocal", reciprocal));
         edge_controls(&rows);
     }
 
