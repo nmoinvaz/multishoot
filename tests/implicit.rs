@@ -1152,11 +1152,47 @@ fn repeat_form<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::run`, the last step): the step of `repeat_form`'s walk from -1 to 1 is the last one. `run`
+/// ends with `Stop::End` in one step, to the state of the branch within the bar, and reports the crossing at 0 (located,
+/// within the bar), which no step start sees.
+fn last_crossing<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = mirror_eq();
+    let mut w = Walker::<T, _>::new(&eq, -1.0, mirror_state::<T>(-1.0), opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    let err = rel_err(&out.y, &mirror_state::<T>(1.0));
+    let n = out.crossings.len();
+    let pos = out.crossings.first().map_or(f64::NAN, |k| k.x.to_f64().abs());
+    Check {
+        pass: out.stop == Stop::End
+            && out.steps == 1
+            && out.x == 1.0
+            && err <= bar::<T>()
+            && n == 1
+            && out.crossings[0].located
+            && pos <= bar::<T>(),
+        detail: format!(
+            "{} {:?}: stop {:?} after {} steps, state off by {:.2e}, {} crossings, the first {:.2e} from 0",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.steps,
+            err,
+            n,
+            pos
+        ),
+    }
+}
+
 /// the edge cases of the review of multishoot#73 that hold in every lane
 fn edges_lane<T: TestReal>() {
     let mut bad = Vec::new();
     tally(&mut bad, stale::<T>(Ctl::None), false);
     tally(&mut bad, repeat_form::<T>(Ctl::None), false);
+    tally(&mut bad, last_crossing::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -1237,7 +1273,8 @@ mod controls {
             ImplicitControl::None
             | ImplicitControl::PlainScale
             | ImplicitControl::StaleSeries
-            | ImplicitControl::RepeatCrossing => [false; 6],
+            | ImplicitControl::RepeatCrossing
+            | ImplicitControl::NoEndCrossing => [false; 6],
         }
     }
 
@@ -1302,6 +1339,7 @@ mod controls {
         vec![
             (ImplicitControl::StaleSeries, "stale", stale::<T>),
             (ImplicitControl::RepeatCrossing, "repeat_form", repeat_form::<T>),
+            (ImplicitControl::NoEndCrossing, "last_crossing", last_crossing::<T>),
         ]
     }
 

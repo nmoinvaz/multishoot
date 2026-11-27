@@ -122,4 +122,6 @@ pub enum ImplicitControl {
     StaleSeries,
     /// the crossing of the step before appended at every `form`, not once
     RepeatCrossing,
+    /// the end of the last accepted step of a `run` not looked at for a crossing
+    NoEndCrossing,
 }
