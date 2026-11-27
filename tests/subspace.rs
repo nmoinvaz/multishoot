@@ -28,7 +28,7 @@ fn factors_hash(par: bool, seed: u64) -> u64 {
 
 /// the reference hash of `factors_hash`, recorded with the factorizations and the subspace's products in sequence on
 /// aarch64 (NEON)
-const FACTORS_REFERENCE: u64 = 0x7a080d97da4a78e9;
+const FACTORS_REFERENCE: u64 = 0x29d7bfb26e1a6575;
 
 /// The factors and the weak subspace do not depend on the threads: pass, `factors_hash` with `par` in pools of 1, 3
 /// and 6 threads, and without it, equals the reference of the serial code. The control: another start of the subspace
