@@ -124,6 +124,8 @@ pub enum ImplicitControl {
     RepeatCrossing,
     /// the end of the last accepted step of a `run` not looked at for a crossing
     NoEndCrossing,
+    /// the crossing at the end of a `run`'s last step recorded in the walk, not only in the result
+    RecordEnd,
     /// equal checkpoints of a `run` not merged
     NoDedup,
     /// the estimate of the zero returned with every `run` after a pivot stop, not only the one that stopped there
