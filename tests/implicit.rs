@@ -295,6 +295,8 @@ enum Ctl {
     NanPos,
     /// the end state of the walk replaced by a NaN
     NanState,
+    /// the planned step of `planner` with its last bit flipped, before the comparison
+    FlipBit,
     /// a planted path that ends after n accepted steps, with `Stop::StepLimit` (n = 0: its first `form` fails)
     Cut(usize),
 }
@@ -494,7 +496,7 @@ fn zero_pivot<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
-fn planner<T: TestReal>() -> Check {
+fn planner<T: TestReal>(ctl: Ctl) -> Check {
     let eq = PolyEq::f1();
     let mut o = opts::<T>(Branch::Project, 1.0);
     o.h_scale = 0.5;
@@ -524,14 +526,19 @@ fn planner<T: TestReal>() -> Check {
             hmax: 1.0 / s.l,
         };
         let want = step_from_norms(e(kt - 1), e(kt), kt, &plan) * s.l * 0.5;
-        if h.to_bits() != want.to_bits() {
+        let got = if ctl == Ctl::FlipBit {
+            f64::from_bits(h.to_bits() ^ 1)
+        } else {
+            h
+        };
+        if got.to_bits() != want.to_bits() {
             bad += 1;
         }
         w.advance(h, 1.0).expect("advance");
     }
     Check {
         pass: bad == 0,
-        detail: format!("{} F1 planner: {} of 5 steps differ in bits", T::NAME, bad),
+        detail: format!("{} F1 planner {:?}: {} of 5 steps differ in bits", T::NAME, ctl, bad),
     }
 }
 
@@ -914,7 +921,7 @@ fn misc_lane<T: TestReal>() {
         tally(&mut bad, coeffs_each::<T>(l), true);
     }
     tally(&mut bad, zero_pivot::<T>(Ctl::None), false);
-    tally(&mut bad, planner::<T>(), false);
+    tally(&mut bad, planner::<T>(Ctl::None), false);
     for br in BRANCHES {
         tally(&mut bad, step_sum::<T>(Pth::B(br), Ctl::None), false);
     }
@@ -1490,6 +1497,18 @@ fn bad_coeff_fires<T: TestReal>() {
     }
 }
 
+/// the planner check fails when the planned step differs from the rule's in the last bit, in every step
+fn flip_bit_fires<T: TestReal>() {
+    let c = planner::<T>(Ctl::FlipBit);
+    show(&c);
+    assert!(
+        !c.pass && c.detail.contains("5 of 5"),
+        "control FlipBit did not fire: {}",
+        c.detail
+    );
+    assert!(planner::<T>(Ctl::None).pass);
+}
+
 /// a NaN position of a crossing fails `crossings`, and a NaN end state fails `closed_form`
 fn nan_position_fires<T: TestReal>() {
     for (c, name) in [
@@ -1506,6 +1525,9 @@ fn nan_position_fires<T: TestReal>() {
 /// The controls that need no hook: the check must fail on its stated case
 #[test]
 fn controls_without_hooks() {
+    flip_bit_fires::<f64>();
+    flip_bit_fires::<DD>();
+    flip_bit_fires::<QD>();
     nan_position_fires::<f64>();
     nan_position_fires::<DD>();
     nan_position_fires::<QD>();
