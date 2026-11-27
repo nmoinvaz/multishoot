@@ -1210,14 +1210,15 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         let normal = |v: T| v.to_f64().abs() >= f64::MIN_POSITIVE;
         let (num, den) = ((s0 * s2).mulf(2.0), s1 * s1);
         #[cfg(feature = "mutate")]
-        let (scaled_quad, double_first, product_first, any_zero) = (
+        let (scaled_quad, double_first, product_first, any_zero, product_x) = (
             self.control == ImplicitControl::ScaledQuad,
             self.control == ImplicitControl::DoubleFirst,
             self.control == ImplicitControl::ProductFirst,
             self.control == ImplicitControl::NoFiniteZero,
+            self.control == ImplicitControl::ProductX,
         );
         #[cfg(not(feature = "mutate"))]
-        let (scaled_quad, double_first, product_first, any_zero) = (false, false, false, false);
+        let (scaled_quad, double_first, product_first, any_zero, product_x) = (false, false, false, false, false);
         let no_quad = if scaled_quad {
             s2.to_f64() == 0.0
         } else {
@@ -1247,14 +1248,21 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         if !(b.is_finite() && b > 0.0) {
             return None;
         }
-        // beta a0 / a1, as beta (a0 / a1) where the product beta a0 is not an `f64`
+        // beta a0 / a1, as beta (a0 / a1) where the product beta a0 is not a normal `f64` (it overflows or underflows)
         let top = beta * a[0];
-        let s = if product_first || top.to_f64().is_finite() {
+        let t = top.to_f64().abs();
+        let s = if product_first || (t.is_finite() && t >= f64::MIN_POSITIVE) {
             -(top / a[1])
         } else {
             -(beta * (a[0] / a[1]))
         };
-        let x = T::from_f64(self.x) + s.mulf(self.l);
+        // x + s l, with the two halves of the sum where the product s l is not an `f64`
+        let step = s.mulf(self.l);
+        let x = if product_x || step.to_f64().is_finite() {
+            T::from_f64(self.x) + step
+        } else {
+            (T::from_f64(self.x).mulf(0.5) + s.mulf(0.5 * self.l)).mulf(2.0)
+        };
         if !any_zero && !x.to_f64().is_finite() {
             return None;
         }

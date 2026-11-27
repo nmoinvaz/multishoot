@@ -146,6 +146,8 @@ pub enum ImplicitControl {
     DoubleFirst,
     /// beta a0 formed before it is divided by a1 in the zero estimate, which overflows or underflows
     ProductFirst,
+    /// the coordinate of the zero estimate formed as x + s l with the product s l whole, which overflows
+    ProductX,
     /// the bracket of a crossing bisected 80 times and called located whether or not it has closed
     OpenBracket,
     /// a midpoint of the bracket of a crossing that evaluates to exactly zero put on the far side of the bracket

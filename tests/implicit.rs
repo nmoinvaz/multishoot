@@ -1984,6 +1984,66 @@ fn tangent_near_root<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::estimate_zero`, an underflowing numerator): N = 2^-1074 (1 + x - x^2) y'' from the zero state
+/// at 0 with `pivot_abs` 1 stops with `Stop::Pivot` and the estimate rho = -2, beta = 1/3, x = -1/3: beta times 2^-1074 is
+/// not a nonzero `f64`, though the displacement is.
+fn zero_numerator_underflow<T: TestReal>(ctl: Ctl) -> Check {
+    let m = pow2(-1074);
+    let eq = RealEq::new(&[((0, 0, 1), &[m, m, -m])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 1.0;
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.0, &[]);
+    let (err, beta) = out
+        .zero
+        .as_ref()
+        .map_or((f64::NAN, f64::NAN), |z| ((z.x.to_f64() + 1.0 / 3.0).abs(), z.beta));
+    Check {
+        pass: out.stop == Stop::Pivot && err <= 1e-9 && (beta - 1.0 / 3.0).abs() <= 1e-9,
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate {:.2e} from -1/3 with beta {}",
+            T::NAME,
+            ctl,
+            out.stop,
+            err,
+            beta
+        ),
+    }
+}
+
+/// Pass (review of `Walker::estimate_zero`, an overflowing product): N = (1 + 2^-1023 x) y'' from the zero state at
+/// x = 2^1023 with `pivot_abs` 2 stops with `Stop::Pivot` and the estimate beta = 1, x = -2^1023: the step in s is -2 and
+/// the scale l is 2^1023, whose product is not an `f64` though the coordinate is.
+fn coordinate_overflow<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = RealEq::new(&[((0, 0, 1), &[1.0, pow2(-1023)])]);
+    let mut o = opts::<T>(Branch::Project, 1.0);
+    o.pivot_abs = 2.0;
+    let mut w = Walker::<T, _>::new(&eq, pow2(1023), [T::zero(); 3], o);
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(1.5 * pow2(1023), &[]);
+    let (err, beta) = out.zero.as_ref().map_or((f64::NAN, f64::NAN), |z| {
+        (((z.x.to_f64() + pow2(1023)) / pow2(1023)).abs(), z.beta)
+    });
+    Check {
+        pass: out.stop == Stop::Pivot && err <= bar::<T>() && (beta - 1.0).abs() <= bar::<T>(),
+        detail: format!(
+            "{} {:?}: stop {:?}, estimate off by {:.2e} of -2^1023 with beta {}",
+            T::NAME,
+            ctl,
+            out.stop,
+            err,
+            beta
+        ),
+    }
+}
+
 /// Pass (review of `Walker::estimate_zero`, an overflowing fallback): N = (2^1023 + x - 2^-1023 x^2) y'' from the zero state
 /// at 0 with `pivot_abs` `f64::MAX` stops with `Stop::Pivot` and the estimate rho = -2, beta = 1/3, x = -2^1023 / 3: twice
 /// 2^1023 is not an `f64`, though the product with 2^-1023 is.
@@ -2124,6 +2184,8 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, tangent_midpoint::<T>(Ctl::None), false);
     tally(&mut bad, rho_fallback_overflow::<T>(Ctl::None), false);
     tally(&mut bad, zero_numerator_overflow::<T>(Ctl::None), false);
+    tally(&mut bad, zero_numerator_underflow::<T>(Ctl::None), false);
+    tally(&mut bad, coordinate_overflow::<T>(Ctl::None), false);
     tally(&mut bad, tangent_near_root::<T>(Ctl::None), false);
     tally(&mut bad, backward_crossing::<T>(Ctl::None), false);
     finish(bad);
@@ -2373,6 +2435,7 @@ mod controls {
             | ImplicitControl::OpenBracket
             | ImplicitControl::ZeroMid
             | ImplicitControl::SumMidpoint
+            | ImplicitControl::ProductX
             | ImplicitControl::BackwardBracket
             | ImplicitControl::LastSign
             | ImplicitControl::NoFiniteEnd => [false; 6],
@@ -2458,6 +2521,16 @@ mod controls {
                 ImplicitControl::ProductFirst,
                 "zero_numerator_overflow",
                 zero_numerator_overflow::<T>,
+            ),
+            (
+                ImplicitControl::ProductFirst,
+                "zero_numerator_underflow",
+                zero_numerator_underflow::<T>,
+            ),
+            (
+                ImplicitControl::ProductX,
+                "coordinate_overflow",
+                coordinate_overflow::<T>,
             ),
             (ImplicitControl::OpenBracket, "located_far", located_far::<T>),
             (ImplicitControl::ZeroMid, "tangent_midpoint", tangent_midpoint::<T>),
