@@ -1919,6 +1919,71 @@ fn tangent_midpoint<T: TestReal>(ctl: Ctl) -> Check {
     }
 }
 
+/// Pass (review of `Walker::locate_crossing`, a backward step): N = z^2 - (3x - 1)^2 on its branch z = 3x - 1 walked from
+/// x = 1 to -1 in one step crosses the double root at 1/3, which is located within the bar of the lane: the refinement
+/// in the lane's precision works in both directions, not only forward.
+fn backward_crossing<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = PolyEq::new(&[((0, 0, 2), &[1]), ((0, 0, 0), &[-1, 6, -9])]);
+    let y0 = [T::zero(), T::zero(), T::from_f64(2.0)];
+    #[allow(unused_mut)]
+    let mut w = Walker::<T, _>::new(&eq, 1.0, y0, opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let out = w.run(-1.0, &[]);
+    let third = T::one() / T::from_f64(3.0);
+    let (located, err) = out
+        .crossings
+        .first()
+        .map_or((false, f64::NAN), |k| (k.located, (k.x - third).to_f64().abs()));
+    Check {
+        pass: out.stop == Stop::End && out.crossings.len() == 1 && located && err <= bar::<T>(),
+        detail: format!(
+            "{} {:?}: stop {:?}, {} crossings, located {}, {:.2e} from 1/3 (bar {:.1e})",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.crossings.len(),
+            located,
+            err,
+            bar::<T>()
+        ),
+    }
+}
+
+/// Pass (review of `Walker::locate_crossing`, a zero midpoint with the sign change just beyond): N = (x - 2)^2 (2.5 - x)
+/// y'' from the zero state at 0 to 4 in one forced step has A0 positive up to 2.5 and negative after, with a tangent zero
+/// at 2 that the first midpoint hits exactly. The crossing is reported and is either not located or located within 1e-3
+/// of 2.5.
+fn tangent_near_root<T: TestReal>(ctl: Ctl) -> Check {
+    let eq = PolyEq::new(&[((0, 0, 1), &[20, -28, 13, -2])]);
+    #[allow(unused_mut)]
+    let mut w = Walker::<T, _>::new(&eq, 0.0, [T::zero(); 3], opts::<T>(Branch::Project, 4.0));
+    #[cfg(feature = "mutate")]
+    if let Ctl::Lib(c) = ctl {
+        w.set_control(c);
+    }
+    let stepped = w.form().is_ok() && w.advance(4.0, 4.0).is_ok();
+    let out = w.run(4.0, &[]);
+    let (located, err) = out
+        .crossings
+        .first()
+        .map_or((false, f64::NAN), |k| (k.located, (k.x.to_f64() - 2.5).abs()));
+    Check {
+        pass: stepped && out.stop == Stop::End && out.crossings.len() == 1 && (!located || err <= 1e-3),
+        detail: format!(
+            "{} {:?}: stop {:?}, {} crossings, located {}, {:.2e} from 2.5",
+            T::NAME,
+            ctl,
+            out.stop,
+            out.crossings.len(),
+            located,
+            err
+        ),
+    }
+}
+
 /// Pass (review of `Walker::estimate_zero`, an overflowing fallback): N = (2^1023 + x - 2^-1023 x^2) y'' from the zero state
 /// at 0 with `pivot_abs` `f64::MAX` stops with `Stop::Pivot` and the estimate rho = -2, beta = 1/3, x = -2^1023 / 3: twice
 /// 2^1023 is not an `f64`, though the product with 2^-1023 is.
@@ -2059,6 +2124,8 @@ fn edges_lane<T: TestReal>() {
     tally(&mut bad, tangent_midpoint::<T>(Ctl::None), false);
     tally(&mut bad, rho_fallback_overflow::<T>(Ctl::None), false);
     tally(&mut bad, zero_numerator_overflow::<T>(Ctl::None), false);
+    tally(&mut bad, tangent_near_root::<T>(Ctl::None), false);
+    tally(&mut bad, backward_crossing::<T>(Ctl::None), false);
     finish(bad);
 }
 
@@ -2306,6 +2373,7 @@ mod controls {
             | ImplicitControl::OpenBracket
             | ImplicitControl::ZeroMid
             | ImplicitControl::SumMidpoint
+            | ImplicitControl::BackwardBracket
             | ImplicitControl::LastSign
             | ImplicitControl::NoFiniteEnd => [false; 6],
         }
@@ -2393,6 +2461,7 @@ mod controls {
             ),
             (ImplicitControl::OpenBracket, "located_far", located_far::<T>),
             (ImplicitControl::ZeroMid, "tangent_midpoint", tangent_midpoint::<T>),
+            (ImplicitControl::ZeroMid, "tangent_near_root", tangent_near_root::<T>),
             (
                 ImplicitControl::SumMidpoint,
                 "midpoint_overflow",
@@ -2418,12 +2487,25 @@ mod controls {
 
     #[test]
     fn edge_controls_dd() {
-        edge_controls(&edge_rows::<DD>());
+        let mut rows = edge_rows::<DD>();
+        // f64 reads the bisection's midpoint, which is within its bar: only dd and qd can lose the refinement
+        rows.push((
+            ImplicitControl::BackwardBracket,
+            "backward_crossing",
+            backward_crossing::<DD>,
+        ));
+        edge_controls(&rows);
     }
 
     #[test]
     fn edge_controls_qd() {
-        edge_controls(&edge_rows::<QD>());
+        let mut rows = edge_rows::<QD>();
+        rows.push((
+            ImplicitControl::BackwardBracket,
+            "backward_crossing",
+            backward_crossing::<QD>,
+        ));
+        edge_controls(&rows);
     }
 
     /// the gated `coeffs` fails on a recursion that skips order 3 of N

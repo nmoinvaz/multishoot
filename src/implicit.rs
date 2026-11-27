@@ -1115,13 +1115,14 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
         // bisect until the bracket is two neighboring floats, however long the step: a bracket that has not closed is
         // not a location
         #[cfg(feature = "mutate")]
-        let (open, sum_mid, zero_hi) = (
+        let (open, sum_mid, zero_hi, backward_old) = (
             self.control == ImplicitControl::OpenBracket,
             self.control == ImplicitControl::SumMidpoint,
             self.control == ImplicitControl::ZeroMid,
+            self.control == ImplicitControl::BackwardBracket,
         );
         #[cfg(not(feature = "mutate"))]
-        let (open, sum_mid, zero_hi) = (false, false, false);
+        let (open, sum_mid, zero_hi, backward_old) = (false, false, false, false);
         let unlocated = |step| Crossing {
             x: T::from_f64(p.x),
             step,
@@ -1137,16 +1138,16 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
             let sg = sign(at(T::from_f64(mid)));
             if sg == s_lo {
                 lo = mid;
-            } else if sg != 0.0 || zero_hi || sum_mid || open || hi - lo <= 1e-3 * hi {
+            } else if sg != 0.0 || zero_hi || sum_mid || open || (hi - lo).abs() <= 1e-3 * hi.abs() {
                 // a midpoint of a bracket that has narrowed to where the pivot is rounding noise reads zero by chance:
                 // it ends the bracket like any other that is not of the sign of the start
                 hi = mid;
             } else {
-                // a midpoint of a wide bracket that evaluates to exactly zero (or to a NaN): the signs well on
-                // either side say whether the sign changes here (a bracket ending at it) or beyond it (a zero that the
-                // pivot touches)
-                let below = sign(at(T::from_f64(lo + 0.7 * (mid - lo))));
-                let above = sign(at(T::from_f64(mid + 0.3 * (hi - mid))));
+                // a midpoint of a wide bracket that evaluates to exactly zero (or to a NaN): the signs a hundredth of a
+                // half-bracket to either side say whether the sign changes here (a bracket ending at it) or beyond
+                // it (a zero that the pivot touches)
+                let below = sign(at(T::from_f64(lo + 0.99 * (mid - lo))));
+                let above = sign(at(T::from_f64(mid + 0.01 * (hi - mid))));
                 if below == s_lo && above == s_lo {
                     lo = mid;
                 } else if above == -s_lo {
@@ -1166,8 +1167,14 @@ impl<'a, T: Real, S: Coefficients<T>> Walker<'a, T, S> {
                 break;
             }
             let next = s - horner_t(&a, s) / d;
-            // the refinement stays in the bracket
-            if !(open || (next.to_f64() >= lo && next.to_f64() <= hi)) {
+            // the refinement stays in the bracket, which runs from `lo` to `hi` whichever is the greater
+            let n = next.to_f64();
+            let within = if backward_old {
+                n >= lo && n <= hi
+            } else {
+                n >= lo.min(hi) && n <= lo.max(hi)
+            };
+            if !(open || within) {
                 break;
             }
             s = next;

@@ -144,7 +144,7 @@ pub enum ImplicitControl {
     NoFiniteZero,
     /// 2 (a0 / a1) formed before it is multiplied by a2 / a1 in the quotient form of the exponent, which overflows
     DoubleFirst,
-    /// beta a0 formed before it is divided by a1 in the zero estimate, which overflows
+    /// beta a0 formed before it is divided by a1 in the zero estimate, which overflows or underflows
     ProductFirst,
     /// the bracket of a crossing bisected 80 times and called located whether or not it has closed
     OpenBracket,
@@ -152,6 +152,9 @@ pub enum ImplicitControl {
     ZeroMid,
     /// the midpoint of the bracket of a crossing formed as half the sum of its ends, which overflows
     SumMidpoint,
+    /// the refinement of a crossing's position kept in its bracket tested as `lo <= next <= hi`, which no value
+    /// satisfies on a backward step
+    BackwardBracket,
     /// the sign of the last `form` of a state stored for the next comparison, the first one's compared
     LastSign,
     /// a pivot that is not finite at the end of a `run` read for its sign
