@@ -1,13 +1,14 @@
 //! The data of the README's figures: each function runs multishoot on a model problem and writes what its figure draws
-//! as JSON into the directory given (docs/figures/data). The models are the integration tests' (tests/common) and four
+//! as JSON into the directory given (docs/figures/data). The models are the integration tests' (tests/common) and five
 //! copied from the README and the tests: the README's example, Bratu's problem with lambda a global and with lambda
-//! the equations' parameter, and the linear wave of the mode-matrix tests.
+//! the equations' parameter, the linear wave of the mode-matrix tests, and the constant system of the plane tests.
 #[path = "../../../tests/common/mod.rs"]
 mod common;
 
 use common::{perturbed, wave, Fnv, Planted, Rotor};
 use multishoot::lane::{DMat, Dtn, Fu, Lane, Param, DV};
 use multishoot::multidouble::dd::split;
+use multishoot::multidouble::qd::QD;
 use multishoot::multidouble::simd::{Native, Simd};
 use multishoot::multisolver::anm::series;
 use multishoot::multisolver::arclength::{continuation, locate_fold, start, ArcOpts, Bordered, FoldOpts};
@@ -17,6 +18,7 @@ use multishoot::multisolver::quasi::QuasiOpts;
 use multishoot::multisolver::winding::WindOpts;
 use multishoot::multisolver::NewtonOpts;
 use multishoot::periodic::{dmat, sin_cos_grid, theta, Parity, Resampler};
+use multishoot::plane::{orthonormalize, JetSource, Jets, Plane, Real};
 use multishoot::taylor::{plan_path, step_cost, taylor_path, taylor_step};
 use multishoot::{cs, Double, Equations, ExtraRow, Fl, InGlobal, Plan, Quad, Rate, Shooting, State, Storage, Work, DD};
 use std::time::Instant;
@@ -370,6 +372,164 @@ fn taylor(dir: &str) {
         Plan::optimal_kt(tol),
         first.kt,
         second.kt
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Plane stepper
+
+/// P = L U, unimodular, and its inverse: the modes of the plane tests' P1 (tests/plane.rs)
+const PL_P: [[f64; 4]; 4] = [[1., 1., 0., 1.], [1., 2., 1., 1.], [0., 1., 2., 1.], [1., 1., 1., 3.]];
+const PL_PINV: [[f64; 4]; 4] = [
+    [7., -4., 3., -2.],
+    [-4., 3., -2., 1.],
+    [3., -2., 2., -1.],
+    [-2., 1., -1., 1.],
+];
+/// the growth rates of P1's modes
+const PL_RATES: [f64; 4] = [24., 8., -8., -24.];
+/// the end of the run and the samples on [0, PL_END]
+const PL_END: f64 = 12.0;
+const PL_SAMPLES: usize = 120;
+
+/// P1's constant system y' = J y, J = P diag(rates) P^-1 (integers, exact in f64)
+struct ConstJ {
+    a: [[f64; 4]; 4],
+}
+
+impl ConstJ {
+    fn p1() -> Self {
+        let mut a = [[0.0; 4]; 4];
+        for (i, row) in a.iter_mut().enumerate() {
+            for (j, x) in row.iter_mut().enumerate() {
+                *x = (0..4).map(|m| PL_P[i][m] * PL_RATES[m] * PL_PINV[m][j]).sum();
+            }
+        }
+        ConstJ { a }
+    }
+}
+
+impl<T: Real> JetSource<T> for ConstJ {
+    fn pattern(&self) -> Vec<(usize, usize)> {
+        (0..16)
+            .map(|e| (e / 4, e % 4))
+            .filter(|&(i, j)| self.a[i][j] != 0.0)
+            .collect()
+    }
+    fn jets(&self, _x0: f64, _kj: usize, out: &mut Jets<T>) {
+        for en in out.ent.iter_mut() {
+            en.c[0] = T::from_f64(self.a[en.i][en.j]);
+            en.n = 1;
+        }
+    }
+}
+
+/// ||(I - Pi) Y||_F of the orthonormal columns `y` (column-major 4 x k), Pi the projector onto span P[:, :2] formed in
+/// the lane as in tests/plane.rs: it bounds the sine of the largest principal angle to the exact plane
+fn off_plane<T: Real>(y: &[T]) -> f64 {
+    let b = |c: usize, i: usize| T::from_f64(PL_P[i][c]);
+    let g = |a: usize, c: usize| (0..4).fold(T::zero(), |s, i| s + b(a, i) * b(c, i));
+    let (g00, g01, g11) = (g(0, 0), g(0, 1), g(1, 1));
+    let det = (g00 * g11 - g01 * g01).recip();
+    let mut sum = 0.0f64;
+    for col in y.chunks(4) {
+        let t: Vec<T> = (0..2)
+            .map(|a| (0..4).fold(T::zero(), |s, i| s + b(a, i) * col[i]))
+            .collect();
+        let w = [(g11 * t[0] - g01 * t[1]) * det, (g00 * t[1] - g01 * t[0]) * det];
+        for (i, &yi) in col.iter().enumerate() {
+            let r = (yi - (b(0, i) * w[0] + b(1, i) * w[1])).to_f64();
+            sum += r * r;
+        }
+    }
+    sum.sqrt()
+}
+
+/// The plane spanned by two unit columns, orthonormalized by `plane::orthonormalize`, and its `sum ln R_ii`; None
+/// when the second column is the first to the last bit
+fn span2<T: Real + PartialEq>(a: &[T], b: &[T]) -> Option<(Vec<T>, T)> {
+    if a == b {
+        return None;
+    }
+    let mut y = [a, b].concat();
+    let mut diag = [T::zero(); 2];
+    orthonormalize(&mut y, 4, 2, &mut diag);
+    Some((y, diag[0].ln() + diag[1].ln()))
+}
+
+/// One lane's P1 from x = 0 to PL_END, from the basis P[:, :2] M, M = [[1, 1], [1, -1]], so that each column holds
+/// both modes as a generic start does (P[:, :2] itself holds one mode per column, and roundoff seeds the other):
+/// the plane stepper (k = 2, orthonormalized after every step) against the same two columns carried alone (two
+/// planes of k = 1, each only scaled), at every sample their distance from the exact plane span P[:, :2] and their
+/// log-volume's error against 32 x + ln 20 / 2 (|det M| = 2), relative to max(1, |exact|)
+fn plane_lane<T: Real + PartialEq>(name: &str) -> String {
+    let src = ConstJ::p1();
+    let tol = 100.0 * T::EPS;
+    let kt = Plan::optimal_kt(tol);
+    let plan = Plan { kt, tol, hmax: 1.0 };
+    // the columns P0 + P1 and P0 - P1, integers
+    let col = |sign: f64| -> Vec<T> { (0..4).map(|i| T::from_f64(PL_P[i][0] + sign * PL_P[i][1])).collect() };
+    let mut pl = Plane::<T>::new(4, 2, &[col(1.0), col(-1.0)].concat());
+    let mut apart = [Plane::<T>::new(4, 1, &col(1.0)), Plane::<T>::new(4, 1, &col(-1.0))];
+    let half_ln20 = T::from_f64(0.5) * T::from_f64(20.0).ln();
+    let (mut xs, mut e_pl, mut e_ap, mut v_pl, mut v_ap) = (vec![], vec![], vec![], vec![], vec![]);
+    let (mut s_pl, mut s_ap) = (0, 0);
+    let mut x0 = 0.0;
+    for s in 0..=PL_SAMPLES {
+        let x = PL_END * s as f64 / PL_SAMPLES as f64;
+        if s > 0 {
+            s_pl += pl.advance(&src, x0, x, &plan, kt).steps;
+            for a in apart.iter_mut() {
+                s_ap += a.advance(&src, x0, x, &plan, kt).steps;
+            }
+        }
+        x0 = x;
+        let exact = T::from_f64(32.0 * x) + half_ln20;
+        let rel = |v: T| (v - exact).to_f64().abs() / exact.to_f64().abs().max(1.0);
+        xs.push(x);
+        e_pl.push(off_plane(pl.columns()));
+        v_pl.push(rel(pl.ln_vol()));
+        match span2(apart[0].columns(), apart[1].columns()) {
+            Some((y, ln_r)) => {
+                e_ap.push(off_plane(&y));
+                v_ap.push(rel(apart[0].ln_vol() + apart[1].ln_vol() + ln_r));
+            }
+            None => {
+                e_ap.push(f64::NAN);
+                v_ap.push(f64::NAN);
+            }
+        }
+    }
+    println!(
+        "plane {name}: kt {kt}, {s_pl} steps of the plane, {s_ap} of the columns; at x = {PL_END}: plane {:.1e} \
+         against {:.1e} apart",
+        e_pl[PL_SAMPLES], e_ap[PL_SAMPLES]
+    );
+    obj(&[
+        ("name", string(name)),
+        ("eps", num(T::EPS)),
+        ("kt", kt.to_string()),
+        ("tol", num(tol)),
+        ("steps_plane", s_pl.to_string()),
+        ("steps_apart", s_ap.to_string()),
+        ("x", arr(xs)),
+        ("plane", arr(e_pl)),
+        ("apart", arr(e_ap)),
+        ("vol_plane", arr(v_pl)),
+        ("vol_apart", arr(v_ap)),
+    ])
+}
+
+fn plane(dir: &str) {
+    let lanes = [plane_lane::<f64>("f64"), plane_lane::<DD>("DD"), plane_lane::<QD>("QD")];
+    save(
+        dir,
+        "plane",
+        obj(&[
+            ("rates", arr(PL_RATES)),
+            ("end", num(PL_END)),
+            ("lanes", format!("[{}]", lanes.join(","))),
+        ]),
     );
 }
 
@@ -953,10 +1113,11 @@ fn main() {
     let only: Vec<String> = args.collect();
     let want = |n: &str| only.is_empty() || only.iter().any(|o| o == n);
     type Figure = (&'static str, fn(&str));
-    let figs: [Figure; 9] = [
+    let figs: [Figure; 10] = [
         ("backend", backend),
         ("layout", layout),
         ("taylor", taylor),
+        ("plane", plane),
         ("jacobian", jacobian),
         ("series", series_fig),
         ("continuation", continuation_fig),

@@ -295,6 +295,113 @@ def taylor():
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Plane stepper
+
+
+def reveal(svg, cid, x, y, w, h, a, b, period):
+    """A clip of the box whose width grows from 0 at a seconds to w at b, held to the end of the period; the whole
+    box when static. Every path under it is drawn at the same x at the same time."""
+    if STATIC:
+        return clip(svg, cid, x, y, w, h)
+    fa, fb = a / period, b / period
+    svg.add(f'<clipPath id="{cid}"><rect x="{x}" y="{y}" width="0" height="{h}">'
+            f'<animate attributeName="width" values="0;0;{w};{w}" keyTimes="0;{fa:.4f};{fb:.4f};1" '
+            f'dur="{period}s" repeatCount="indefinite"/></rect></clipPath>')
+    return f'clip-path="url(#{cid})"'
+
+
+def running_max(v):
+    """the largest value up to each sample; None until the first nonzero one, which a log axis cannot place"""
+    out, m = [], 0.0
+    for a in v:
+        m = max(m, a)
+        out.append(m if m > 0 else None)
+    return out
+
+
+def line_key(svg, right, y, items):
+    """short line samples and labels right-aligned at right, items as (label, dash)"""
+    lx = right
+    for label, dash in reversed(items):
+        svg.text(lx, y, label, size=11, fill=INK, anchor="end")
+        lx -= text_width(label, 11) + 8
+        svg.add(polyline([(lx - 22, y - 4), (lx, y - 4)], INK_SOFT, 2, dash=dash))
+        lx -= 22 + 16
+
+
+def plane():
+    t = load("plane")
+    lanes, end = t["lanes"], t["end"]
+    g = t["rates"]
+    gap = g[0] - g[1]
+    svg = Svg(W)
+    period, a0, a1 = 8.0, 0.4, 6.4
+    px, pw = 84, W - 84 - 56
+    dash = "6 4"
+
+    def lost_at(L):
+        """the first sample at which the columns carried alone are 0.1 from the plane"""
+        return next((x for x, e in zip(L["x"], L["apart"]) if e is not None and e > 0.1), None)
+
+    def panel(y, h, key_plane, key_apart, cid, ylabel, top, better):
+        xm, ym = axes(svg, px, y, pw, h, (0, end), (-70, top), "x", ylabel, yfmt=exp_fmt)
+        cp = reveal(svg, cid, px, y - 6, pw, h + 6, a0, a1, period)
+        inner = []
+        for q, L in enumerate(lanes):
+            for key, d, width in ((key_plane, None, 2.0), (key_apart, dash, 1.8)):
+                pts = [(xm(x), ym(math.log10(v))) for x, v in zip(L["x"], running_max(L[key])) if v is not None]
+                inner.append(polyline(pts, SERIES[q], width, dash=d))
+        svg.add(f"<g {cp}>{''.join(inner)}</g>")
+        better_hint(svg, px, y, pw, h, "right", label=better, reverse=True)
+        return xm, ym
+
+    y = caption(svg, 16, 22, "Orthonormalized after each step, the plane stays at roundoff; carried alone, its columns "
+                "fall onto the fastest mode",
+                f"P1 of tests/plane.rs: J = P diag({', '.join(f'{r:g}' for r in g)}) P⁻¹, the plane of the rates "
+                f"{g[0]:g} and {g[1]:g} from the basis P[:, :2]·[[1, 1], [1, −1]], tol 100 eps at Plan::optimal_kt")
+    legend(svg, px + pw, y - 10, [(L["name"], SERIES[q]) for q, L in enumerate(lanes)])
+    line_key(svg, px + pw - 150, y - 10, [("plane stepper", None), ("each column alone", dash)])
+    h1 = 170
+    # ten decades above 1 hold the callout clear of the lines
+    xm, ym = panel(y, h1, "plane", "apart", "plane-reveal", "distance to the plane, largest so far", 10, "closer")
+    # where the rate gap has spent the lane's digits: 16 x = ln(1 / eps)
+    for q, L in enumerate(lanes):
+        xs = math.log(1 / L["eps"]) / gap
+        i = min(range(len(L["x"])), key=lambda a: abs(L["x"][a] - xs))
+        v = max(e for e in L["apart"][:i + 1] if e is not None)
+        anim = shown(a0 + (a1 - a0) * xs / end, None, period)
+        title = f"{L['name']}: {gap:g} x = ln(1/eps) at x = {xs:.2f}; alone, the columns are {sci(v)} from the plane"
+        mk = (f'<polygon points="{xm(xs):.1f},{ym(math.log10(v)) - 6.5:.1f} {xm(xs) + 6.5:.1f},'
+              f'{ym(math.log10(v)):.1f} {xm(xs):.1f},{ym(math.log10(v)) + 6.5:.1f} {xm(xs) - 6.5:.1f},'
+              f'{ym(math.log10(v)):.1f}" fill="{SERIES[q]}" stroke="{SURFACE}" stroke-width="2">'
+              f'<title>{esc(title)}</title></polygon>')
+        group(svg, [mk], anim)
+    xs0 = math.log(1 / lanes[0]["eps"]) / gap
+    # the callout shows with the f64 marker
+    n = len(svg.parts)
+    callout(svg, xm(xs0), ym(math.log10(max(e for x, e in zip(lanes[0]["x"], lanes[0]["apart"]) if x <= xs0 + 0.05))),
+            f"{gap:g} x = ln(1/eps): the rate {g[1]:g} is below the lane's roundoff", dx=24, dy=-14)
+    marks = svg.parts[n:]
+    del svg.parts[n:]
+    group(svg, marks, shown(a0 + (a1 - a0) * xs0 / end, None, period))
+    y += h1 + 62
+
+    y = caption(svg, 16, y, f"Its log-volume gains ({g[0]:g} + {g[1]:g}) x; carried alone, each column gains "
+                f"{g[0]:g} x once they fall together",
+                f"|ln_vol − (32 x + ln 20 / 2)| / max(1, |exact|): the volume of the starting basis is √20")
+    h2 = 130
+    panel(y, h2, "vol_plane", "vol_apart", "vol-reveal", "log-volume error, largest so far", 0, "smaller")
+    steps = ", ".join(f"{L['name']} {L['steps_plane']}" for L in lanes)
+    h = footnote(svg, [source(t), f"advanced to each sample every {lanes[0]['x'][1]:g}; the plane's steps {steps}"],
+                 "", [], y + h2 + 40, REPO)
+    write("plane", svg.finish(h))
+    table("plane stepper", ["lane", "kt", "steps (plane, columns)", "plane, largest", "alone 0.1 off at",
+                            f"ln(1/eps)/{gap:g}", "log-volume, largest"],
+          [(L["name"], L["kt"], f"{L['steps_plane']}, {L['steps_apart']}", sci(max(L["plane"])), lost_at(L),
+            f"{math.log(1 / L['eps']) / gap:.2f}", sci(max(L["vol_plane"]))) for L in lanes])
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # The layout
 
 
@@ -872,6 +979,7 @@ FIGURES = {
     "solvers": solvers,
     "backends": backends,
     "taylor": taylor,
+    "plane": plane,
     "layout": layout,
     "jacobian": jacobian,
     "series": series_fig,
