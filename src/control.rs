@@ -132,4 +132,6 @@ pub enum ImplicitControl {
     EmptyShift,
     /// the cached reciprocal of A0 used where it overflows (a pivot below 2^-1023 in `f64`)
     PlainReciprocal,
+    /// the exponent of the zero estimate formed from the coefficients of A0 as they are, not scaled by a power of two
+    PlainRho,
 }
