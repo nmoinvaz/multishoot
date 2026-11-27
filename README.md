@@ -99,24 +99,26 @@ and, at each step's start, the Taylor coefficients of every A_g (`Coefficients`)
 | `implicit::taylor_shift` | the jet of a polynomial in x about x0 in the scalar's precision |
 
 The branch is chosen once, by the data, and carried; no root is picked by its order among the roots. Two branches can be
-confused only where roots meet, where `A0 = 0`. A sign change of `A0` between two step starts is a crossing: the walk
-steps over it and, where the series of `A0` in the step brackets a zero, locates it (`Crossing::located`); otherwise
-`Crossing::x` is the step's start and not a zero. A crossing says nothing of the multiplicity of the root of N in y''
-there: for `N = z^3 - x z` on the branch `z = 0`, `A0 = -x` changes sign at `x = 0`. A step that passes two zeros of
-`A0` and ends with the sign it started with reports none. A step that starts with `|A0| <= pivot_abs` stops the walk
-with an estimate of the zero, `x* = x - beta A0 / A0'` with `beta = 1 / (1 - A0 A0'' / A0'^2)`: exact for `A0 ~ c |x* -
-x|^beta`, an estimate otherwise. There is none (`WalkOut::zero` is `None`) where the series of `A0` has no slope, a
-constant pivot below `pivot_abs` for one, or the estimate is not finite.
+confused only where roots meet, where `A0 = 0`. A sign change of `A0` between two step starts, as the first `form` at
+each reads it, is a crossing: the walk steps over it and, where the series of `A0` in the step brackets a zero and the
+bracket closes, locates it (`Crossing::located`); otherwise `Crossing::x` is the step's start and not a zero. A crossing
+says nothing of the multiplicity of the root of N in y'' there: for `N = z^3 - x z` on the branch `z = 0`, `A0 = -x`
+changes sign at `x = 0`. A step that passes two zeros of `A0` and ends with the sign it started with reports none. A
+step that starts with `|A0| <= pivot_abs` stops the walk with an estimate of the zero, `x* = x - beta A0 / A0'` with
+`beta = 1 / (1 - A0 A0'' / A0'^2)`: exact for `A0 ~ c |x* - x|^beta`, an estimate otherwise. There is none
+(`WalkOut::zero` is `None`) where the series of `A0` has no slope, a constant pivot below `pivot_abs` for one, where
+`beta` is not positive, or where the zero is not a finite coordinate.
 
-Near a double root of N in y'' use `Project`. `Conserve` keeps N at its start value, a rounding eps and not 0, and for N
-= eps a double root is two roots: the crossing becomes an avoided crossing, the Taylor series about a point at distance
-d has radius about d, the steps shrink toward it and the walk ends with `Stop::Tiny`. `Project` makes one Newton
-correction of y'' at each step's start, which reduces the residual of N when the state is near the branch and so may let
-the walk cross. It is one correction, not a projection onto N = 0: for `N = y''^2 - 1` at `y'' = 2` it gives `y'' =
-1.25`, where N is still 0.5625, and a residual that stays nonzero, at roundoff too, can give an avoided crossing: for `N
-= z^2 - x^2` the level `N = eps > 0` has the branch `z = sqrt(x^2 + eps)`, which does not cross zero. `Project` promises
-neither a zero of N nor a crossing. Where the start is on the branch to roundoff (N small against `A0`) and `A0` stays
-away from 0, the two agree to roundoff and `Conserve` costs less.
+Near a double root of N in y'' use `Project`. `Conserve` keeps N at its start value, a rounding eps and not 0, and for
+N = eps a double root is two roots: the crossing becomes an avoided crossing, the Taylor series about a point at
+distance d has radius about d, the steps shrink toward it, and the walk ends with `Stop::Tiny` or follows the other
+branch. `Project` makes one Newton correction of y'' at each step's start, which reduces the residual of N when the
+state is near the branch and so may let the walk cross. It is one correction, not a projection onto N = 0: for
+`N = y''^2 - 1` at `y'' = 2` it gives `y'' = 1.25`, where N is still 0.5625, and a residual that stays nonzero, at
+roundoff too, can give an avoided crossing: for `N = z^2 - x^2` the level `N = eps > 0` has the branch
+`z = sqrt(x^2 + eps)`, which does not cross zero. `Project` promises neither a zero of N nor a crossing. Where the start
+is on the branch to roundoff (N small against `A0`) and `A0` stays away from 0, the two agree to roundoff and `Conserve`
+costs less.
 
 The coefficients of a series are accurate to about eps times the series' size, not to eps each: the relative error of
 `c_k` grows about threefold per order (order k of N is a cancelling convolution), and what a step uses, `sum |dc_k| h^k`,

@@ -10,14 +10,15 @@
 //!
 //! The branch is chosen once, by the data (y, y', y'') at the start, and carried: no root is ever re-selected by its
 //! order among the roots. [`Branch::Project`] makes one Newton correction of y'' at each step's start,
-//! [`Branch::Conserve`] none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there
-//! the walk reports: a step that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is
-//! [`Stop::Pivot`] with an estimate of the zero of A0 ([`Zero`], none where A0's series has no slope or the estimate is
-//! not finite), and a sign change of A0 between two step starts is a [`Crossing`]: the walk steps over it and, where
-//! A0's series in the step brackets a zero, locates it (`located`), else the crossing's `x` is the step's start and not
-//! a zero. A crossing says nothing of the multiplicity of the root of N in y'' there: for `N = z^3 - x z` on the branch
-//! `z = 0`, `A0 = -x` changes sign at `x = 0`. Only a sign change between two step starts is seen: a step that passes
-//! two zeros of A0 and ends with the sign it started with reports none.
+//! [`Branch::Conserve`] none. Two branches can be confused only where roots meet, which is where `A0 = 0`, and there the
+//! walk reports: a step that starts at `A0 = 0` is [`Stop::ZeroPivot`], one that starts with `|A0| <= pivot_abs` is
+//! [`Stop::Pivot`] with an estimate of the zero of A0 ([`Zero`], none where A0's series has no slope, `beta` is not
+//! positive or the zero is not a finite coordinate), and a sign change of A0 between two step starts, as the first
+//! `form` at each reads it, is a [`Crossing`]: the walk steps over it and, where A0's series in the step brackets a zero
+//! and the bracket closes, locates it (`located`), else the crossing's `x` is the step's start and not a zero. A
+//! crossing says nothing of the multiplicity of the root of N in y'' there: for `N = z^3 - x z` on the branch `z = 0`,
+//! `A0 = -x` changes sign at `x = 0`. Only a sign change between two step starts is seen: a step that passes two zeros
+//! of A0 and ends with the sign it started with reports none.
 //!
 //! Near a double root of N in y'' use [`Branch::Project`]; `Conserve` turns the crossing into an avoided one (see [`Branch`]).
 //!
@@ -739,10 +740,10 @@ pub struct Crossing<T> {
     pub located: bool,
 }
 
-/// An estimate of the zero of A0 from its first three Taylor coefficients: for `A0 ~ c |x* - x|^beta`, `beta = 1 / (1 -
-/// rho)` with `rho = A0 A0'' / A0'^2`, and `x* = x - beta A0 / A0'`. Exact for a pure power; an estimate otherwise,
-/// whose error is the departure of A0 from a power. None where A0's series has no slope (a constant pivot) or the
-/// estimate is not finite and positive in beta.
+/// An estimate of the zero of A0 from its first three Taylor coefficients: for `A0 ~ c |x* - x|^beta`,
+/// `beta = 1 / (1 - rho)` with `rho = A0 A0'' / A0'^2`, and `x* = x - beta A0 / A0'`. Exact for a pure power; an
+/// estimate otherwise, whose error is the departure of A0 from a power. None where A0's series has no slope (a constant
+/// pivot), `beta` is not positive or the zero is not a finite coordinate.
 #[derive(Clone, Debug)]
 pub struct Zero<T> {
     pub x: T,
