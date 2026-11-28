@@ -873,6 +873,39 @@ mod controls {
         }
     }
 
+    /// A perturbed shared method (feature `mutate`): multidouble's `real::Real::from_f64` one unit of f64 up, which the
+    /// stepper reaches through `Real::from_f64` (the step's start and length, the series' constants). The plane and
+    /// log-volume checks fire on every case in the multi-double lanes; f64's bars (1e4 eps) are above the perturbation
+    /// and nothing is asserted there.
+    fn shared_method<T: Lane>(must_fire: bool) {
+        use multishoot::multidouble::real::mutate;
+        mutate::set(mutate::FROM_F64);
+        let r = std::panic::catch_unwind(|| {
+            let cases: [(&str, Case); 3] = [("P1", p1::<T>), ("P2", p2::<T>), ("P3", p3::<T>)];
+            cases.map(|(name, f)| fires::<T>(name, "FROM_F64", &f(Opts::new())))
+        });
+        mutate::set(0);
+        let fired = r.expect("the stepper panicked under the perturbed method");
+        if must_fire {
+            assert_eq!(fired, [true; 3], "{}: FROM_F64 fired on P1 P2 P3 = {fired:?}", T::NAME);
+        }
+    }
+
+    #[test]
+    fn shared_method_f64() {
+        shared_method::<f64>(false);
+    }
+
+    #[test]
+    fn shared_method_dd() {
+        shared_method::<DD>(true);
+    }
+
+    #[test]
+    fn shared_method_qd() {
+        shared_method::<QD>(true);
+    }
+
     #[test]
     fn skip_one_f64() {
         skip_one::<f64>();
