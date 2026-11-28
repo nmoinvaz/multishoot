@@ -14,7 +14,7 @@ exclude = ["/.github", "/.claude", "/CLAUDE.md", "/docs", "/lean", "/scripts"]
 [dependencies]
 # 4.1.0: the Precision trait over double-, quad- and octo-double (Double, Quad, Octo); 4.5.0: the blocked complex LU
 # of the mode matrix's determinant
-multidouble = "6.1.0"
+multidouble = "6.2.0"
 # the solvers of F(z) = 0 over the Problem trait, and the argument-principle zero count
 multisolver = "0.3.0"
 rayon = "1.10"
@@ -23,7 +23,8 @@ rayon = "1.10"
 # the plain-array SIMD backend of multidouble on every target
 portable = ["multidouble/portable"]
 # the mutation controls of the tests: each accuracy check is run once on a deliberately wrong input and must fail
-mutate = []
+# (multidouble's `mutate` adds the controls of its shared number trait)
+mutate = ["multidouble/mutate"]
 
 [profile.release]
 opt-level = 3

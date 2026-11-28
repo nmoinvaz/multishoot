@@ -25,12 +25,13 @@
 //! The scalar is [`Scalar`]: `f64`, double-, quad- and octo-double, and a field of any lane (`Fl<T, 1>`, with duals).
 //! A walk ([`Walker`]) plans each step by multishoot's rule ([`Plan`], [`crate::taylor::step_from_norms`]) on the largest
 //! coefficients of orders kt - 1 and kt, relative to each field's own size by default, and sums the series by Horner's rule.
-use crate::lane::{BaseLane, Lane, DV, OV, QV};
+use crate::lane::Lane;
 use crate::taylor::{step_from_norms, Plan};
 use multidouble::dd::DD;
 use multidouble::field::Fl;
 use multidouble::od::OD;
 use multidouble::qd::QD;
+use multidouble::real::Real as MdReal;
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -71,86 +72,76 @@ pub trait Real: Scalar + Debug + Send + Sync + 'static {
 
 impl Scalar for f64 {
     fn zero() -> f64 {
-        0.0
+        <f64 as MdReal>::ZERO
     }
     fn one() -> f64 {
-        1.0
+        <f64 as MdReal>::ONE
     }
     fn from_f64(x: f64) -> f64 {
-        x
+        <f64 as MdReal>::from_f64(x)
     }
     fn from_dd(x: DD) -> f64 {
-        x.hi + x.lo
+        <f64 as MdReal>::from_dd(x)
     }
     fn mulf(self, s: f64) -> f64 {
-        self * s
+        MdReal::mul_f(self, s)
     }
     fn round_dd(self) -> f64 {
         self
     }
     fn is_finite(self) -> bool {
-        f64::is_finite(self)
+        MdReal::is_finite(self)
+    }
+    fn cauchy(a: &[f64], b: &[f64], k: usize) -> f64 {
+        <f64 as MdReal>::cauchy(a, b, k)
     }
 }
 
-impl Real for f64 {
-    const EPS: f64 = 1.1102230246251565e-16;
-    fn to_f64(self) -> f64 {
-        self
-    }
-}
-
+/// the multi-double scalars through multidouble's `real::Real`
 macro_rules! scalar_multidouble {
-    ($t:ty, $eps:expr, $from_dd:expr, $to_dd:expr, $mulf:expr, $lane:ident) => {
+    ($t:ty, $from_dd:expr, $to_dd:expr) => {
         impl Scalar for $t {
             fn zero() -> $t {
-                <$t>::from_f64(0.0)
+                <$t as MdReal>::ZERO
             }
             fn one() -> $t {
-                <$t>::from_f64(1.0)
+                <$t as MdReal>::ONE
             }
             fn from_f64(x: f64) -> $t {
-                <$t>::from_f64(x)
+                <$t as MdReal>::from_f64(x)
             }
             fn from_dd(x: DD) -> $t {
-                $from_dd(x)
+                <$t as MdReal>::from_dd(x)
             }
             fn mulf(self, s: f64) -> $t {
-                $mulf(self, s)
+                MdReal::mul_f(self, s)
             }
             fn round_dd(self) -> $t {
                 $from_dd($to_dd(self))
             }
             fn is_finite(self) -> bool {
-                <$t>::to_f64(self).is_finite()
+                MdReal::is_finite(self)
             }
             fn cauchy(a: &[$t], b: &[$t], k: usize) -> $t {
-                let mut acc = $lane::acc0();
-                for j in 0..=k {
-                    acc = $lane::acc(acc, $lane::splat(a[j]), $lane::splat(b[k - j]));
-                }
-                Fl([$lane::fin(acc)]).get(0)
-            }
-        }
-        impl Real for $t {
-            const EPS: f64 = $eps;
-            fn to_f64(self) -> f64 {
-                <$t>::to_f64(self)
+                <$t as MdReal>::cauchy(a, b, k)
             }
         }
     };
 }
 
-scalar_multidouble!(DD, 1.232595164407831e-32, |x| x, |x| x, |x: DD, s| x.mul_f(s), DV);
-scalar_multidouble!(
-    QD,
-    1.504632769052528e-64,
-    QD::from_dd,
-    QD::to_dd,
-    |x: QD, s| x.mul_f(s),
-    QV
-);
-scalar_multidouble!(OD, 2.3e-128, OD::from_dd, OD::to_dd, |x: OD, s| x.mul_f(s), OV);
+scalar_multidouble!(DD, |x| x, |x| x);
+scalar_multidouble!(QD, QD::from_dd, QD::to_dd);
+scalar_multidouble!(OD, OD::from_dd, OD::to_dd);
+
+/// every scalar that is also a number type of multidouble's `real::Real`, with its `ROUNDOFF` as the unit roundoff. A
+/// field of a lane (`Fl<T, 1>`) is a [`Scalar`] only: it is no `real::Real`, so that `Scalar` itself keeps its
+/// impls for the field and the four number types, which a blanket impl over `real::Real` would make overlap.
+impl<T: Scalar + MdReal> Real for T {
+    const EPS: f64 = T::ROUNDOFF;
+    fn to_f64(self) -> f64 {
+        MdReal::to_f64(self)
+    }
+}
 
 impl<T: Lane> Scalar for Fl<T, 1> {
     fn zero() -> Self {

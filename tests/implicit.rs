@@ -1134,7 +1134,9 @@ fn parts_n<T: TestReal>(v: T, n: usize) -> Vec<f64> {
     (0..n)
         .map(|_| {
             let o = r.to_f64();
-            r = r - T::from_f64(o);
+            // not `from_f64`: the measurement must not go through the method that the control of
+            // `digest_sees_a_perturbed_shared_method` perturbs
+            r = r - T::from_dd(DD::from_f64(o));
             o
         })
         .collect()
@@ -1331,6 +1333,33 @@ fn digest_pinned_fails_on_a_flip() {
         <DD as TestReal>::DIGEST[1],
         "the pinned digest does not see one flipped bit"
     );
+}
+
+/// Control of the shared number trait (feature `mutate`): multidouble's `real::Real::from_f64` one unit of f64 up, which
+/// every walk reaches through `Scalar::from_f64` (the digests' own decomposition of a value does not), moves both pinned
+/// digests of f64 and dd
+#[cfg(feature = "mutate")]
+#[test]
+fn digest_sees_a_perturbed_shared_method() {
+    use multishoot::multidouble::real::mutate;
+    mutate::set(mutate::FROM_F64);
+    let f = std::panic::catch_unwind(|| digests::<f64>(&all_cells(), &[1, 2], &[], Poke::None));
+    let d = std::panic::catch_unwind(|| digests::<DD>(&all_cells(), &[1, 2], &[], Poke::None));
+    mutate::set(0);
+    let (f, d) = (f.expect("f64 walk panicked"), d.expect("dd walk panicked"));
+    println!(
+        "from_f64 up: f64 {:016x} {:016x}, dd {:016x} {:016x}",
+        f.0, f.1, d.0, d.1
+    );
+    assert!(
+        [f.0, f.1] != <f64 as TestReal>::DIGEST,
+        "the pinned f64 digests do not see from_f64"
+    );
+    assert!(
+        [d.0, d.1] != <DD as TestReal>::DIGEST,
+        "the pinned dd digests do not see from_f64"
+    );
+    assert!(f.0 != <f64 as TestReal>::DIGEST[0] && d.0 != <DD as TestReal>::DIGEST[0]);
 }
 
 /// Control of the digests: one flipped bit of one checkpoint's state changes `full` and not `base`, which cannot see a
