@@ -14,7 +14,7 @@ exclude = ["/.github", "/.claude", "/CLAUDE.md", "/docs", "/lean", "/scripts"]
 [dependencies]
 # 4.1.0: the Precision trait over double-, quad- and octo-double (Double, Quad, Octo); 4.5.0: the blocked complex LU
 # of the mode matrix's determinant
-multidouble = "6.1.0"
+multidouble = "6.2.0"
 # the solvers of F(z) = 0 over the Problem trait, and the argument-principle zero count
 multisolver = "0.3.0"
 rayon = "1.10"
@@ -25,11 +25,6 @@ portable = ["multidouble/portable"]
 # the mutation controls of the tests: each accuracy check is run once on a deliberately wrong input and must fail
 # (multidouble's `mutate` adds the controls of its shared number trait)
 mutate = ["multidouble/mutate"]
-
-# TESTING ONLY, until a multidouble release has `real::Real`: the branch of the pull request that adds it, for this crate
-# and for multisolver's copy of multidouble. Delete this section and take that release in `[dependencies]`.
-[patch.crates-io]
-multidouble = { git = "https://github.com/nmoinvaz/multidouble", branch = "feat/real-trait" }
 
 [profile.release]
 opt-level = 3
