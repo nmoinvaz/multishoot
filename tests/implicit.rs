@@ -1134,7 +1134,9 @@ fn parts_n<T: TestReal>(v: T, n: usize) -> Vec<f64> {
     (0..n)
         .map(|_| {
             let o = r.to_f64();
-            r = r - T::from_f64(o);
+            // not `from_f64`: the measurement must not go through the method that the control of
+            // `digest_sees_a_perturbed_shared_method` perturbs
+            r = r - T::from_dd(DD::from_f64(o));
             o
         })
         .collect()
@@ -1334,7 +1336,8 @@ fn digest_pinned_fails_on_a_flip() {
 }
 
 /// Control of the shared number trait (feature `mutate`): multidouble's `real::Real::from_f64` one unit of f64 up, which
-/// every walk reaches through `Scalar::from_f64`, moves both pinned digests of f64 and dd
+/// every walk reaches through `Scalar::from_f64` (the digests' own decomposition of a value does not), moves both pinned
+/// digests of f64 and dd
 #[cfg(feature = "mutate")]
 #[test]
 fn digest_sees_a_perturbed_shared_method() {

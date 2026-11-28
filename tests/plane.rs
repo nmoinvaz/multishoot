@@ -876,7 +876,9 @@ mod controls {
     /// A perturbed shared method (feature `mutate`): multidouble's `real::Real::from_f64` one unit of f64 up, which the
     /// stepper reaches through `Real::from_f64` (the step's start and length, the series' constants). The plane and
     /// log-volume checks fire on every case in the multi-double lanes; f64's bars (1e4 eps) are above the perturbation
-    /// and nothing is asserted there.
+    /// and nothing is asserted there. The cases build their bases and references with `from_f64` too, so the perturbation
+    /// reaches the stepper's inputs and the checks' references alike: what this shows is that the checks see the shared
+    /// method's value change, not that the stepper alone does.
     fn shared_method<T: Lane>(must_fire: bool) {
         use multishoot::multidouble::real::mutate;
         mutate::set(mutate::FROM_F64);
