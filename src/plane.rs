@@ -16,8 +16,9 @@
 //! spanned by the k fastest growing modes with rates `g_1 > ... > g_k` gains `(g_1 + ... + g_k) x`.
 //!
 //! The scalar is one lane's number type ([`Real`]): `f64`, `DD`, `QD` or `OD`, with the usual
-//! operations. [`Real`] is not [`crate::Precision`]'s scalar: that has no division, square root or logarithm, and `f64`
-//! is no [`crate::Precision`].
+//! operations. Every number type of multidouble's `real::Real` is a [`Real`] of the plane (the trait below, kept by its
+//! name, takes its operations and its unit roundoff from it), and so is [`Complex`]. [`Real`] is not
+//! [`crate::Precision`]'s scalar: that has no division, square root or logarithm, and `f64` is no [`crate::Precision`].
 //!
 //! A complex system is the same stepper over [`Complex`]`<R>`, a pair of lane values that is a scalar of the plane too
 //! (the trait keeps the name `Real` of the real lanes it began with). The orthonormalization then uses the Hermitian product
@@ -34,8 +35,7 @@
 //! it shares the planner's [`Plan`] and its step rule.
 use crate::taylor::{step_from_norms, Plan};
 use multidouble::dd::DD;
-use multidouble::od::OD;
-use multidouble::qd::QD;
+use multidouble::real::Real as MdReal;
 use multisolver::prec::nan_max;
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
@@ -83,69 +83,36 @@ pub trait Real:
     }
 }
 
-impl Real for f64 {
-    const EPS: f64 = 1.1102230246251565e-16;
-    fn zero() -> f64 {
-        0.0
+/// Every number type of multidouble's `real::Real` (`f64`, `DD`, `QD` and `OD`), through its operations; the unit
+/// roundoff is its `ROUNDOFF`. A blanket impl and not a supertrait, so that a type outside multidouble (`Complex`, or
+/// a wrapper of a downstream crate) implements `Real` without implementing all of `real::Real`.
+impl<T: MdReal> Real for T {
+    const EPS: f64 = T::ROUNDOFF;
+    fn zero() -> T {
+        T::ZERO
     }
-    fn one() -> f64 {
-        1.0
+    fn one() -> T {
+        T::ONE
     }
-    fn from_f64(x: f64) -> f64 {
-        x
+    fn from_f64(x: f64) -> T {
+        <T as MdReal>::from_f64(x)
     }
-    fn from_dd(x: DD) -> f64 {
-        x.hi + x.lo
+    fn from_dd(x: DD) -> T {
+        <T as MdReal>::from_dd(x)
     }
     fn to_f64(self) -> f64 {
-        self
+        MdReal::to_f64(self)
     }
-    fn recip(self) -> f64 {
-        1.0 / self
+    fn recip(self) -> T {
+        MdReal::recip(self)
     }
-    fn sqrt(self) -> f64 {
-        f64::sqrt(self)
+    fn sqrt(self) -> T {
+        MdReal::sqrt(self)
     }
-    fn ln(self) -> f64 {
-        f64::ln(self)
+    fn ln(self) -> T {
+        MdReal::ln(self)
     }
 }
-
-macro_rules! real_multidouble {
-    ($t:ty, $eps:expr, $from_dd:expr) => {
-        impl Real for $t {
-            const EPS: f64 = $eps;
-            fn zero() -> $t {
-                <$t>::from_f64(0.0)
-            }
-            fn one() -> $t {
-                <$t>::from_f64(1.0)
-            }
-            fn from_f64(x: f64) -> $t {
-                <$t>::from_f64(x)
-            }
-            fn from_dd(x: DD) -> $t {
-                $from_dd(x)
-            }
-            fn to_f64(self) -> f64 {
-                <$t>::to_f64(self)
-            }
-            fn recip(self) -> $t {
-                <$t>::recip(self)
-            }
-            fn sqrt(self) -> $t {
-                <$t>::sqrt(self)
-            }
-            fn ln(self) -> $t {
-                <$t>::ln(self)
-            }
-        }
-    };
-}
-
-real_multidouble!(DD, 1.232595164407831e-32, |x| x);
-real_multidouble!(QD, 1.504632769052528e-64, QD::from_dd);
-real_multidouble!(OD, 2.3e-128, OD::from_dd);
 
 /// A complex number as a pair of lane values, a scalar of the plane like the real lanes: a plane of a complex system
 /// `y' = J y` carries complex columns. With `im = 0` it behaves bit for bit as its real part: the product is

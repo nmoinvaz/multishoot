@@ -23,7 +23,13 @@ rayon = "1.10"
 # the plain-array SIMD backend of multidouble on every target
 portable = ["multidouble/portable"]
 # the mutation controls of the tests: each accuracy check is run once on a deliberately wrong input and must fail
-mutate = []
+# (multidouble's `mutate` adds the controls of its shared number trait)
+mutate = ["multidouble/mutate"]
+
+# TESTING ONLY, until a multidouble release has `real::Real`: the branch of the pull request that adds it, for this crate
+# and for multisolver's copy of multidouble. Delete this section and take that release in `[dependencies]`.
+[patch.crates-io]
+multidouble = { git = "https://github.com/nmoinvaz/multidouble", branch = "feat/real-trait" }
 
 [profile.release]
 opt-level = 3
