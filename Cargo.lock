@@ -36,7 +36,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 [[package]]
 name = "multidouble"
 version = "6.1.0"
-source = "git+https://github.com/nmoinvaz/multidouble?branch=feat%2Freal-trait#17c3084ee62c57fe7009c04f44ce6f6c5549bbab"
+source = "git+https://github.com/nmoinvaz/multidouble?branch=feat%2Freal-trait#5c978806e0ddbff9d84aa21667dfb6bd4d0ac2ac"
 dependencies = [
  "rayon",
 ]
